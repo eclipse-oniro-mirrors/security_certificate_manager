@@ -309,10 +309,10 @@ static int32_t MapAuthResult(int32_t authResult)
         return CM_SUCCESS;
     }
     if (authResult == static_cast<int32_t>(ResultCode::CANCELED)) {
-        WriteStdErr("User cancelled authentication\n");
+        CertMgrCommand::WriteStdErr("User cancelled authentication\n");
         return CM_CMD_ERR_USER_CANCELLED;
     }
-    WriteStdErr("User authentication failed\n");
+    CertMgrCommand::WriteStdErr("User authentication failed\n");
     return CMR_ERROR_AUTH_CHECK_FAILED;
 }
 
