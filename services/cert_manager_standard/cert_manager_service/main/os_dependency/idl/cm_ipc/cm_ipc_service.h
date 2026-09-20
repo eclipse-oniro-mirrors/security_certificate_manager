@@ -103,6 +103,12 @@ void CmIpcServiceCheckAppPermission(const struct CmBlob *paramSetBlob, struct Cm
 
 void CmIpcServiceImportUkeyCert(uint32_t code, const struct CmBlob *paramSetBlob, const struct CmContext *context);
 
+void CmIpcServiceSetCertManagerConfig(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context);
+
+void CmIpcServiceGetCertManagerConfig(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context);
+
 #ifdef __cplusplus
 }
 #endif

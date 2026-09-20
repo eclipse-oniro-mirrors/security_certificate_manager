@@ -37,6 +37,7 @@
 #include "cert_manager_uri.h"
 #include "cm_event_process.h"
 #include "cm_cert_property_rdb.h"
+#include "cm_config_rdb.h"
 #include "cm_log.h"
 #include "cm_type.h"
 #include "cm_x509.h"
@@ -1366,3 +1367,103 @@ int32_t CmServiceCheckAppPermission(const struct CmContext *context, const struc
     return ret;
 }
 
+int32_t CmServiceSetCertManagerConfig(const struct CertManagerConfig *config)
+{
+    CM_LOG_I("enter CmServiceSetCertManagerConfig");
+    if (config == NULL || config->configItems == NULL) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CmServiceSetCertManagerConfigCheck(config);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmServiceSetCertManagerConfigCheck fail, ret = %d", ret);
+        return ret;
+    }
+
+    for (uint32_t i = 0; i < config->count; i++) {
+        ret = InsertOrUpdateConfig(config->configItems[i].key, config->configItems[i].value);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("InsertOrUpdateConfig fail for key:%s, ret = %d", config->configItems[i].key, ret);
+            return ret;
+        }
+    }
+    CM_LOG_I("leave CmServiceSetCertManagerConfig, result = %d", ret);
+    return CM_SUCCESS;
+}
+
+int32_t CmServiceGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertManagerConfig *config)
+{
+    CM_LOG_I("enter CmServiceGetCertManagerConfig");
+    if (config == NULL) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CmServiceGetCertManagerConfigCheck(keysBlob);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmServiceGetCertManagerConfigCheck fail, ret = %d", ret);
+        return ret;
+    }
+
+    /* if keysBlob is null or empty, query all config items */
+    if (keysBlob == NULL || keysBlob->data == NULL || keysBlob->size == 0) {
+        ret = QueryAllConfig(config);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("QueryAllConfig fail, ret = %d", ret);
+        }
+        CM_LOG_I("leave CmServiceGetCertManagerConfig, result = %d", ret);
+        return ret;
+    }
+
+    /* keys not empty, validate each key */
+    ret = CmServiceGetCertManagerConfigCheckKeys(keysBlob);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmServiceGetCertManagerConfigCheckKeys fail, ret = %d", ret);
+        return ret;
+    }
+
+    /* query specific keys */
+    uint32_t keyCount = 0;
+    uint32_t allocSize = sizeof(struct CmConfigItem) * MAX_COUNT_CONFIG_ITEM;
+    struct CmConfigItem *items = (struct CmConfigItem *)CMMalloc(allocSize);
+    if (items == NULL) {
+        CM_LOG_E("malloc failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(items, allocSize, 0, allocSize);
+
+    uint32_t offset = 0;
+    while (offset < keysBlob->size && keyCount < MAX_COUNT_CONFIG_ITEM) {
+        const char *key = (const char *)(keysBlob->data + offset);
+        uint32_t keyLen = strlen(key);
+        if (keyLen == 0) {
+            break;
+        }
+        ret = QueryConfigByKey(key, items[keyCount].value, MAX_LEN_CONFIG_VALUE);
+        if (ret == CM_SUCCESS) {
+            if (memcpy_s(items[keyCount].key, MAX_LEN_CONFIG_KEY, key, keyLen + 1) != EOK) {
+                CM_LOG_E("memcpy_s key failed");
+                CM_FREE_PTR(items);
+                return CMR_ERROR_MEM_OPERATION_COPY;
+            }
+            keyCount++;
+        } else if (ret == CMR_ERROR_NOT_FOUND) {
+            /* key not found in db, skip */
+            CM_LOG_D("config key:%s not found, skip", key);
+        } else {
+            CM_LOG_E("QueryConfigByKey fail for key:%s, ret = %d", key, ret);
+            CM_FREE_PTR(items);
+            return ret;
+        }
+        offset += keyLen + 1;
+    }
+
+    if (keyCount == 0) {
+        CM_FREE_PTR(items);
+    }
+    config->count = keyCount;
+    config->configItems = items;
+    CM_LOG_I("leave CmServiceGetCertManagerConfig, count = %u", keyCount);
+    return CM_SUCCESS;
+}

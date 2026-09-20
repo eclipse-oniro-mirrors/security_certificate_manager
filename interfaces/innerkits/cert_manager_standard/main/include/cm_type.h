@@ -62,6 +62,9 @@ extern "C" {
 #define MAX_LEN_APP_CERT 20480
 #define MAX_LEN_APP_CERT_PASSWD 33   /* 32位密码 + 1位结束符 */
 #define MAX_LEN_CRED_PRI_KEY     4096
+#define MAX_LEN_CONFIG_KEY       64
+#define MAX_LEN_CONFIG_VALUE     1024
+#define MAX_COUNT_CONFIG_ITEM    32
 
 #define CERT_MAX_PATH_LEN       256
 #define CM_ARRAY_SIZE(arr) ((sizeof(arr)) / (sizeof((arr)[0])))
@@ -559,6 +562,16 @@ struct InstallUserCertParams {
 
 struct UkeyInfo {
     enum CmCertificatePurpose certPurpose;
+};
+
+struct CmConfigItem {
+    char key[MAX_LEN_CONFIG_KEY];
+    char value[MAX_LEN_CONFIG_VALUE];
+};
+
+struct CertManagerConfig {
+    uint32_t count;
+    struct CmConfigItem *configItems;
 };
 
 static inline bool CmIsAdditionOverflow(uint32_t a, uint32_t b)

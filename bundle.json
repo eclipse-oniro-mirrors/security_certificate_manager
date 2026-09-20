@@ -22,6 +22,7 @@
       ],
       "features": [
         "certificate_manager_deps_huks_enabled",
+        "certificate_manager_compile_certmgr",
         "certificate_manager_feature_ca_enabled",
         "certificate_manager_feature_credential_enabled",
         "certificate_manager_feature_dialog_enabled"
@@ -52,6 +53,7 @@
           "hisysevent",
           "hilog",
           "huks",
+          "i18n",
           "ipc",
           "init",
           "napi",
@@ -63,7 +65,8 @@
           "selinux_adapter",
           "openssl",
           "runtime_core",
-          "node"
+          "node",
+          "user_auth_framework"
         ]
       },
       "build": {
@@ -75,7 +78,8 @@
             "//base/security/certificate_manager:cert_manager_type_fwk"
           ],
           "service_group": [
-            "//base/security/certificate_manager:cert_manager_typer_services"
+            "//base/security/certificate_manager:cert_manager_typer_services",
+            "//base/security/certificate_manager:cert_manager_cmdline"
           ]
       },
         "inner_kits": [

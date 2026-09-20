@@ -250,3 +250,11 @@ group("cert_manager_components") {
     ":cert_manager_typer_services",
   ]
 }
+
+group("cert_manager_cmdline") {
+  if (certificate_manager_compile_certmgr == true) {
+    deps = [ "./cmdline/certmgr:certmgr" ]
+  } else {
+    deps = []
+  }
+}

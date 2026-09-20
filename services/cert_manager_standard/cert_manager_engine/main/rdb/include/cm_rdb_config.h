@@ -20,7 +20,8 @@
 #include <vector>
 
 const int32_t RDB_VERSION_FIRST = 1;
-const int32_t RDB_VERSION_CURRENT = 2;
+const int32_t RDB_VERSION_SECOND = 2;
+const int32_t RDB_VERSION_CURRENT = 3;
 
 const std::string CERT_MANAGER_RDB_NAME = "/cert_manager.db";
 const std::string CERT_PROPERTY_TABLE_NAME = "cert_property";
@@ -32,6 +33,10 @@ const std::string COLUMN_CERT_STORE = "CERT_STORE";
 const std::string COLUMN_USERID = "USERID";
 const std::string COLUMN_UID = "UID";
 const std::string COLUMN_AUTH_STORAGE_LEVEL = "AUTH_STORAGE_LEVEL";
+
+const std::string CERT_MANAGER_CONFIG_TABLE_NAME = "cert_manager_config";
+const std::string COLUMN_CONFIG_KEY = "CONFIG_KEY";
+const std::string COLUMN_CONFIG_VALUE = "CONFIG_VALUE";
 
 namespace OHOS {
 namespace Security {

@@ -16,12 +16,15 @@
 #include "cert_manager_check.h"
 
 #include <ctype.h>
+#include <string.h>
 
 #include "cert_manager.h"
 #include "cert_manager_permission_check.h"
 #include "cert_manager_uri.h"
+#include "cm_config_rdb.h"
 #include "cm_log.h"
 #include "cm_util.h"
+#include "securec.h"
 
 int32_t CheckUri(const struct CmBlob *keyUri)
 {
@@ -653,6 +656,131 @@ int32_t CheckInstallMultiCertCount(const struct CmContext *context, const uint32
     if (certCount + certNum > MAX_COUNT_CERTIFICATE) {
         CM_LOG_E("cert count beyond maxcount, can't install user certs");
         return CMR_ERROR_MAX_CERT_COUNT_REACHED;
+    }
+    return CM_SUCCESS;
+}
+
+static const char *SUPPORTED_CONFIG_KEYS[] = {
+    "installGlobalUserCA_defaultConfig",
+    "enableInstallGlobalUserCA_userList",
+    "disableInstallGlobalUserCA_userList",
+};
+
+static bool IsConfigKeySupported(const char *key)
+{
+    for (uint32_t i = 0; i < sizeof(SUPPORTED_CONFIG_KEYS) / sizeof(SUPPORTED_CONFIG_KEYS[0]); i++) {
+        if (strcmp(key, SUPPORTED_CONFIG_KEYS[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool IsConfigValueValidForDefaultConfig(const char *value)
+{
+    if (strcmp(value, "enable") == 0 || strcmp(value, "disable") == 0) {
+        return true;
+    }
+    return false;
+}
+
+static bool IsConfigValueValidForUserList(const char *value)
+{
+    /* empty string is allowed, means clear config */
+    if (value[0] == '\0') {
+        return true;
+    }
+    /* format: digits separated by |, e.g. "100|101" */
+    for (uint32_t i = 0; value[i] != '\0'; i++) {
+        if (value[i] == '|') {
+            continue;
+        }
+        if (!isdigit((unsigned char)value[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int32_t CmServiceSetCertManagerConfigCheck(const struct CertManagerConfig *config)
+{
+    if (!CmHasPrivilegedPermission()) {
+        CM_LOG_E("set config: no privileged permission");
+        return CMR_ERROR_PERMISSION_DENIED;
+    }
+
+    if (config == NULL) {
+        CM_LOG_E("config is null");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (config->count == 0 || config->count > MAX_COUNT_CONFIG_ITEM) {
+        CM_LOG_E("invalid config count:%u", config->count);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (config->configItems == NULL) {
+        CM_LOG_E("configItems is null");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    for (uint32_t i = 0; i < config->count; i++) {
+        const char *key = config->configItems[i].key;
+        const char *value = config->configItems[i].value;
+
+        if (key[0] == '\0') {
+            CM_LOG_E("config key is empty at index:%u", i);
+            return CMR_ERROR_INVALID_ARGUMENT;
+        }
+        if (!IsConfigKeySupported(key)) {
+            CM_LOG_E("unsupported config key:%s", key);
+            return CMR_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (strcmp(key, "installGlobalUserCA_defaultConfig") == 0) {
+            if (!IsConfigValueValidForDefaultConfig(value)) {
+                CM_LOG_E("invalid value for installGlobalUserCA_defaultConfig:%s", value);
+                return CMR_ERROR_INVALID_ARGUMENT;
+            }
+        } else {
+            if (!IsConfigValueValidForUserList(value)) {
+                CM_LOG_E("invalid value for user list config:%s", value);
+                return CMR_ERROR_INVALID_ARGUMENT;
+            }
+        }
+    }
+    return CM_SUCCESS;
+}
+
+int32_t CmServiceGetCertManagerConfigCheck(const struct CmBlob *keysBlob)
+{
+    if (!CmHasCommonPermission()) {
+        CM_LOG_E("get config: no common permission");
+        return CMR_ERROR_PERMISSION_DENIED;
+    }
+    if (!CmIsSystemApp()) {
+        CM_LOG_E("get config: caller is not system app");
+        return CMR_ERROR_NOT_SYSTEMP_APP;
+    }
+
+    return CM_SUCCESS;
+}
+
+int32_t CmServiceGetCertManagerConfigCheckKeys(const struct CmBlob *keysBlob)
+{
+    /* if keysBlob is not null, validate each key */
+    if (keysBlob != NULL && keysBlob->data != NULL && keysBlob->size > 0) {
+        uint32_t offset = 0;
+        while (offset < keysBlob->size) {
+            const char *key = (const char *)(keysBlob->data + offset);
+            uint32_t keyLen = strlen(key);
+            if (keyLen == 0) {
+                break;
+            }
+            if (!IsConfigKeySupported(key)) {
+                CM_LOG_E("get config: unsupported key:%s", key);
+                return CMR_ERROR_INVALID_ARGUMENT;
+            }
+            offset += keyLen + 1;
+        }
     }
     return CM_SUCCESS;
 }

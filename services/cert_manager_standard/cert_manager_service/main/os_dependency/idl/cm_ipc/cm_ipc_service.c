@@ -1584,3 +1584,166 @@ void CmIpcServiceImportUkeyCert(uint32_t code, const struct CmBlob *paramSetBlob
     CmFreeParamSet(&paramSet);
     CM_LOG_I("leave CmIpcServiceImportUkeyCert: ret = %d", ret);
 }
+
+static int32_t CopyConfigItemsFromBlob(const uint8_t *data, uint32_t dataSize,
+    uint32_t count, struct CmConfigItem *items)
+{
+    uint32_t offset = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (offset + MAX_LEN_CONFIG_KEY + MAX_LEN_CONFIG_VALUE > dataSize) {
+            CM_LOG_E("config blob size not enough for item %u", i);
+            return CMR_ERROR_INVALID_ARGUMENT;
+        }
+        if (memcpy_s(items[i].key, MAX_LEN_CONFIG_KEY, data + offset, MAX_LEN_CONFIG_KEY) != EOK) {
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += MAX_LEN_CONFIG_KEY;
+        if (memcpy_s(items[i].value, MAX_LEN_CONFIG_VALUE, data + offset, MAX_LEN_CONFIG_VALUE) != EOK) {
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += MAX_LEN_CONFIG_VALUE;
+    }
+    return CM_SUCCESS;
+}
+
+static int32_t UnpackConfigFromBlob(const struct CmBlob *configBlob, struct CertManagerConfig *config)
+{
+    if (configBlob == NULL || config == NULL) {
+        return CMR_ERROR_NULL_POINTER;
+    }
+    if (CmCheckBlob(configBlob) != CM_SUCCESS) {
+        CM_LOG_E("invalid config blob");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    uint32_t offset = 0;
+    if (configBlob->size < sizeof(uint32_t)) {
+        CM_LOG_E("config blob too small");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    config->count = *(uint32_t *)(configBlob->data + offset);
+    offset += sizeof(uint32_t);
+
+    if (config->count == 0 || config->count > MAX_COUNT_CONFIG_ITEM) {
+        CM_LOG_E("invalid config count:%u", config->count);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    uint32_t allocSize = sizeof(struct CmConfigItem) * config->count;
+    config->configItems = (struct CmConfigItem *)CmMalloc(allocSize);
+    if (config->configItems == NULL) {
+        CM_LOG_E("malloc failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(config->configItems, allocSize, 0, allocSize);
+
+    int32_t ret = CopyConfigItemsFromBlob(configBlob->data + offset,
+        configBlob->size - offset, config->count, config->configItems);
+    if (ret != CM_SUCCESS) {
+        CM_FREE_PTR(config->configItems);
+    }
+    return ret;
+}
+
+static int32_t PackConfigToBuffer(const struct CertManagerConfig *config, struct CmBlob *outData)
+{
+    if (outData == NULL) {
+        return CMR_ERROR_NULL_POINTER;
+    }
+    uint32_t outOffset = 0;
+    int32_t ret = CopyUint32ToBuffer(config->count, outData, &outOffset);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    for (uint32_t i = 0; i < config->count; i++) {
+        struct CmBlob keyBlob = { strlen(config->configItems[i].key) + 1,
+            (uint8_t *)config->configItems[i].key };
+        struct CmBlob valueBlob = { strlen(config->configItems[i].value) + 1,
+            (uint8_t *)config->configItems[i].value };
+        ret = CopyBlobToBuffer(&keyBlob, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+        ret = CopyBlobToBuffer(&valueBlob, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+    }
+    return CM_SUCCESS;
+}
+
+void CmIpcServiceSetCertManagerConfig(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context)
+{
+    (void)outData;
+    int32_t ret = CM_SUCCESS;
+    struct CmBlob configBlob = { 0, NULL };
+    struct CmContext cmContext = {0};
+    struct CmParamSet *paramSet = NULL;
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = &configBlob },
+    };
+
+    do {
+        ret = GetInputParams(paramSetBlob, &paramSet, &cmContext, params, CM_ARRAY_SIZE(params));
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("SetCertManagerConfig get input params failed, ret = %d", ret);
+            break;
+        }
+
+        struct CertManagerConfig config = { 0, NULL };
+        ret = UnpackConfigFromBlob(&configBlob, &config);
+        if (ret != CM_SUCCESS) {
+            break;
+        }
+
+        ret = CmServiceSetCertManagerConfig(&config);
+        CM_FREE_PTR(config.configItems);
+    } while (0);
+
+    CmSendResponse(context, ret, NULL);
+    CmFreeParamSet(&paramSet);
+    CM_LOG_I("leave CmIpcServiceSetCertManagerConfig: ret = %d", ret);
+}
+
+void CmIpcServiceGetCertManagerConfig(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context)
+{
+    int32_t ret = CM_SUCCESS;
+    struct CmBlob keysBlob = { 0, NULL };
+    struct CmContext cmContext = {0};
+    struct CmParamSet *paramSet = NULL;
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = &keysBlob },
+    };
+
+    do {
+        ret = GetInputParams(paramSetBlob, &paramSet, &cmContext, params, CM_ARRAY_SIZE(params));
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("GetCertManagerConfig get input params failed, ret = %d", ret);
+            break;
+        }
+
+        struct CertManagerConfig config = { 0, NULL };
+        if (keysBlob.size == 0) {
+            ret = CmServiceGetCertManagerConfig(NULL, &config);
+        } else {
+            ret = CmServiceGetCertManagerConfig(&keysBlob, &config);
+        }
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("CmServiceGetCertManagerConfig fail, ret = %d", ret);
+            break;
+        }
+
+        ret = PackConfigToBuffer(&config, outData);
+        CM_FREE_PTR(config.configItems);
+    } while (0);
+
+    if (ret != CM_SUCCESS) {
+        CmSendResponse(context, ret, NULL);
+    } else {
+        CmSendResponse(context, ret, outData);
+    }
+    CmFreeParamSet(&paramSet);
+    CM_LOG_I("leave CmIpcServiceGetCertManagerConfig: ret = %d", ret);
+}

@@ -98,6 +98,10 @@ int32_t CmSetStatusBackupCert(
 int32_t CmServiceCheckAppPermission(const struct CmContext *context, const struct CmBlob *keyUri,
     uint32_t *hasPermission, struct CmBlob *huksAlias);
 
+int32_t CmServiceSetCertManagerConfig(const struct CertManagerConfig *config);
+
+int32_t CmServiceGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertManagerConfig *config);
+
 #ifdef __cplusplus
 }
 #endif
