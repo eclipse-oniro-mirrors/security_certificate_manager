@@ -65,7 +65,7 @@ int32_t CreateCertManagerConfigRdb(void)
 int32_t InsertOrUpdateConfig(const char *key, const char *value)
 {
     CM_LOG_D("enter InsertOrUpdateConfig");
-    if (key == NULL || value == NULL) {
+    if (key == nullptr || value == nullptr) {
         CM_LOG_E("invalid argument");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
@@ -119,7 +119,7 @@ static int32_t ReadConfigValueFromResultSet(const std::shared_ptr<NativeRdb::Abs
 int32_t QueryConfigByKey(const char *key, char *value, uint32_t valueLen)
 {
     CM_LOG_D("enter QueryConfigByKey");
-    if (key == NULL || value == NULL || valueLen == 0) {
+    if (key == nullptr || value == nullptr || valueLen == 0) {
         CM_LOG_E("invalid argument");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
@@ -196,7 +196,7 @@ static int32_t ReadAllConfigRows(
 {
     uint32_t allocSize = sizeof(struct CmConfigItem) * itemCount;
     struct CmConfigItem *itemArr = static_cast<struct CmConfigItem *>(CmMalloc(allocSize));
-    if (itemArr == NULL) {
+    if (itemArr == nullptr) {
         CM_LOG_E("malloc failed");
         return CMR_ERROR_MALLOC_FAIL;
     }
@@ -224,7 +224,7 @@ static int32_t ReadAllConfigRows(
 int32_t QueryAllConfig(struct CertManagerConfig *config)
 {
     CM_LOG_D("enter QueryAllConfig");
-    if (config == NULL) {
+    if (config == nullptr) {
         CM_LOG_E("invalid argument");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
@@ -249,7 +249,7 @@ int32_t QueryAllConfig(struct CertManagerConfig *config)
 
     if (rowCount <= 0) {
         config->count = 0;
-        config->configItems = NULL;
+        config->configItems = nullptr;
         absSharedResultSet->Close();
         return CM_SUCCESS;
     }
@@ -262,7 +262,7 @@ int32_t QueryAllConfig(struct CertManagerConfig *config)
 
     uint32_t itemCount = static_cast<uint32_t>(rowCount);
     uint32_t validCount = 0;
-    struct CmConfigItem *items = NULL;
+    struct CmConfigItem *items = nullptr;
     int32_t readRet = ReadAllConfigRows(absSharedResultSet, itemCount, &items, &validCount);
     absSharedResultSet->Close();
     if (readRet != CM_SUCCESS) {

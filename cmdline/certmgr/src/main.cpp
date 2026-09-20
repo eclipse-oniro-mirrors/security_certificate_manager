@@ -16,9 +16,11 @@
 #include "certmgr_command.h"
 #include "certmgr_help.h"
 
+static constexpr int MIN_ARG_COUNT = 2;
+
 int main(int argc, char *argv[])
 {
-    if (argc < 2) {
+    if (argc < MIN_ARG_COUNT) {
         CertMgr::CertMgrCommand::WriteStdOut(CertMgr::HELP_MAIN);
         return 1;
     }
@@ -34,7 +36,7 @@ int main(int argc, char *argv[])
     if (cmd == nullptr) {
         CertMgr::CertMgrCommand::WriteStdErr("Unknown command: " + command + "\n");
         CertMgr::CertMgrCommand::WriteStdOut(CertMgr::HELP_MAIN);
-        return 29700006;
+        return CertMgr::CM_CMD_ERR_PARAM_INVALID;
     }
 
     int32_t ret = cmd->Execute(argc, argv);

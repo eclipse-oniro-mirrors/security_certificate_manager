@@ -1293,18 +1293,9 @@ int32_t CmClientCheckAppPermission(const struct CmBlob *keyUri, uint32_t appUid,
     return ret;
 }
 
-int32_t CmClientSetCertManagerConfig(const struct CertManagerConfig *config)
+static int32_t PackCertManagerConfig(const struct CertManagerConfig *config,
+    uint8_t **outBuf, uint32_t *outSize)
 {
-    if (config == NULL || config->configItems == NULL || config->count == 0 ||
-        config->count > MAX_COUNT_CONFIG_ITEM) {
-        CM_LOG_E("invalid config argument");
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-
-    int32_t ret = CM_SUCCESS;
-    struct CmBlob parcelBlob = { 0, NULL };
-    struct CmParamSet *sendParamSet = NULL;
-
     /* pack config into a blob: count(4bytes) + (key + value) * count */
     uint32_t configBufSize = sizeof(uint32_t) +
         (MAX_LEN_CONFIG_KEY + MAX_LEN_CONFIG_VALUE) * config->count;
@@ -1335,7 +1326,31 @@ int32_t CmClientSetCertManagerConfig(const struct CertManagerConfig *config)
         offset += MAX_LEN_CONFIG_VALUE;
     }
 
-    struct CmBlob configBlob = { offset, configBuf };
+    *outBuf = configBuf;
+    *outSize = offset;
+    return CM_SUCCESS;
+}
+
+int32_t CmClientSetCertManagerConfig(const struct CertManagerConfig *config)
+{
+    if (config == NULL || config->configItems == NULL || config->count == 0 ||
+        config->count > MAX_COUNT_CONFIG_ITEM) {
+        CM_LOG_E("invalid config argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CM_SUCCESS;
+    struct CmBlob parcelBlob = { 0, NULL };
+    struct CmParamSet *sendParamSet = NULL;
+
+    uint8_t *configBuf = NULL;
+    uint32_t configSize = 0;
+    ret = PackCertManagerConfig(config, &configBuf, &configSize);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    struct CmBlob configBlob = { configSize, configBuf };
     struct CmParam params[] = {
         { .tag = CM_TAG_PARAM0_BUFFER, .blob = configBlob },
     };
@@ -1369,6 +1384,75 @@ static int32_t GetCertManagerConfigInitOutData(struct CmBlob *outBlob)
         return CMR_ERROR_MALLOC_FAIL;
     }
     outBlob->size = buffSize;
+    return CM_SUCCESS;
+}
+
+static int32_t UnpackConfigItem(struct CmConfigItem *item,
+    const struct CmBlob *outBlob, uint32_t *outOffset)
+{
+    struct CmBlob keyBlob = { 0, NULL };
+    int32_t ret = CmGetBlobFromBuffer(&keyBlob, outBlob, outOffset);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("get key blob failed");
+        return ret;
+    }
+    if (memcpy_s(item->key, MAX_LEN_CONFIG_KEY, keyBlob.data, keyBlob.size) != EOK) {
+        CM_LOG_E("memcpy_s key failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+
+    struct CmBlob valueBlob = { 0, NULL };
+    ret = CmGetBlobFromBuffer(&valueBlob, outBlob, outOffset);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("get value blob failed");
+        return ret;
+    }
+    if (memcpy_s(item->value, MAX_LEN_CONFIG_VALUE, valueBlob.data, valueBlob.size) != EOK) {
+        CM_LOG_E("memcpy_s value failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    return CM_SUCCESS;
+}
+
+static int32_t UnpackCertManagerConfig(const struct CmBlob *outBlob, struct CertManagerConfig *config)
+{
+    uint32_t outOffset = 0;
+    uint32_t count = 0;
+    int32_t ret = GetUint32FromBuffer(&count, outBlob, &outOffset);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("get config count failed");
+        return ret;
+    }
+
+    if (count == 0) {
+        config->count = 0;
+        config->configItems = NULL;
+        return CM_SUCCESS;
+    }
+
+    if (count > MAX_COUNT_CONFIG_ITEM) {
+        CM_LOG_E("config count %u exceeds max", count);
+        return CMR_ERROR_INVALID_OPERATION;
+    }
+
+    uint32_t allocSize = sizeof(struct CmConfigItem) * count;
+    struct CmConfigItem *items = (struct CmConfigItem *)CmMalloc(allocSize);
+    if (items == NULL) {
+        CM_LOG_E("malloc items failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(items, allocSize, 0, allocSize);
+
+    for (uint32_t i = 0; i < count; i++) {
+        ret = UnpackConfigItem(&items[i], outBlob, &outOffset);
+        if (ret != CM_SUCCESS) {
+            CM_FREE_PTR(items);
+            return ret;
+        }
+    }
+
+    config->count = count;
+    config->configItems = items;
     return CM_SUCCESS;
 }
 
@@ -1412,73 +1496,7 @@ int32_t CmClientGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertM
             break;
         }
 
-        /* unpack result */
-        uint32_t outOffset = 0;
-        uint32_t count = 0;
-        ret = GetUint32FromBuffer(&count, &outBlob, &outOffset);
-        if (ret != CM_SUCCESS) {
-            CM_LOG_E("get config count failed");
-            break;
-        }
-
-        if (count == 0) {
-            config->count = 0;
-            config->configItems = NULL;
-            break;
-        }
-
-        if (count > MAX_COUNT_CONFIG_ITEM) {
-            CM_LOG_E("config count %u exceeds max", count);
-            ret = CMR_ERROR_INVALID_OPERATION;
-            break;
-        }
-
-        uint32_t allocSize = sizeof(struct CmConfigItem) * count;
-        struct CmConfigItem *items = (struct CmConfigItem *)CmMalloc(allocSize);
-        if (items == NULL) {
-            CM_LOG_E("malloc items failed");
-            ret = CMR_ERROR_MALLOC_FAIL;
-            break;
-        }
-        (void)memset_s(items, allocSize, 0, allocSize);
-
-        for (uint32_t i = 0; i < count; i++) {
-            struct CmBlob keyBlob = { 0, NULL };
-            ret = CmGetBlobFromBuffer(&keyBlob, &outBlob, &outOffset);
-            if (ret != CM_SUCCESS) {
-                CM_LOG_E("get key blob failed");
-                CM_FREE_PTR(items);
-                break;
-            }
-            if (memcpy_s(items[i].key, MAX_LEN_CONFIG_KEY, keyBlob.data, keyBlob.size) != EOK) {
-                CM_LOG_E("memcpy_s key failed");
-                CM_FREE_PTR(items);
-                items = NULL;
-                ret = CMR_ERROR_MEM_OPERATION_COPY;
-                break;
-            }
-
-            struct CmBlob valueBlob = { 0, NULL };
-            ret = CmGetBlobFromBuffer(&valueBlob, &outBlob, &outOffset);
-            if (ret != CM_SUCCESS) {
-                CM_LOG_E("get value blob failed");
-                CM_FREE_PTR(items);
-                items = NULL;
-                break;
-            }
-            if (memcpy_s(items[i].value, MAX_LEN_CONFIG_VALUE, valueBlob.data, valueBlob.size) != EOK) {
-                CM_LOG_E("memcpy_s value failed");
-                CM_FREE_PTR(items);
-                items = NULL;
-                ret = CMR_ERROR_MEM_OPERATION_COPY;
-                break;
-            }
-        }
-
-        if (ret == CM_SUCCESS) {
-            config->count = count;
-            config->configItems = items;
-        }
+        ret = UnpackCertManagerConfig(&outBlob, config);
     } while (0);
 
     CmFreeParamSet(&sendParamSet);

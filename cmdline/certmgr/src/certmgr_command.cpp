@@ -43,10 +43,6 @@ using namespace OHOS;
 
 namespace CertMgr {
 
-// ============================================================
-// Shared utility functions
-// ============================================================
-
 int32_t ReadFileData(const std::string &filePath, struct CmBlob &outBlob)
 {
     FILE *fp = fopen(filePath.c_str(), "rb");
@@ -187,7 +183,6 @@ int32_t CheckGlobalUserCaPermission(int32_t userId)
     }
 
     bool inEnableList = !cfg.enableList.empty() && IsUserIdInList(cfg.enableList, userId);
-
     if (cfg.defaultConfig == "disable" && !inEnableList) {
         CertMgrCommand::WriteStdErr(PERMISSION_DENIED_MSG);
         return CM_CMD_ERR_PERMISSION_DENIED;
@@ -226,10 +221,6 @@ std::string ConvertErrCodeToMsg(int32_t errCode)
             return "Error code: " + std::to_string(errCode);
     }
 }
-
-// ============================================================
-// IAM User Authentication (BeginWidgetAuth)
-// ============================================================
 
 namespace {
 using namespace OHOS::UserIam::UserAuth;
@@ -277,9 +268,6 @@ public:
 
     void OnResult(int32_t result, const Attributes &extraInfo) override
     {
-        /* Similar to sudo's WaitForAuth: callback sets result + notifies waiter.
-         * Duplicate OnResult (e.g. from OnServiceDeath) is safely ignored by
-         * checking done_ under lock — no promise, no exception, no SIGABRT. */
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (done_) {
@@ -297,12 +285,18 @@ private:
     int32_t &result_;
     bool &done_;
 };
-} // anonymous namespace
+}
+
+static constexpr size_t CHALLENGE_LEN = 8;
 
 static std::vector<uint8_t> GenerateChallenge()
 {
-    std::vector<uint8_t> challenge(8);
-    std::mt19937 rng(static_cast<unsigned>(time(nullptr)));
+    std::vector<uint8_t> challenge(CHALLENGE_LEN);
+    time_t now = time(nullptr);
+    if (now == static_cast<time_t>(-1)) {
+        now = 0;
+    }
+    std::mt19937 rng(static_cast<unsigned>(now));
     for (size_t i = 0; i < challenge.size(); i++) {
         challenge[i] = static_cast<uint8_t>(rng() & 0xFF);
     }
@@ -315,10 +309,10 @@ static int32_t MapAuthResult(int32_t authResult)
         return CM_SUCCESS;
     }
     if (authResult == static_cast<int32_t>(ResultCode::CANCELED)) {
-        fprintf(stderr, "User cancelled authentication\n");
+        WriteStdErr("User cancelled authentication\n");
         return CM_CMD_ERR_USER_CANCELLED;
     }
-    fprintf(stderr, "User authentication failed, authResult: %d\n", authResult);
+    WriteStdErr("User authentication failed\n");
     return CMR_ERROR_AUTH_CHECK_FAILED;
 }
 
@@ -355,10 +349,6 @@ int32_t AuthenticateUser(int32_t userId)
     return MapAuthResult(authResult);
 }
 
-// ============================================================
-// Admin authentication via AcquireAuthorization
-// ============================================================
-
 class AdminAuthCallback final : public AccountSA::AuthorizationCallback {
 public:
     explicit AdminAuthCallback(std::shared_ptr<std::promise<int32_t>> promise) : promise_(promise) {}
@@ -387,52 +377,6 @@ public:
 private:
     std::shared_ptr<std::promise<int32_t>> promise_;
 };
-
-int32_t AuthenticateAdmin()
-{
-    /* Generate random challenge */
-    std::vector<uint8_t> challenge(8);
-    std::mt19937 rng(static_cast<unsigned>(time(nullptr)));
-    for (size_t i = 0; i < challenge.size(); i++) {
-        challenge[i] = static_cast<uint8_t>(rng() & 0xFF);
-    }
-
-    /* Build authorization options */
-    AccountSA::AcquireAuthorizationOptions options;
-    options.challenge = challenge;
-    options.isReuseNeeded = false;
-    options.isInteractionAllowed = true;
-    /* hasContext = false → modal mode (no interaction context specified) */
-
-    /* Set up async callback with promise */
-    auto promise = std::make_shared<std::promise<int32_t>>();
-    std::future<int32_t> future = promise->get_future();
-    auto callback = std::make_shared<AdminAuthCallback>(promise);
-
-    ErrCode err = AccountSA::AuthorizationClient::GetInstance().AcquireAuthorization(
-        "ohos.privilege.manage_device_certificate", options, callback);
-    if (err != 0) {
-        fprintf(stderr, "AcquireAuthorization failed, errCode: %d\n", err);
-        promise->set_value(CMR_ERROR_AUTH_CHECK_FAILED);
-        return CMR_ERROR_AUTH_CHECK_FAILED;
-    }
-
-    /* Wait for authorization result */
-    int32_t authResult = future.get();
-    if (authResult == CM_SUCCESS) {
-        return CM_SUCCESS;
-    }
-    if (authResult == CM_CMD_ERR_USER_CANCELLED) {
-        fprintf(stderr, "User cancelled admin authorization\n");
-        return CM_CMD_ERR_USER_CANCELLED;
-    }
-    fprintf(stderr, "Admin authorization failed\n");
-    return CMR_ERROR_AUTH_CHECK_FAILED;
-}
-
-// ============================================================
-// CertMgrCommand - shared implementation
-// ============================================================
 
 int32_t CertMgrCommand::Execute(int argc, char *argv[])
 {
@@ -477,13 +421,9 @@ int32_t CertMgrCommand::GetUserId()
     return ids[0];
 }
 
-// ============================================================
-// InstallUserCACommand
-// ============================================================
-
 int32_t InstallUserCACommand::ParseArgs(int argc, char *argv[])
 {
-    /* First pass: check for -h (highest priority, ignore other errors) */
+    /* check for -h (highest priority, ignore other errors) */
     for (int i = 2; i < argc; i++) {
         if (std::string(argv[i]) == "-h") {
             WriteStdOut(HELP_INSTALL);
@@ -491,8 +431,9 @@ int32_t InstallUserCACommand::ParseArgs(int argc, char *argv[])
         }
     }
 
-    /* Second pass: parse all other parameters */
-    for (int i = 2; i < argc; i++) {
+    /* parse all other parameters */
+    int i = 2;
+    while (i < argc) {
         std::string arg = argv[i];
         if (arg == "-g") {
             hasG_ = true;
@@ -526,6 +467,7 @@ int32_t InstallUserCACommand::ParseArgs(int argc, char *argv[])
             certFilePath_ = arg;
             hasCertFile_ = true;
         }
+        i++;
     }
     return 0;
 }
@@ -561,7 +503,6 @@ int32_t InstallUserCACommand::AuthenticateAndCheckPermission(int32_t &userId)
             return ret;
         }
         userId = 0;
-        return AuthenticateAdmin();
     }
     return AuthenticateUser(userId);
 }

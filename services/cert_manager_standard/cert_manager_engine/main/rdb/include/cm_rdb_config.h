@@ -20,8 +20,7 @@
 #include <vector>
 
 const int32_t RDB_VERSION_FIRST = 1;
-const int32_t RDB_VERSION_SECOND = 2;
-const int32_t RDB_VERSION_CURRENT = 3;
+const int32_t RDB_VERSION_CURRENT = 2;
 
 const std::string CERT_MANAGER_RDB_NAME = "/cert_manager.db";
 const std::string CERT_PROPERTY_TABLE_NAME = "cert_property";

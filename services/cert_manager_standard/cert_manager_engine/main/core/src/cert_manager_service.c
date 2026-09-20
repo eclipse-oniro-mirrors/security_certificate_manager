@@ -1392,6 +1392,52 @@ int32_t CmServiceSetCertManagerConfig(const struct CertManagerConfig *config)
     return CM_SUCCESS;
 }
 
+static int32_t QuerySpecificConfigKeys(const struct CmBlob *keysBlob, struct CertManagerConfig *config)
+{
+    uint32_t keyCount = 0;
+    uint32_t allocSize = sizeof(struct CmConfigItem) * MAX_COUNT_CONFIG_ITEM;
+    struct CmConfigItem *items = (struct CmConfigItem *)CMMalloc(allocSize);
+    if (items == NULL) {
+        CM_LOG_E("malloc failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(items, allocSize, 0, allocSize);
+
+    uint32_t offset = 0;
+    int32_t ret = CM_SUCCESS;
+    while (offset < keysBlob->size && keyCount < MAX_COUNT_CONFIG_ITEM) {
+        const char *key = (const char *)(keysBlob->data + offset);
+        uint32_t keyLen = strlen(key);
+        if (keyLen == 0) {
+            break;
+        }
+        ret = QueryConfigByKey(key, items[keyCount].value, MAX_LEN_CONFIG_VALUE);
+        if (ret == CM_SUCCESS) {
+            if (memcpy_s(items[keyCount].key, MAX_LEN_CONFIG_KEY, key, keyLen + 1) != EOK) {
+                CM_LOG_E("memcpy_s key failed");
+                CM_FREE_PTR(items);
+                return CMR_ERROR_MEM_OPERATION_COPY;
+            }
+            keyCount++;
+        } else if (ret == CMR_ERROR_NOT_FOUND) {
+            /* key not found in db, skip */
+            CM_LOG_D("config key:%s not found, skip", key);
+        } else {
+            CM_LOG_E("QueryConfigByKey fail for key:%s, ret = %d", key, ret);
+            CM_FREE_PTR(items);
+            return ret;
+        }
+        offset += keyLen + 1;
+    }
+
+    if (keyCount == 0) {
+        CM_FREE_PTR(items);
+    }
+    config->count = keyCount;
+    config->configItems = items;
+    return CM_SUCCESS;
+}
+
 int32_t CmServiceGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertManagerConfig *config)
 {
     CM_LOG_I("enter CmServiceGetCertManagerConfig");
@@ -1424,46 +1470,7 @@ int32_t CmServiceGetCertManagerConfig(const struct CmBlob *keysBlob, struct Cert
     }
 
     /* query specific keys */
-    uint32_t keyCount = 0;
-    uint32_t allocSize = sizeof(struct CmConfigItem) * MAX_COUNT_CONFIG_ITEM;
-    struct CmConfigItem *items = (struct CmConfigItem *)CMMalloc(allocSize);
-    if (items == NULL) {
-        CM_LOG_E("malloc failed");
-        return CMR_ERROR_MALLOC_FAIL;
-    }
-    (void)memset_s(items, allocSize, 0, allocSize);
-
-    uint32_t offset = 0;
-    while (offset < keysBlob->size && keyCount < MAX_COUNT_CONFIG_ITEM) {
-        const char *key = (const char *)(keysBlob->data + offset);
-        uint32_t keyLen = strlen(key);
-        if (keyLen == 0) {
-            break;
-        }
-        ret = QueryConfigByKey(key, items[keyCount].value, MAX_LEN_CONFIG_VALUE);
-        if (ret == CM_SUCCESS) {
-            if (memcpy_s(items[keyCount].key, MAX_LEN_CONFIG_KEY, key, keyLen + 1) != EOK) {
-                CM_LOG_E("memcpy_s key failed");
-                CM_FREE_PTR(items);
-                return CMR_ERROR_MEM_OPERATION_COPY;
-            }
-            keyCount++;
-        } else if (ret == CMR_ERROR_NOT_FOUND) {
-            /* key not found in db, skip */
-            CM_LOG_D("config key:%s not found, skip", key);
-        } else {
-            CM_LOG_E("QueryConfigByKey fail for key:%s, ret = %d", key, ret);
-            CM_FREE_PTR(items);
-            return ret;
-        }
-        offset += keyLen + 1;
-    }
-
-    if (keyCount == 0) {
-        CM_FREE_PTR(items);
-    }
-    config->count = keyCount;
-    config->configItems = items;
-    CM_LOG_I("leave CmServiceGetCertManagerConfig, count = %u", keyCount);
-    return CM_SUCCESS;
+    ret = QuerySpecificConfigKeys(keysBlob, config);
+    CM_LOG_I("leave CmServiceGetCertManagerConfig, count = %u", config->count);
+    return ret;
 }

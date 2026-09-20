@@ -30,68 +30,39 @@ constexpr int32_t CM_CMD_ERR_PARAM_INVALID = 29700006;
 constexpr int32_t CM_CMD_ERR_PERMISSION_DENIED = 29700005;
 constexpr int32_t CM_CMD_ERR_USER_CANCELLED = 29700002;
 
-// ============================================================
-// Shared utility functions
-// ============================================================
-
-// Read a file into a CmBlob (caller must free with CmFree)
 int32_t ReadFileData(const std::string &filePath, struct CmBlob &outBlob);
 
-// Read from stdin pipe into a CmBlob (caller must free with CmFree)
 int32_t ReadPipeData(struct CmBlob &outBlob);
 
-// Check if stdin has pipe data available
 bool HasPipeInput();
 
-// Check if the current user is allowed to install global user CA
 int32_t CheckGlobalUserCaPermission(int32_t userId);
 
-// Convert CM error code to user-readable message
 std::string ConvertErrCodeToMsg(int32_t errCode);
 
-// Authenticate current user via IAM BeginWidgetAuth (PIN/Face/Fingerprint)
-// Returns CM_SUCCESS on success, CM_CMD_ERR_USER_CANCELLED if user cancels,
-// or other error codes on failure.
 int32_t AuthenticateUser(int32_t userId);
 
-// Authenticate admin via AcquireAuthorization (privilege: manage_device_certificate)
-// Returns CM_SUCCESS on success, CM_CMD_ERR_USER_CANCELLED if user cancels,
-// or other error codes on failure.
 int32_t AuthenticateAdmin();
-
-// ============================================================
-// Base command
-// ============================================================
 
 class CertMgrCommand {
 public:
     virtual ~CertMgrCommand() = default;
 
-    // Parse args, validate, then run. Returns CM_SUCCESS (0) or error code.
     int32_t Execute(int argc, char *argv[]);
 
-    // Factory: create command by name, or nullptr if unknown
     static std::unique_ptr<CertMgrCommand> Create(const std::string &name);
 
-    // Shared utilities
     static void WriteStdErr(const std::string &msg);
     static void WriteStdOut(const std::string &msg);
     static int32_t GetUserId();
 
 protected:
-    // Step 1: parse arguments starting from argv[2], return 0 on success
     virtual int32_t ParseArgs(int argc, char *argv[]) = 0;
 
-    // Step 2: validate parsed state, return 0 on success
     virtual int32_t Validate() = 0;
 
-    // Step 3: execute the command logic, return 0 on success
     virtual int32_t Run() = 0;
 };
-
-// ============================================================
-// InstallUserCA command
-// ============================================================
 
 class InstallUserCACommand final : public CertMgrCommand {
 public:

@@ -25,10 +25,10 @@ extern "C" {
 #endif
 #ifndef CM_API_PUBLIC
     #if defined(WIN32) || defined(_WIN32) || defined(__CYGWIN__) || defined(__ICCARM__) /* __ICCARM__ for iar */
-        #define CM_API_EXPORT
-    #else
-        #define CM_API_EXPORT __attribute__ ((visibility("default")))
-    #endif
+            #define CM_API_EXPORT
+#else
+    #define CM_API_EXPORT __attribute__ ((visibility("default")))
+#endif
 #else
     #define CM_API_EXPORT __attribute__ ((visibility("default")))
 #endif

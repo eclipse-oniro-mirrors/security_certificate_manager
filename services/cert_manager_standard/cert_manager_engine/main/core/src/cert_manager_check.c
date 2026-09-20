@@ -660,7 +660,7 @@ int32_t CheckInstallMultiCertCount(const struct CmContext *context, const uint32
     return CM_SUCCESS;
 }
 
-static const char *SUPPORTED_CONFIG_KEYS[] = {
+static const char *g_supportedConfigKeys[] = {
     "installGlobalUserCA_defaultConfig",
     "enableInstallGlobalUserCA_userList",
     "disableInstallGlobalUserCA_userList",
@@ -668,8 +668,8 @@ static const char *SUPPORTED_CONFIG_KEYS[] = {
 
 static bool IsConfigKeySupported(const char *key)
 {
-    for (uint32_t i = 0; i < sizeof(SUPPORTED_CONFIG_KEYS) / sizeof(SUPPORTED_CONFIG_KEYS[0]); i++) {
-        if (strcmp(key, SUPPORTED_CONFIG_KEYS[i]) == 0) {
+    for (uint32_t i = 0; i < sizeof(g_supportedConfigKeys) / sizeof(g_supportedConfigKeys[0]); i++) {
+        if (strcmp(key, g_supportedConfigKeys[i]) == 0) {
             return true;
         }
     }

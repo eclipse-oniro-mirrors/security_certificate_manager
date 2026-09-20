@@ -35,16 +35,10 @@ int32_t CmRdbOpenCallback::OnUpgrade(NativeRdb::RdbStore &rdbStore, int currentV
     CM_LOG_I("CmRdbOpenCallback OnUpgrade : database upgrade. currentVersion = %{public}d, newVersion = %{public}d",
         currentVersion, targetVersion);
     /* Upgrade the database: Add the AUTH_STORAGE_LEVEL column with a default value of 1 (EL1).  */
-    if (currentVersion == RDB_VERSION_FIRST && targetVersion > RDB_VERSION_FIRST) {
+    if (currentVersion == RDB_VERSION_FIRST && targetVersion == RDB_VERSION_CURRENT) {
         int32_t ret = rdbStore.ExecuteSql("ALTER TABLE " + CERT_PROPERTY_TABLE_NAME + " ADD COLUMN " +
             COLUMN_AUTH_STORAGE_LEVEL + " INTEGER DEFAULT 1;");
         CM_LOG_I("Upgrade execute sql ret: %d", ret);
-    }
-    /* Upgrade the database: Create cert_manager_config table */
-    if (currentVersion < RDB_VERSION_CURRENT && targetVersion == RDB_VERSION_CURRENT) {
-        int32_t ret = rdbStore.ExecuteSql("CREATE TABLE IF NOT EXISTS " + CERT_MANAGER_CONFIG_TABLE_NAME +
-            "(CONFIG_KEY TEXT PRIMARY KEY, CONFIG_VALUE TEXT NOT NULL);");
-        CM_LOG_I("Upgrade create config table ret: %d", ret);
     }
     return NativeRdb::E_OK;
 }
