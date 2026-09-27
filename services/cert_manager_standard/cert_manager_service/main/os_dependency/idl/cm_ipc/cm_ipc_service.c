@@ -1597,10 +1597,12 @@ static int32_t CopyConfigItemsFromBlob(const uint8_t *data, uint32_t dataSize,
         if (memcpy_s(items[i].key, MAX_LEN_CONFIG_KEY, data + offset, MAX_LEN_CONFIG_KEY) != EOK) {
             return CMR_ERROR_MEM_OPERATION_COPY;
         }
+        items[i].key[MAX_LEN_CONFIG_KEY - 1] = '\0';
         offset += MAX_LEN_CONFIG_KEY;
         if (memcpy_s(items[i].value, MAX_LEN_CONFIG_VALUE, data + offset, MAX_LEN_CONFIG_VALUE) != EOK) {
             return CMR_ERROR_MEM_OPERATION_COPY;
         }
+        items[i].value[MAX_LEN_CONFIG_VALUE - 1] = '\0';
         offset += MAX_LEN_CONFIG_VALUE;
     }
     return CM_SUCCESS;
@@ -1626,6 +1628,14 @@ static int32_t UnpackConfigFromBlob(const struct CmBlob *configBlob, struct Cert
 
     if (config->count == 0 || config->count > MAX_COUNT_CONFIG_ITEM) {
         CM_LOG_E("invalid config count:%u", config->count);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    /* Validate blob has enough data before allocating memory */
+    uint32_t neededSize = sizeof(uint32_t) + (uint64_t)config->count *
+        (MAX_LEN_CONFIG_KEY + MAX_LEN_CONFIG_VALUE);
+    if (configBlob->size < neededSize) {
+        CM_LOG_E("config blob size %u not enough for count %u", configBlob->size, config->count);
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 

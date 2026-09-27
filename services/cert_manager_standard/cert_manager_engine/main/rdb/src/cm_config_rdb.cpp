@@ -207,7 +207,11 @@ static int32_t ReadAllConfigRows(
     while (ret == NativeRdb::E_OK) {
         int32_t readRet = ReadConfigRow(resultSet, &itemArr[count]);
         if (readRet != CM_SUCCESS) {
-            break;
+            CM_LOG_E("ReadConfigRow failed at row %u", count);
+            CM_FREE_PTR(itemArr);
+            *items = nullptr;
+            *validCount = 0;
+            return CMR_ERROR_QUERY_RDB_DATA_FAIL;
         }
         count++;
         ret = resultSet->GoToNextRow();

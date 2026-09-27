@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+#include <unistd.h>
+
 #include "certmgr_command.h"
 #include "certmgr_help.h"
 
@@ -41,5 +43,5 @@ int main(int argc, char *argv[])
 
     int32_t ret = cmd->Execute(argc, argv);
     // -1 means help was printed, treat as success
-    return (ret == -1) ? 0 : ret;
+    _exit((ret == -1) ? 0 : ret);
 }

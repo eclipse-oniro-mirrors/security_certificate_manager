@@ -22,7 +22,7 @@
       ],
       "features": [
         "certificate_manager_deps_huks_enabled",
-        "certificate_manager_compile_certmgr",
+        "certificate_manager_feature_cmdline_enabled",
         "certificate_manager_feature_ca_enabled",
         "certificate_manager_feature_credential_enabled",
         "certificate_manager_feature_dialog_enabled"

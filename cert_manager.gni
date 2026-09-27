@@ -30,7 +30,7 @@ declare_args() {
   }
 
   # Control whether to compile certmgr cmdline tool
-  certificate_manager_compile_certmgr = true
+  certificate_manager_feature_cmdline_enabled = false
 }
 
 # 当且仅当底层存在 hiviewdfx_api_metrics_ext 部件�?才打开 cert_manager �?NAPI/ANI 打点

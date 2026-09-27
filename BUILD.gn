@@ -252,7 +252,7 @@ group("cert_manager_components") {
 }
 
 group("cert_manager_cmdline") {
-  if (certificate_manager_compile_certmgr == true) {
+  if (certificate_manager_feature_cmdline_enabled == true) {
     deps = [ "./cmdline/certmgr:certmgr" ]
   } else {
     deps = []

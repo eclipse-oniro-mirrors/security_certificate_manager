@@ -1394,6 +1394,14 @@ int32_t CmServiceSetCertManagerConfig(const struct CertManagerConfig *config)
 
 static int32_t QuerySpecificConfigKeys(const struct CmBlob *keysBlob, struct CertManagerConfig *config)
 {
+    if (keysBlob == NULL || keysBlob->data == NULL || keysBlob->size == 0) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (keysBlob->data[keysBlob->size - 1] != '\0') {
+        CM_LOG_E("query config: keysBlob not null-terminated");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
     uint32_t keyCount = 0;
     uint32_t allocSize = sizeof(struct CmConfigItem) * MAX_COUNT_CONFIG_ITEM;
     struct CmConfigItem *items = (struct CmConfigItem *)CMMalloc(allocSize);
@@ -1407,8 +1415,8 @@ static int32_t QuerySpecificConfigKeys(const struct CmBlob *keysBlob, struct Cer
     int32_t ret = CM_SUCCESS;
     while (offset < keysBlob->size && keyCount < MAX_COUNT_CONFIG_ITEM) {
         const char *key = (const char *)(keysBlob->data + offset);
-        uint32_t keyLen = strlen(key);
-        if (keyLen == 0) {
+        uint32_t keyLen = strnlen(key, keysBlob->size - offset);
+        if (keyLen == 0 || keyLen >= MAX_LEN_CONFIG_KEY) {
             break;
         }
         ret = QueryConfigByKey(key, items[keyCount].value, MAX_LEN_CONFIG_VALUE);
@@ -1421,9 +1429,9 @@ static int32_t QuerySpecificConfigKeys(const struct CmBlob *keysBlob, struct Cer
             keyCount++;
         } else if (ret == CMR_ERROR_NOT_FOUND) {
             /* key not found in db, skip */
-            CM_LOG_D("config key:%s not found, skip", key);
+            CM_LOG_D("config key not found, skip");
         } else {
-            CM_LOG_E("QueryConfigByKey fail for key:%s, ret = %d", key, ret);
+            CM_LOG_E("QueryConfigByKey fail, ret = %d", ret);
             CM_FREE_PTR(items);
             return ret;
         }

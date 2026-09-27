@@ -20,9 +20,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <unistd.h>
+#include <fcntl.h>
 #include <vector>
 #include <future>
-#include <random>
 #include <mutex>
 
 #include "securec.h"
@@ -229,33 +229,42 @@ using namespace OHOS::UserIam::UserAuth;
 static constexpr int32_t IAM_AUTH_SUCCESS = 0;
 static constexpr int32_t IAM_ERR_NO_VALID_SOLUTION = 10;
 
+struct LocaleTitleEntry {
+    const char *locale;
+    const char *title;
+};
+
+static const LocaleTitleEntry TITLE_MAP[] = {
+    {"zh-CN", "您正在安装用户CA证书,请确认"},
+    {"en-US", "You are installing a user CA certificate, please confirm"},
+    {"zh-HK", "您正在安裝用戶CA證書,請確認"},
+    {"zh-TW", "您正在安裝使用者CA憑證,請確認"},
+    {"bo-CN", "ཁྱེད་ཀྱིས་སྤྱོད་མཁན་CAདཔང་ཡིག་སྒྲིག་སྦྱོར་བྱེད་བཞིན་ཡོད་པས་གཏན་འཁེལ་གནང་རོགས།"},
+    {"ug-CN", "سىز ھازىر CA گۇۋاھنامىسىنى قاچىلاۋاتىسىز، جەزملەشتۈرۈڭ"}
+};
+
+static const std::vector<std::string> CANDIDATE_LOCALES = {"zh-CN", "en-US", "zh-HK", "zh-TW", "bo-CN", "ug-CN"};
+
 static std::string GetLocalizedTitle()
 {
+    static const std::string defaultTitle = "You are installing a user CA certificate, please confirm";
+
     std::string currentLang = OHOS::Global::I18n::LocaleConfig::GetSimplifiedSystemLanguage();
     if (currentLang.empty()) {
-        return "You are installing a user CA certificate, please confirm";
+        return defaultTitle;
     }
-    std::unordered_map<std::string, std::string> TITLE_MAP = {
-        {"zh-CN", "您正在安装用户CA证书,请确认"},
-        {"en-US", "You are installing a user CA certificate, please confirm"},
-        {"zh-HK", "您正在安裝用戶CA證書,請確認"},
-        {"zh-TW", "您正在安裝使用者CA憑證,請確認"},
-        {"bo-CN", "ཁྱེད་ཀྱིས་སྤྱོད་མཁན་CAདཔང་ཡིག་སྒྲིག་སྦྱོར་བྱེད་བཞིན་ཡོད་པས་གཏན་འཁེལ་གནང་རོགས།"},
-        {"ug-CN", "سىز ھازىر CA گۇۋاھنامىسىنى قاچىلاۋاتىسىز، جەزملەشتۈرۈڭ"}
-    };
 
-    std::vector<std::string> candidateLocales = {"zh-CN", "en-US", "zh-HK", "zh-TW", "bo-CN", "ug-CN"};
-
-    std::string matchedLocale = OHOS::Global::I18n::LocaleMatcher::GetBestMatchedLocale(currentLang, candidateLocales);
+    std::string matchedLocale = OHOS::Global::I18n::LocaleMatcher::GetBestMatchedLocale(currentLang, CANDIDATE_LOCALES);
     if (matchedLocale.empty()) {
-        return "You are installing a user CA certificate, please confirm";
+        return defaultTitle;
     }
 
-    auto it = TITLE_MAP.find(matchedLocale);
-    if (it != TITLE_MAP.end()) {
-        return it->second;
+    for (const auto &entry : TITLE_MAP) {
+        if (matchedLocale == entry.locale) {
+            return entry.title;
+        }
     }
-    return "You are installing a user CA certificate, please confirm";
+    return defaultTitle;
 }
 
 class AuthCallback final : public AuthenticationCallback {
@@ -292,13 +301,14 @@ static constexpr size_t CHALLENGE_LEN = 8;
 static std::vector<uint8_t> GenerateChallenge()
 {
     std::vector<uint8_t> challenge(CHALLENGE_LEN);
-    time_t now = time(nullptr);
-    if (now == static_cast<time_t>(-1)) {
-        now = 0;
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        return {};
     }
-    std::mt19937 rng(static_cast<unsigned>(now));
-    for (size_t i = 0; i < challenge.size(); i++) {
-        challenge[i] = static_cast<uint8_t>(rng() & 0xFF);
+    ssize_t n = read(fd, challenge.data(), challenge.size());
+    close(fd);
+    if (n != static_cast<ssize_t>(challenge.size())) {
+        return {};
     }
     return challenge;
 }
@@ -377,6 +387,51 @@ public:
 private:
     std::shared_ptr<std::promise<int32_t>> promise_;
 };
+
+int32_t AuthenticateAdmin()
+{
+    int32_t userId = CertMgrCommand::GetUserId();
+    if (userId < 0) {
+        CertMgrCommand::WriteStdErr("Failed to get current user ID\n");
+        return CMR_ERROR_INVALID_OPERATION;
+    }
+
+    /* Build authorization options */
+    AccountSA::AcquireAuthorizationOptions options;
+    options.challenge = GenerateChallenge();
+    options.isReuseNeeded = false;
+    options.isInteractionAllowed = true;
+
+    /* SubjectInfo now lives inside options; only pid and uid are required */
+    AccountSA::SubjectInfo subjectInfo;
+    subjectInfo.pid = static_cast<int32_t>(getpid());
+    subjectInfo.uid = static_cast<int32_t>(getuid());
+    options.subjectInfo = std::make_optional(subjectInfo);
+
+    /* Set up async callback with promise */
+    auto promise = std::make_shared<std::promise<int32_t>>();
+    std::future<int32_t> future = promise->get_future();
+    auto callback = std::make_shared<AdminAuthCallback>(promise);
+
+    ErrCode err = AccountSA::AuthorizationClient::GetInstance().AcquireAuthorization(
+        "ohos.privilege.manage_global_scope_certificate", options, callback);
+    if (err != 0) {
+        CertMgrCommand::WriteStdErr("AcquireAuthorization failed, errCode: " + std::to_string(err) + "\n");
+        return CMR_ERROR_AUTH_CHECK_FAILED;
+    }
+
+    /* Wait for authorization result */
+    int32_t authResult = future.get();
+    if (authResult == CM_SUCCESS) {
+        return CM_SUCCESS;
+    }
+    if (authResult == CM_CMD_ERR_USER_CANCELLED) {
+        CertMgrCommand::WriteStdErr("User cancelled admin authorization\n");
+        return CM_CMD_ERR_USER_CANCELLED;
+    }
+    CertMgrCommand::WriteStdErr("Admin authorization failed\n");
+    return CMR_ERROR_AUTH_CHECK_FAILED;
+}
 
 int32_t CertMgrCommand::Execute(int argc, char *argv[])
 {
@@ -491,25 +546,29 @@ int32_t InstallUserCACommand::ReadCertData(struct CmBlob &certBlob)
 
 int32_t InstallUserCACommand::AuthenticateAndCheckPermission(int32_t &userId)
 {
-    userId = GetUserId();
-    if (userId < 0) {
+    int32_t authUserId = GetUserId();
+    if (authUserId < 0) {
         WriteStdErr("Failed to get current user ID\n");
         return CMR_ERROR_INVALID_OPERATION;
     }
 
     if (hasG_) {
-        int32_t ret = CheckGlobalUserCaPermission(userId);
+        int32_t ret = CheckGlobalUserCaPermission(authUserId);
         if (ret != CM_SUCCESS) {
             return ret;
         }
         userId = 0;
+        return AuthenticateAdmin();
     }
-    return AuthenticateUser(userId);
+
+    userId = static_cast<int32_t>(INIT_INVALID_VALUE);
+    return AuthenticateUser(authUserId);
 }
 
 int32_t InstallUserCACommand::InstallPemDer(const struct CmBlob &certBlob, int32_t userId)
 {
-    struct CmBlob aliasBlob = { 1, reinterpret_cast<uint8_t *>(const_cast<char *>("")) };
+    static const uint8_t emptyAlias[] = { '\0' };
+    struct CmBlob aliasBlob = { 1, const_cast<uint8_t *>(emptyAlias) };
     uint8_t *uriBuf = static_cast<uint8_t *>(malloc(MAX_LEN_URI));
     if (uriBuf == nullptr) {
         return CMR_ERROR_MALLOC_FAIL;
@@ -527,7 +586,8 @@ int32_t InstallUserCACommand::InstallPemDer(const struct CmBlob &certBlob, int32
 
 int32_t InstallUserCACommand::InstallP7B(const struct CmBlob &certBlob, int32_t userId)
 {
-    struct CmBlob aliasBlob = { 1, reinterpret_cast<uint8_t *>(const_cast<char *>("")) };
+    static const uint8_t emptyAlias[] = { '\0' };
+    struct CmBlob aliasBlob = { 1, const_cast<uint8_t *>(emptyAlias) };
     struct CmInstallCertInfo installInfo = {
         .userCert = &certBlob,
         .certAlias = &aliasBlob,

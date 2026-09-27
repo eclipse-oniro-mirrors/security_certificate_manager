@@ -768,15 +768,19 @@ int32_t CmServiceGetCertManagerConfigCheckKeys(const struct CmBlob *keysBlob)
 {
     /* if keysBlob is not null, validate each key */
     if (keysBlob != NULL && keysBlob->data != NULL && keysBlob->size > 0) {
+        if (keysBlob->data[keysBlob->size - 1] != '\0') {
+            CM_LOG_E("get config: keysBlob not null-terminated");
+            return CMR_ERROR_INVALID_ARGUMENT;
+        }
         uint32_t offset = 0;
         while (offset < keysBlob->size) {
             const char *key = (const char *)(keysBlob->data + offset);
-            uint32_t keyLen = strlen(key);
-            if (keyLen == 0) {
+            uint32_t keyLen = strnlen(key, keysBlob->size - offset);
+            if (keyLen == 0 || keyLen >= MAX_LEN_CONFIG_KEY) {
                 break;
             }
             if (!IsConfigKeySupported(key)) {
-                CM_LOG_E("get config: unsupported key:%s", key);
+                CM_LOG_E("get config: unsupported key");
                 return CMR_ERROR_INVALID_ARGUMENT;
             }
             offset += keyLen + 1;
