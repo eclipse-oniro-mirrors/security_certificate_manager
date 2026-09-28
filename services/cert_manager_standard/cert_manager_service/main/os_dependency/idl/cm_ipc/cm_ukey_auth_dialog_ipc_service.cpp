@@ -140,11 +140,17 @@ void CmIpcServiceOpenUkeyAuthDialog(uint32_t code, const struct CmBlob *paramSet
      * actually the reply parcel and must not be used for this) */
     struct CmContext procContext = {0};
     (void)CmGetProcessInfoForIPC(&procContext);
-    /* customData points into the paramSet buffer; OpenDialog consumes it
-     * synchronously (written into dialog params) and never references it after */
-    ret = CmUkeyAuthDialogManager::GetInstance().OpenDialog(&keyUri,
-        static_cast<uint32_t>(IPCSkeleton::GetCallingUid()), timeoutSec, &customData,
-        clientCallback, static_cast<int32_t>(procContext.userId));
+    /* keyUri/customData point into the paramSet buffer; OpenDialog consumes
+     * them synchronously (written into dialog params) and never references
+     * them after */
+    UkeyOpenDialogRequest req;
+    req.keyUri = keyUri;
+    req.callerUid = static_cast<uint32_t>(IPCSkeleton::GetCallingUid());
+    req.timeoutSec = timeoutSec;
+    req.customData = customData;
+    req.clientCallback = clientCallback;
+    req.userId = static_cast<int32_t>(procContext.userId);
+    ret = CmUkeyAuthDialogManager::GetInstance().OpenDialog(req);
     CmFreeParamSet(&paramSet);
     CmSendResponse(context, ret, nullptr);
 }

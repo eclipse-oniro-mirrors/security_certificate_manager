@@ -368,17 +368,16 @@ bool QueryDriverUkeyExtensionAbility(const std::string &bundleName,
  * entry's ValidateDriverDialogRequest): blob validity and the customData
  * cap, same check order as the original inline implementation; session
  * single-flight and the ability routing stay inside the lock */
-int32_t ValidateOpenDialogArguments(const struct CmBlob *keyUri,
-    const struct CmBlob *customData, const sptr<IRemoteObject> &clientCallback)
+int32_t ValidateOpenDialogRequest(const UkeyOpenDialogRequest &req)
 {
-    if (keyUri == nullptr || keyUri->data == nullptr || keyUri->size == 0 ||
-        keyUri->size > MAX_LEN_URI || clientCallback == nullptr) {
+    if (req.keyUri.data == nullptr || req.keyUri.size == 0 ||
+        req.keyUri.size > MAX_LEN_URI || req.clientCallback == nullptr) {
         CM_LOG_E("invalid open dialog arguments");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     /* customData re-check (already validated on the client side; defense in depth, spec D19) */
-    if (customData != nullptr && customData->size > CM_UKEY_AUTH_CUSTOM_DATA_MAX_SIZE) {
-        CM_LOG_E("custom data too large: %u", customData->size);
+    if (req.customData.size > CM_UKEY_AUTH_CUSTOM_DATA_MAX_SIZE) {
+        CM_LOG_E("custom data too large: %u", req.customData.size);
         return CMR_DIALOG_ERROR_PARAMETER_VALIDATION_FAILED;
     }
     return CM_SUCCESS;
@@ -571,30 +570,27 @@ int32_t CmUkeyAuthDialogManager::LaunchUiExtensionSessionLocked(const UkeyDialog
     return CM_SUCCESS;
 }
 
-int32_t CmUkeyAuthDialogManager::OpenDialog(const struct CmBlob *keyUri, uint32_t callerUid,
-    uint32_t timeoutSec, const struct CmBlob *customData,
-    const sptr<IRemoteObject> &clientCallback, int32_t userId)
+int32_t CmUkeyAuthDialogManager::OpenDialog(const UkeyOpenDialogRequest &req)
 {
-    int32_t ret = ValidateOpenDialogArguments(keyUri, customData, clientCallback);
+    int32_t ret = ValidateOpenDialogRequest(req);
     if (ret != CM_SUCCESS) {
         return ret;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    uint32_t effectiveTimeoutSec = NormalizeTimeoutSecLocked(timeoutSec);
+    uint32_t effectiveTimeoutSec = NormalizeTimeoutSecLocked(req.timeoutSec);
     if (session_ != nullptr) {
         CM_LOG_E("another ukey auth dialog session is in progress");
         return CMR_DIALOG_ERROR_UKEY_DIALOG_IN_PROGRESS;
     }
 
-    /* Routing (spec v4 §4.1/D22): the SA queries by itself and does not
-     * trust the client-declared ability info (D20); only UIExtensionAbility
-     * + PC is admitted to the SA session path; not registered / UIAbility
-     * is rejected synchronously. */
+    /* Routing (spec v4 §4.1/D22): the SA queries by itself and does not trust
+     * the client-declared ability info (D20); only UIExtensionAbility + PC is
+     * admitted; not registered / UIAbility is rejected synchronously. */
     std::string bundleName;
     std::string abilityName;
     uint32_t abilityType = CM_UKEY_ABILITY_TYPE_UIABILITY;
     int32_t queryRet = (querier_ == nullptr) ? CM_FAILURE
-        : querier_(keyUri, bundleName, abilityName, abilityType, userId);
+        : querier_(&req.keyUri, bundleName, abilityName, abilityType, req.userId);
     if (queryRet != CM_SUCCESS) {
         CM_LOG_E("no ukey driver pin dialog registered for the key uri");
         return CMR_DIALOG_ERROR_NOT_REGISTERED;
@@ -615,13 +611,13 @@ int32_t CmUkeyAuthDialogManager::OpenDialog(const struct CmBlob *keyUri, uint32_
     UkeyDialogLaunchParams params;
     params.bundleName = bundleName;
     params.abilityName = abilityName;
-    params.keyUri = *keyUri;
-    params.callerUid = callerUid;
+    params.keyUri = req.keyUri;
+    params.callerUid = req.callerUid;
     params.timeoutSec = effectiveTimeoutSec;
-    if (customData != nullptr) {
-        params.customData = *customData;
+    if (req.customData.size > 0) {
+        params.customData = req.customData;
     }
-    params.clientCallback = clientCallback;
+    params.clientCallback = req.clientCallback;
     return LaunchUiExtensionSessionLocked(params);
 }
 

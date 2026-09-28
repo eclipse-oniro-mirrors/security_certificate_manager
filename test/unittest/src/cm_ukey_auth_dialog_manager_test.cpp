@@ -111,7 +111,16 @@ public:
     /* convenience wrapper for the OpenDialog signature (customData optional) */
     int32_t Open(uint32_t timeout = 0, const struct CmBlob *customData = nullptr, int32_t userId = 100)
     {
-        return manager_->OpenDialog(&keyUri_, 100, timeout, customData, client_, userId);
+        UkeyOpenDialogRequest req;
+        req.keyUri = keyUri_;
+        req.callerUid = 100;
+        req.timeoutSec = timeout;
+        req.clientCallback = client_;
+        req.userId = userId;
+        if (customData != nullptr) {
+            req.customData = *customData;
+        }
+        return manager_->OpenDialog(req);
     }
     /* convenience wrapper for OpenDriverDialog (spec v4 §4.1 ForDriver routing) */
     int32_t OpenDriver(uint32_t abilityType = CM_UKEY_ABILITY_TYPE_UIEXTENSION, uint32_t timeout = 0,
