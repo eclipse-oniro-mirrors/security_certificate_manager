@@ -25,6 +25,8 @@
 #include "cJSON.h"
 #include "extension_ability_info.h"
 #include "hks_api.h"
+#include "hks_param.h"
+#include "hks_tag.h"
 #include "ipc_skeleton.h"
 #include "iservice_registry.h"
 #include "message_option.h"
@@ -238,14 +240,46 @@ bool BuildUkeyDialogParams(const std::string &requestId, const UkeyDialogLaunchP
     return ok;
 }
 
+/* Build the HUKS query param set (paramSetIn) of the ability query: scopes
+ * the lookup to the caller's user space with HKS_TAG_SPECIFIC_USER_ID; on
+ * success *paramSet is owned by the caller (HksFreeParamSet), on failure it
+ * is released here and left null. */
+int32_t BuildAbilityQueryParamSet(int32_t userId, struct HksParamSet **paramSet)
+{
+    int32_t ret = HksInitParamSet(paramSet);
+    if (ret != HKS_SUCCESS) {
+        CM_LOG_E("init huks param set failed, ret: %d", ret);
+        return ret;
+    }
+    struct HksParam userIdParam = {
+        .tag = HKS_TAG_SPECIFIC_USER_ID,
+        .int32Param = userId,
+    };
+    ret = HksAddParams(*paramSet, &userIdParam, 1);
+    if (ret != HKS_SUCCESS) {
+        CM_LOG_E("add userId to huks param set failed, ret: %d", ret);
+        HksFreeParamSet(paramSet);
+    }
+    return ret;
+}
+
 /* HUKS ability query adapter (production assembly, pattern aligned with the
  * kits-layer cm_dialog_api_common.cpp): a query failure counts as "not
- * registered" (spec v4 D22: no default-dialog fallback). */
+ * registered" (spec v4 D22: no default-dialog fallback). The driver ability
+ * is registered in the caller user's HUKS space, so the query carries the
+ * caller userId (HKS_TAG_SPECIFIC_USER_ID) in paramSetIn; without the userId
+ * tag the lookup would only cover the SA's own user space. */
 int32_t QueryUkeyDriverAbility(const struct CmBlob *keyUri,
-    std::string &bundleName, std::string &abilityName, uint32_t &abilityType)
+    std::string &bundleName, std::string &abilityName, uint32_t &abilityType, int32_t userId)
 {
     if (keyUri == nullptr || keyUri->data == nullptr || keyUri->size == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    struct HksParamSet *paramSet = nullptr;
+    int32_t ret = BuildAbilityQueryParamSet(userId, &paramSet);
+    if (ret != HKS_SUCCESS) {
+        return ret;
     }
 
     struct HksAbilityInfo abilityInfo = {};
@@ -255,6 +289,7 @@ int32_t QueryUkeyDriverAbility(const struct CmBlob *keyUri,
         CM_LOG_E("malloc hks ability info buffer failed");
         CM_FREE_PTR(abilityInfo.abilityName.data);
         CM_FREE_PTR(abilityInfo.bundleName.data);
+        HksFreeParamSet(&paramSet);
         return CMR_ERROR_MALLOC_FAIL;
     }
     abilityInfo.abilityName.size = HAP_INFO_MAX_LENGTH;
@@ -263,7 +298,8 @@ int32_t QueryUkeyDriverAbility(const struct CmBlob *keyUri,
         .size = keyUri->size,
         .data = keyUri->data
     };
-    int32_t ret = HksQueryAbilityInfo(&resourceId, &abilityInfo);
+    ret = HksQueryAbilityInfo(&resourceId, paramSet, &abilityInfo);
+    HksFreeParamSet(&paramSet);
     if (ret != HKS_SUCCESS) {
         CM_LOG_E("HksQueryAbilityInfo failed, ret: %d", ret);
         CM_FREE_PTR(abilityInfo.abilityName.data);
@@ -537,7 +573,7 @@ int32_t CmUkeyAuthDialogManager::LaunchUiExtensionSessionLocked(const UkeyDialog
 
 int32_t CmUkeyAuthDialogManager::OpenDialog(const struct CmBlob *keyUri, uint32_t callerUid,
     uint32_t timeoutSec, const struct CmBlob *customData,
-    const sptr<IRemoteObject> &clientCallback)
+    const sptr<IRemoteObject> &clientCallback, int32_t userId)
 {
     int32_t ret = ValidateOpenDialogArguments(keyUri, customData, clientCallback);
     if (ret != CM_SUCCESS) {
@@ -557,7 +593,8 @@ int32_t CmUkeyAuthDialogManager::OpenDialog(const struct CmBlob *keyUri, uint32_
     std::string bundleName;
     std::string abilityName;
     uint32_t abilityType = CM_UKEY_ABILITY_TYPE_UIABILITY;
-    int32_t queryRet = (querier_ == nullptr) ? CM_FAILURE : querier_(keyUri, bundleName, abilityName, abilityType);
+    int32_t queryRet = (querier_ == nullptr) ? CM_FAILURE
+        : querier_(keyUri, bundleName, abilityName, abilityType, userId);
     if (queryRet != CM_SUCCESS) {
         CM_LOG_E("no ukey driver pin dialog registered for the key uri");
         return CMR_DIALOG_ERROR_NOT_REGISTERED;

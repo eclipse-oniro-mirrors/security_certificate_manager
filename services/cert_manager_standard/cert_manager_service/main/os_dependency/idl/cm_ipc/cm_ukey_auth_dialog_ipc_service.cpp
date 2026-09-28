@@ -135,11 +135,16 @@ void CmIpcServiceOpenUkeyAuthDialog(uint32_t code, const struct CmBlob *paramSet
     }
 
     CmUkeyAuthDialogManager::GetInstance().InitRealDependencies();
+    /* userId for the HUKS ability query: resolved via CmGetProcessInfoForIPC
+     * (same pattern as cm_sa.cpp OnRemoteRequest; the incoming context is
+     * actually the reply parcel and must not be used for this) */
+    struct CmContext procContext = {0};
+    (void)CmGetProcessInfoForIPC(&procContext);
     /* customData points into the paramSet buffer; OpenDialog consumes it
      * synchronously (written into dialog params) and never references it after */
     ret = CmUkeyAuthDialogManager::GetInstance().OpenDialog(&keyUri,
         static_cast<uint32_t>(IPCSkeleton::GetCallingUid()), timeoutSec, &customData,
-        clientCallback);
+        clientCallback, static_cast<int32_t>(procContext.userId));
     CmFreeParamSet(&paramSet);
     CmSendResponse(context, ret, nullptr);
 }
