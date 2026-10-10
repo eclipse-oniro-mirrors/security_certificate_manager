@@ -342,6 +342,25 @@ static napi_value GenerateUkeyResultError(napi_env env, int32_t resultCode,
     return businessError;
 }
 
+/* Throw variant of GenerateUkeyResultError: same D8-revised folding
+ * (-1017/-1018 -> 29700002/29700003, others pass through) but throws a JS
+ * exception instead of returning the error object. Used on the synchronous
+ * failure path of the SA-session delegation, where a thrown exception lets
+ * the caller's try/catch handle it (a synchronously rejected promise would
+ * surface as an unhandled rejection before the caller can attach a handler). */
+static void ThrowUkeyResultError(napi_env env, int32_t resultCode,
+    OHOS::Security::CertManager::CmMetricsReport *metricsReport)
+{
+    CM_LOG_I("resultCode = %d", resultCode);
+    if (resultCode == CMR_DIALOG_ERROR_UKEY_REPORT_TIMEOUT) {
+        ThrowError(env, DIALOG_ERROR_OPERATION_CANCELED, UKEY_AUTH_REPORT_TIMEOUT_MSG, metricsReport);
+    } else if (resultCode == CMR_DIALOG_ERROR_UKEY_DIALOG_IN_PROGRESS) {
+        ThrowError(env, DIALOG_ERROR_INSTALL_FAILED, UKEY_DIALOG_IN_PROGRESS_MSG, metricsReport);
+    } else {
+        ThrowBusinessError(env, resultCode, metricsReport);
+    }
+}
+
 static napi_value OpenUkeyAuthDialogViaSa(std::shared_ptr<CmUIExtensionRequestContext> asyncContext,
     OHOS::Security::CertManager::CmMetricsReport &&report);
 
@@ -355,8 +374,16 @@ static napi_value TryOpenUkeyAuthDialogViaSa(std::shared_ptr<CmUIExtensionReques
     std::string driverBundle;
     std::string driverAbility;
     uint32_t abilityType = CM_UKEY_ABILITY_TYPE_UIABILITY;
-    int32_t queryRet = GetUkeyAbilityInfo(asyncContext->certUri, driverBundle, driverAbility,
-        abilityType);
+    uint8_t *resData = static_cast<uint8_t *>(CmMalloc(asyncContext->certUri->size));
+    if (resData == nullptr || memcpy_s(resData, asyncContext->certUri->size, asyncContext->certUri->data,
+        asyncContext->certUri->size) != EOK) {
+        CM_LOG_E("malloc or memcpy failed.");
+        CM_FREE_PTR(resData);
+        return nullptr;
+    }
+    CmBlob certUri = { .size = asyncContext->certUri->size, .data = resData };
+    int32_t queryRet = GetUkeyAbilityInfo(&certUri, driverBundle, driverAbility, abilityType);
+    CM_FREE_PTR(resData);
     if (queryRet == CM_SUCCESS && abilityType == CM_UKEY_ABILITY_TYPE_UIEXTENSION &&
         CmUkeyIsPcPlatformOrPcMode()) {
         CM_LOG_I("ukey driver registered a UIExtensionAbility pin dialog, go sa session path");
@@ -386,15 +413,34 @@ static bool CreateUkeyResultTsfn(napi_env env, CmUkeyAuthResultContext *resultCo
     return true;
 }
 
-/* tsfn creation failure cleanup: reject the promise with a generic error and release the result context */
+/* Resolve a deferred with undefined so it is settled and freed (mirrors
+ * DeferredResolveUndefined in cm_napi_common.cpp, kept local to avoid pulling
+ * the whole common header into this translation unit). The promise is never
+ * returned to JS (the caller throws and returns nullptr), so resolving it
+ * with undefined only releases the underlying NativeDeferred; the JS caller
+ * observes the thrown exception instead. */
+static void ResolveDeferredForRelease(napi_env env, napi_deferred deferred)
+{
+    if (env == nullptr || deferred == nullptr) {
+        return;
+    }
+    napi_value undefined = nullptr;
+    napi_get_undefined(env, &undefined);
+    napi_resolve_deferred(env, deferred, undefined);
+}
+
+/* tsfn creation failure cleanup: throw a JS exception (a synchronously
+ * rejected promise would surface as an unhandled rejection before the caller
+ * can attach a handler), settle the deferred for release, and free the result
+ * context */
 static void RejectUkeyResultTsfnError(napi_env env, napi_deferred deferred,
     CmUkeyAuthResultContext *resultContext)
 {
-    napi_value error = GenerateBusinessError(env, DIALOG_ERROR_GENERIC,
-        resultContext->metricsReport.get());
-    if (napi_reject_deferred(env, deferred, error) != napi_ok) {
-        CM_LOG_E("reject deferred failed");
-    }
+    ThrowBusinessError(env, DIALOG_ERROR_GENERIC, resultContext->metricsReport.get());
+    /* settle the deferred so the underlying NativeDeferred is freed; the
+     * promise is not returned to JS (the caller returns nullptr), so the
+     * resolution value is unobservable */
+    ResolveDeferredForRelease(env, deferred);
     /* Cleanup runs unconditionally: when the tsfn was created (a leftover
      * handle from a partial creation failure) it must be released first
      * (UvTsfnFinalize then frees the context; no double free here); when it
@@ -421,9 +467,9 @@ static napi_value OpenUkeyAuthDialogViaSa(std::shared_ptr<CmUIExtensionRequestCo
     auto resultContext = new (std::nothrow) CmUkeyAuthResultContext();
     if (resultContext == nullptr) {
         CM_LOG_E("alloc ukey auth result context failed");
-        napi_value error = GenerateBusinessError(env, DIALOG_ERROR_GENERIC, &report);
-        NAPI_CALL(env, napi_reject_deferred(env, deferred, error));
-        return result;
+        ThrowBusinessError(env, DIALOG_ERROR_GENERIC, &report);
+        ResolveDeferredForRelease(env, deferred);
+        return nullptr;
     }
     resultContext->env = env;
     resultContext->deferred = deferred;
@@ -432,7 +478,7 @@ static napi_value OpenUkeyAuthDialogViaSa(std::shared_ptr<CmUIExtensionRequestCo
 
     if (!CreateUkeyResultTsfn(env, resultContext, UvTsfnCallback)) {
         RejectUkeyResultTsfnError(env, deferred, resultContext);
-        return result;
+        return nullptr;
     }
 
     // the keyUri blob is consumed synchronously inside CmOpenUkeyAuthDialog,
@@ -448,12 +494,14 @@ static napi_value OpenUkeyAuthDialogViaSa(std::shared_ptr<CmUIExtensionRequestCo
     int32_t ret = CmOpenUkeyAuthDialog(&ukeyAuthRequest, UkeyAuthDialogResultCallback, resultContext);
     if (ret != CM_SUCCESS) {
         // sync failure: the result callback never fires (inner API contract),
-        // so settle the promise here and drop the threadsafe function
+        // so throw a JS exception (a synchronously rejected promise would
+        // surface as an unhandled rejection before the caller can attach a
+        // handler), release the deferred, and drop the threadsafe function
         CM_LOG_E("open ukey auth dialog failed, ret = %d", ret);
-        napi_value error = GenerateUkeyResultError(env, ret,
-            resultContext->metricsReport.get());
-        NAPI_CALL(env, napi_reject_deferred(env, deferred, error));
+        ThrowUkeyResultError(env, ret, resultContext->metricsReport.get());
+        ResolveDeferredForRelease(env, deferred);
         napi_release_threadsafe_function(resultContext->tsfn, napi_tsfn_release);
+        return nullptr;
     }
     return result;
 }
@@ -554,9 +602,9 @@ static napi_value OpenAuthDialogForUkeyProviderViaSa(
     auto resultContext = new (std::nothrow) CmUkeyAuthResultContext();
     if (resultContext == nullptr) {
         CM_LOG_E("alloc ukey auth result context failed");
-        napi_value error = GenerateBusinessError(env, DIALOG_ERROR_GENERIC, &report);
-        NAPI_CALL(env, napi_reject_deferred(env, deferred, error));
-        return result;
+        ThrowBusinessError(env, DIALOG_ERROR_GENERIC, &report);
+        ResolveDeferredForRelease(env, deferred);
+        return nullptr;
     }
     resultContext->env = env;
     resultContext->deferred = deferred;
@@ -565,7 +613,7 @@ static napi_value OpenAuthDialogForUkeyProviderViaSa(
 
     if (!CreateUkeyResultTsfn(env, resultContext, UvProviderTsfnCallback)) {
         RejectUkeyResultTsfnError(env, deferred, resultContext);
-        return result;
+        return nullptr;
     }
 
     struct UkeyAuthDialogInfo dialogInfo = {};
@@ -583,11 +631,15 @@ static napi_value OpenAuthDialogForUkeyProviderViaSa(
     int32_t ret = CmOpenUkeyAuthDialogForDriver(&dialogInfo, &ukeyAuthRequest,
         UkeyAuthDialogResultCallback, resultContext);
     if (ret != CM_SUCCESS) {
+        // sync failure: throw a JS exception so the caller's try/catch can
+        // handle it (a synchronously rejected promise would surface as an
+        // unhandled rejection before the caller can attach a handler), release
+        // the deferred, and drop the threadsafe function
         CM_LOG_E("open auth dialog for ukey provider failed, ret = %d", ret);
-        napi_value error = GenerateBusinessError(env, ret, resultContext->metricsReport.get());
-        NAPI_CALL(env, napi_reject_deferred(env, deferred, error));
+        ThrowBusinessError(env, ret, resultContext->metricsReport.get());
+        ResolveDeferredForRelease(env, deferred);
         napi_release_threadsafe_function(resultContext->tsfn, napi_tsfn_release);
-        return result;
+        return nullptr;
     }
     return result;
 }
@@ -671,7 +723,7 @@ napi_value CMNapiOpenAuthDialogForUkeyProvider(napi_env env, napi_callback_info 
     report.Start();
     napi_value result = nullptr;
     NAPI_CALL(env, napi_get_undefined(env, &result));
-    if (CheckSyscapReturnVoid(env, &result) != CM_SUCCESS) {
+    if (CheckSyscapThrowError(env) != CM_SUCCESS) {
         report.Finish(DIALOG_ERROR_CAPABILITY_NOT_SUPPORTED);
         return result;
     }
