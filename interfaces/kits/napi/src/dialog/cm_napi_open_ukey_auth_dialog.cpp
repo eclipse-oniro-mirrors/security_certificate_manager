@@ -225,7 +225,7 @@ static void UvTsfnFinalize(napi_env env, void *finalizeData, void *finalizeHint)
     delete static_cast<CmUkeyAuthResultContext *>(finalizeData);
 }
 
-// fold -1017/-1018 to 29700002/29700003 (D8 revision, unconditional on the SA path)
+// fold -1017/-1018 to 29700002/29700003 (revision, unconditional on the SA path)
 static napi_value GenerateUkeyResultError(napi_env env, int32_t resultCode,
     OHOS::Security::CertManager::CmMetricsReport *metricsReport);
 
@@ -259,7 +259,7 @@ static void UvTsfnCallback(napi_env env, napi_value jsCallback, void *context, v
     napi_release_threadsafe_function(resultContext->tsfn, napi_tsfn_release);
 }
 
-// ForProvider result callback: dedicated codes pass through unfolded (D8 v4/D26) —
+// ForProvider result callback: dedicated codes pass through unfolded —
 // 29700009/29700010 must reach JS as-is, never the openUkeyAuthDialog fold.
 static void UvProviderTsfnCallback(napi_env env, napi_value jsCallback, void *context, void *data)
 {
@@ -306,7 +306,7 @@ static void UkeyAuthDialogResultCallback(int32_t resultCode, void *userData)
     }
 }
 
-/* D8 revision: after openUkeyAuthDialog delegates to the SA session it may
+/* Revision: after openUkeyAuthDialog delegates to the SA session it may
  * produce -1017/-1018. The interface is published since-22, so no since-26
  * error codes are added to its throws surface - timeout folds to 29700002
  * and single-flight folds to 29700003 (the SA session path is reachable
@@ -342,7 +342,7 @@ static napi_value GenerateUkeyResultError(napi_env env, int32_t resultCode,
     return businessError;
 }
 
-/* Throw variant of GenerateUkeyResultError: same D8-revised folding
+/* Throw variant of GenerateUkeyResultError: revised folding
  * (-1017/-1018 -> 29700002/29700003, others pass through) but throws a JS
  * exception instead of returning the error object. Used on the synchronous
  * failure path of the SA-session delegation, where a thrown exception lets
@@ -455,7 +455,7 @@ static void RejectUkeyResultTsfnError(napi_env env, napi_deferred deferred,
 // SA-session delegation: the dialog is driven by the SA-side ukey session and
 // the final result arrives asynchronously on an IPC thread. Only reachable
 // from the published openUkeyAuthDialog (the sole, with-context overload),
-// so the D8-revised error-code folding applies unconditionally.
+// so the revised error-code folding applies unconditionally.
 static napi_value OpenUkeyAuthDialogViaSa(std::shared_ptr<CmUIExtensionRequestContext> asyncContext,
     OHOS::Security::CertManager::CmMetricsReport &&report)
 {
@@ -588,7 +588,7 @@ static bool CheckUkeyProviderPermission(void)
         tokenId, "ohos.permission.CRYPTO_EXTENSION_REGISTER") == 0 /* PERMISSION_GRANTED */;
 }
 
-/* SA-path promise wrapper for ForProvider: error codes are not folded (29700009/29700010 pass through, D8 v4) */
+/* SA-path promise wrapper for ForProvider: error codes are not folded (29700009/29700010 pass through) */
 static napi_value OpenAuthDialogForUkeyProviderViaSa(
     std::shared_ptr<CmUIExtensionRequestContext> asyncContext,
     OHOS::Security::CertManager::CmMetricsReport &&report, std::string abilityName,

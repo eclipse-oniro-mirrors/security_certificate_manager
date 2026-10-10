@@ -81,9 +81,9 @@ HWTEST_F(CmPfxTest, CmPfxTest001, TestSize.Level0)
     uint8_t p12CertBuf[] = "p12CertBuf";
     struct CmBlob p12Cert = { sizeof(p12CertBuf), p12CertBuf };
     char passWd[] = "passWd";
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
-    struct AppCert *appCert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
+    struct AppCert *appCert = nullptr;
     int32_t ret = CmParsePkcs12Cert(&p12Cert, passWd, &pkey, appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_CERT_FORMAT);
 }
@@ -95,11 +95,11 @@ HWTEST_F(CmPfxTest, CmPfxTest001, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest002, TestSize.Level0)
 {
-    struct CmBlob *certChain = NULL;
-    struct CmBlob *privKey = NULL;;
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
-    struct AppCert *appCert = NULL;
+    struct CmBlob *certChain = nullptr;
+    struct CmBlob *privKey = nullptr;;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
+    struct AppCert *appCert = nullptr;
     int32_t ret = CmParseCertChainAndPrivKey(certChain, privKey, &pkey, appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_APP_CERT);
 }
@@ -113,10 +113,10 @@ HWTEST_F(CmPfxTest, CmPfxTest003, TestSize.Level0)
 {
     uint8_t certChainBuf[] = "certChainBuf";
     struct CmBlob certChain = { sizeof(certChainBuf), certChainBuf };
-    struct CmBlob *privKey = NULL;;
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
-    struct AppCert *appCert = NULL;
+    struct CmBlob *privKey = nullptr;;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
+    struct AppCert *appCert = nullptr;
     int32_t ret = CmParseCertChainAndPrivKey(&certChain, privKey, &pkey, appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_OPENSSL_FAIL);
 }
@@ -128,7 +128,7 @@ HWTEST_F(CmPfxTest, CmPfxTest003, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest004, TestSize.Level0)
 {
-    bool *isAdvSecMode = NULL;
+    bool *isAdvSecMode = nullptr;
     int32_t ret = CheckAdvSecMode(isAdvSecMode);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
 }
@@ -140,16 +140,16 @@ HWTEST_F(CmPfxTest, CmPfxTest004, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest005, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     int32_t ret = CmParseCertChainAndPrivKey(&g_appDerCertChain, &g_appDerCertPrivKey, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CM_SUCCESS);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -164,16 +164,16 @@ HWTEST_F(CmPfxTest, CmPfxTest006, TestSize.Level0)
     uint8_t notP12Buf[] = "this is not a p12";
     struct CmBlob notP12 = { sizeof(notP12Buf), notP12Buf };
     char passWd[] = "123456";
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     int32_t ret = CmParsePkcs12Cert(&notP12, passWd, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_CERT_FORMAT);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -188,8 +188,8 @@ HWTEST_F(CmPfxTest, CmPfxTest007, TestSize.Level0)
     uint8_t buf[16] = {0};
     struct CmBlob tooLargeBlob = { MAX_LEN_CERTIFICATE_CHAIN + 1, buf };
     char passWd[] = "123456";
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     int32_t ret = CmParsePkcs12Cert(&tooLargeBlob, passWd, &pkey, &appCert, &x509Cert);
@@ -206,16 +206,16 @@ HWTEST_F(CmPfxTest, CmPfxTest008, TestSize.Level0)
     struct CmBlob p12Cert = { sizeof(g_rsa2048P12CertInfo),
         const_cast<uint8_t *>(g_rsa2048P12CertInfo) };
     char passWd[] = "wrongpassword";
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     int32_t ret = CmParsePkcs12Cert(&p12Cert, passWd, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_PASSWORD_IS_ERR);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -230,8 +230,8 @@ HWTEST_F(CmPfxTest, CmPfxTest009, TestSize.Level0)
     struct CmBlob p12Cert = { sizeof(g_rsa2048P12CertInfo),
         const_cast<uint8_t *>(g_rsa2048P12CertInfo) };
     char passWd[] = "123456";
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     int32_t ret = CmParsePkcs12Cert(&p12Cert, passWd, &pkey, &appCert, &x509Cert);
@@ -240,10 +240,10 @@ HWTEST_F(CmPfxTest, CmPfxTest009, TestSize.Level0)
     EXPECT_NE(x509Cert, nullptr);
     EXPECT_GT(appCert.certCount, 0u);
     EXPECT_GT(appCert.certSize, 0u);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -255,8 +255,8 @@ HWTEST_F(CmPfxTest, CmPfxTest009, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest010, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     struct CmBlob pemChain = { strlen(g_rsa2048PEMCertChain) + 1,
@@ -265,10 +265,10 @@ HWTEST_F(CmPfxTest, CmPfxTest010, TestSize.Level0)
         reinterpret_cast<uint8_t *>(const_cast<char *>(g_rsa2048PEMPrivKey)) };
     int32_t ret = CmParseCertChainAndPrivKey(&pemChain, &pemKey, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CM_SUCCESS);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -280,18 +280,18 @@ HWTEST_F(CmPfxTest, CmPfxTest010, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest012, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     uint8_t invalidChain[] = "invalid cert chain data";
     struct CmBlob chain = { sizeof(invalidChain), invalidChain };
     int32_t ret = CmParseCertChainAndPrivKey(&chain, &g_appDerCertPrivKey, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_OPENSSL_FAIL);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -305,8 +305,8 @@ HWTEST_F(CmPfxTest, CmPfxTest014, TestSize.Level0)
 {
     struct CmBlob nullData = { 100, nullptr };
     char passWd[] = "123456";
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     int32_t ret = CmParsePkcs12Cert(&nullData, passWd, &pkey, &appCert, &x509Cert);
@@ -320,8 +320,8 @@ HWTEST_F(CmPfxTest, CmPfxTest014, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest015, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     /* PEM cert chain + a mismatched PEM key from a different keypair would fail the
@@ -330,10 +330,10 @@ HWTEST_F(CmPfxTest, CmPfxTest015, TestSize.Level0)
     struct CmBlob fakeKeyBlob = { sizeof(fakeKey), fakeKey };
     int32_t ret = CmParseCertChainAndPrivKey(&g_appDerCertChain, &fakeKeyBlob, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_OPENSSL_FAIL);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -345,18 +345,18 @@ HWTEST_F(CmPfxTest, CmPfxTest015, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest016, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;D8
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     struct CmBlob pemChain = { strlen(g_rsa2048PEMCertChain) + 1,
         reinterpret_cast<uint8_t *>(const_cast<char *>(g_rsa2048PEMCertChain)) };
     int32_t ret = CmParseCertChainAndPrivKey(&pemChain, &g_appDerCertPrivKey, &pkey, &appCert, &x509Cert);
     EXPECT_NE(ret, CM_SUCCESS);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -368,18 +368,18 @@ HWTEST_F(CmPfxTest, CmPfxTest016, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest017, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     struct CmBlob pemKey = { strlen(g_rsa2048PEMPrivKey) + 1,
         reinterpret_cast<uint8_t *>(const_cast<char *>(g_rsa2048PEMPrivKey)) };
     int32_t ret = CmParseCertChainAndPrivKey(&g_appDerCertChain, &pemKey, &pkey, &appCert, &x509Cert);
     EXPECT_NE(ret, CM_SUCCESS);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -391,8 +391,8 @@ HWTEST_F(CmPfxTest, CmPfxTest017, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest018, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     struct CmBlob pemChain = { strlen(g_rsa2048PEMCertChain) + 1,
@@ -401,10 +401,10 @@ HWTEST_F(CmPfxTest, CmPfxTest018, TestSize.Level0)
     struct CmBlob fakeKeyBlob = { sizeof(fakeKey), fakeKey };
     int32_t ret = CmParseCertChainAndPrivKey(&pemChain, &fakeKeyBlob, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_OPENSSL_FAIL);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -416,17 +416,17 @@ HWTEST_F(CmPfxTest, CmPfxTest018, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest019, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     struct CmBlob nullDataChain = { 100, nullptr };
     int32_t ret = CmParseCertChainAndPrivKey(&nullDataChain, &g_appDerCertPrivKey, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_APP_CERT);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -438,18 +438,18 @@ HWTEST_F(CmPfxTest, CmPfxTest019, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest020, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     uint8_t buf[16] = {0};
     struct CmBlob tooLargeChain = { MAX_LEN_CERTIFICATE_CHAIN + 1, buf };
     int32_t ret = CmParseCertChainAndPrivKey(&tooLargeChain, &g_appDerCertPrivKey, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_APP_CERT);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -462,16 +462,16 @@ HWTEST_F(CmPfxTest, CmPfxTest020, TestSize.Level0)
 HWTEST_F(CmPfxTest, CmPfxTest021, TestSize.Level0)
 {
     char passWd[] = "123456";
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     int32_t ret = CmParsePkcs12Cert(nullptr, passWd, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_APP_CERT);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -483,8 +483,8 @@ HWTEST_F(CmPfxTest, CmPfxTest021, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest022, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     /* DER-format key buffer that is invalid */
@@ -492,10 +492,10 @@ HWTEST_F(CmPfxTest, CmPfxTest022, TestSize.Level0)
     struct CmBlob invalidDerKeyBlob = { sizeof(invalidDerKey), invalidDerKey };
     int32_t ret = CmParseCertChainAndPrivKey(&g_appDerCertChain, &invalidDerKeyBlob, &pkey, &appCert, &x509Cert);
     EXPECT_EQ(ret, CMR_ERROR_OPENSSL_FAIL);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }
@@ -507,8 +507,8 @@ HWTEST_F(CmPfxTest, CmPfxTest022, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest023, TestSize.Level0)
 {
-    EVP_PKEY *pkey = NULL;
-    X509 *x509Cert = NULL;
+    EVP_PKEY *pkey = nullptr;
+    X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
     /* PEM data with no certificates */
@@ -516,10 +516,10 @@ HWTEST_F(CmPfxTest, CmPfxTest023, TestSize.Level0)
     struct CmBlob emptyPemBlob = { sizeof(emptyPem), emptyPem };
     int32_t ret = CmParseCertChainAndPrivKey(&emptyPemBlob, &g_appDerCertPrivKey, &pkey, &appCert, &x509Cert);
     EXPECT_TRUE(ret == CMR_ERROR_OPENSSL_FAIL || ret == CMR_ERROR_INVALID_CERT_FORMAT);
-    if (pkey != NULL) {
+    if (pkey != nullptr) {
         EVP_PKEY_free(pkey);
     }
-    if (x509Cert != NULL) {
+    if (x509Cert != nullptr) {
         X509_free(x509Cert);
     }
 }

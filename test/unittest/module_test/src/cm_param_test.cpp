@@ -15,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include "securec.h"
+
 #include "cm_param.h"
 #include "cm_type.h"
 
@@ -572,7 +574,7 @@ HWTEST_F(CmParamTest, CmParamTest028, TestSize.Level0)
     uint32_t blobSize = 600;
     uint8_t *largeBuf = (uint8_t *)malloc(blobSize);
     ASSERT_NE(largeBuf, nullptr);
-    memset(largeBuf, 'A', blobSize);
+    (void)memset_s(largeBuf, largeBuf, 'A', blobSize);
     struct CmParam param = {
         .tag = CM_TAG_PARAM0_BUFFER,
         .blob = { blobSize, largeBuf }

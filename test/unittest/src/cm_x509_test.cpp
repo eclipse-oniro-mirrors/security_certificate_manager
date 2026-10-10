@@ -16,7 +16,7 @@
 #include <cstring>
 #include <gtest/gtest.h>
 
-#include <securec.h>
+#include "securec.h"
 
 #include "cm_x509.h"
 #include "cm_type.h"
@@ -516,7 +516,7 @@ HWTEST_F(CmX509Test, GetSubjectNameAndAliasAliasTooLong, TestSize.Level0)
     ASSERT_NE(cert, nullptr);
     /* alias larger than displayName buffer -> memcpy_s fail */
     uint8_t aliasBuf[512] = {0};
-    memset(aliasBuf, 'x', sizeof(aliasBuf) - 1);
+    (void)memset_s(aliasBuf, sizeof(aliasBuf), 'x', sizeof(aliasBuf) - 1);
     struct CmBlob alias = { sizeof(aliasBuf), aliasBuf };
     uint8_t subjBuf[MAX_LEN_SUBJECT_NAME] = {0};
     struct CmBlob subjectName = { sizeof(subjBuf), subjBuf };
