@@ -345,7 +345,7 @@ HWTEST_F(CmPfxTest, CmPfxTest015, TestSize.Level0)
 */
 HWTEST_F(CmPfxTest, CmPfxTest016, TestSize.Level0)
 {
-    EVP_PKEY *pkey = nullptr;D8
+    EVP_PKEY *pkey = nullptr;
     X509 *x509Cert = nullptr;
     struct AppCert appCert;
     (void)memset_s(&appCert, sizeof(struct AppCert), 0, sizeof(struct AppCert));
