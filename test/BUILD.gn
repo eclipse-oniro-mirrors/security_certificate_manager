@@ -42,6 +42,8 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_update_test.cpp",
     "unittest/src/cm_user_cert_test.cpp",
     "unittest/src/cm_pfx_test.cpp",
+    "unittest/src/cm_x509_test.cpp",
+    "unittest/src/cm_api_test.cpp",
   ]
 
   include_dirs = [
