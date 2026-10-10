@@ -173,8 +173,8 @@ HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogWrongAbilityType, testing::ext::
  * see the SA's own user space. */
 HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogForwardsCallerUserId, testing::ext::TestSize.Level0)
 {
-    ASSERT_EQ(Open(0, nullptr, 100), CM_SUCCESS);
-    EXPECT_EQ(queriedUserId_, 100);
+    ASSERT_EQ(Open(0, nullptr, TEST_USERID), CM_SUCCESS);
+    EXPECT_EQ(queriedUserId_, TEST_USERID);
     manager_->OnReport(manager_->GetRequestIdForTest(), driverBundle_, 0); // cleanup
     ASSERT_EQ(Open(0, nullptr, 0), CM_SUCCESS); /* the userId value is passed through unchanged */
     EXPECT_EQ(queriedUserId_, 0);
