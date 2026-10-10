@@ -41,7 +41,7 @@ CmOpenAuthDialogForUkeyProvider::CmOpenAuthDialogForUkeyProvider(ani_env *env,
 int32_t CmOpenAuthDialogForUkeyProvider::ParseDialogInfoFromEnv()
 {
     ani_string aniAbilityName = nullptr;
-    ani_double aniAbilityType = 0;
+    ani_int aniAbilityType = 0;
     int32_t ret = ParseUkeyAniDialogInfo(env, this->aniParams.aniDialogInfo, aniAbilityName,
         aniAbilityType);
     if (ret != CM_SUCCESS) {
