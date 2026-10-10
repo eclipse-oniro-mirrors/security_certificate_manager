@@ -28,6 +28,8 @@
 #include "cm_ukey_auth_dialog_manager.h"
 
 namespace OHOS::Security::CertManager {
+constexpr uint32_t TEST_USERID = 100;
+
 class FakeLauncher : public SystemDialogLauncher {
 public:
     int32_t Connect(const sptr<IAbilityConnection> &conn) override
@@ -109,11 +111,11 @@ public:
     std::string callerBundle_ = "com.example.ukeydriver";
     std::string driverAbilityName_ = "MyUkeyAuthExtensionAbility";
     /* convenience wrapper for the OpenDialog signature (customData optional) */
-    int32_t Open(uint32_t timeout = 0, const struct CmBlob *customData = nullptr, int32_t userId = 100)
+    int32_t Open(uint32_t timeout = 0, const struct CmBlob *customData = nullptr, int32_t userId = TEST_USERID)
     {
         UkeyOpenDialogRequest req;
         req.keyUri = keyUri_;
-        req.callerUid = 100;
+        req.callerUid = TEST_USERID;
         req.timeoutSec = timeout;
         req.clientCallback = client_;
         req.userId = userId;
@@ -131,9 +133,9 @@ public:
             reinterpret_cast<uint8_t *>(const_cast<char *>(driverAbilityName_.c_str())) };
         req.abilityType = abilityType;
         req.keyUri = keyUri_;
-        req.callerUid = 100;
+        req.callerUid = TEST_USERID;
         req.callerBundleName = callerBundle_;
-        req.userId = 100;
+        req.userId = TEST_USERID;
         req.timeoutSec = timeout;
         if (customData != nullptr) {
             req.customData = *customData;
