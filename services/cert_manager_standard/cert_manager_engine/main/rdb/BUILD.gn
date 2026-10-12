@@ -37,6 +37,7 @@ ohos_static_library("libcert_manager_rdb_static") {
 
   sources = [
     "src/cm_cert_property_rdb.cpp",
+    "src/cm_config_rdb.cpp",
     "src/cm_rdb_data_manager.cpp",
     "src/cm_rdb_open_callback.cpp",
   ]

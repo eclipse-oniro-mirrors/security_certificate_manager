@@ -33,6 +33,10 @@ const std::string COLUMN_USERID = "USERID";
 const std::string COLUMN_UID = "UID";
 const std::string COLUMN_AUTH_STORAGE_LEVEL = "AUTH_STORAGE_LEVEL";
 
+const std::string CERT_MANAGER_CONFIG_TABLE_NAME = "cert_manager_config";
+const std::string COLUMN_CONFIG_KEY = "CONFIG_KEY";
+const std::string COLUMN_CONFIG_VALUE = "CONFIG_VALUE";
+
 namespace OHOS {
 namespace Security {
 namespace CertManager {

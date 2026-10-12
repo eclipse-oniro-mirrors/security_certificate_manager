@@ -133,6 +133,12 @@ CM_API_EXPORT void CmFreeUkeyCertificate(struct CredentialDetailList *certificat
 
 CM_API_EXPORT void CmFreeCredential(struct Credential *certificate);
 
+CM_API_EXPORT int32_t CmSetCertManagerConfig(const struct CertManagerConfig *config);
+
+CM_API_EXPORT int32_t CmGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertManagerConfig *config);
+
+CM_API_EXPORT void CmFreeCertManagerConfig(struct CertManagerConfig *config);
+
 #ifdef __cplusplus
 }
 #endif

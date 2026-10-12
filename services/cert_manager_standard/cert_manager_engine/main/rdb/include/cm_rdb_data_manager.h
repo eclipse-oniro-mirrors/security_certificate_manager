@@ -35,6 +35,7 @@ public:
         const NativeRdb::ValuesBucket &valuesBucket);
     bool DeleteData(const std::string &primKey, const std::string &keyColumn);
     std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryData(const std::string &primKey, const std::string &keyColumn);
+    std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryAllData();
 
     bool CreateTable();
     void DelayCloseRdbStore();

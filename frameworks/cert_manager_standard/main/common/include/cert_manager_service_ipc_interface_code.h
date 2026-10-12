@@ -56,6 +56,9 @@ enum CertManagerInterfaceCode {
     CM_MSG_REPORT_UKEY_AUTH_RESULT,
     CM_MSG_OPEN_UKEY_AUTH_DIALOG_FOR_DRIVER,
 
+    CM_MSG_SET_CERT_MANAGER_CONFIG,
+    CM_MSG_GET_CERT_MANAGER_CONFIG,
+
     /* new cmd type must be added before CM_MSG_MAX */
     CM_MSG_MAX,
 };

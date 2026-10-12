@@ -105,6 +105,30 @@ std::shared_ptr<NativeRdb::AbsSharedResultSet> CmRdbDataManager::QueryData(const
     return absSharedResultSet;
 }
 
+std::shared_ptr<NativeRdb::AbsSharedResultSet> CmRdbDataManager::QueryAllData()
+{
+    CM_LOG_D("enter CmRdbDataManager QueryAllData");
+    auto rdbStore = GetRdbStore();
+    if (rdbStore == nullptr) {
+        CM_LOG_E("rdbStore is nullptr");
+        return nullptr;
+    }
+
+    NativeRdb::AbsRdbPredicates queryPredicates(rdbConfig_.tableName);
+    std::shared_ptr<NativeRdb::AbsSharedResultSet> absSharedResultSet =
+        rdbStore->Query(queryPredicates, std::vector<std::string>());
+    if (absSharedResultSet == nullptr) {
+        CM_LOG_E("absSharedResultSet is nullptr");
+        return nullptr;
+    }
+    if (!absSharedResultSet->HasBlock()) {
+        CM_LOG_E("absSharedResultSet query all failed");
+        absSharedResultSet->Close();
+        return nullptr;
+    }
+    return absSharedResultSet;
+}
+
 bool CmRdbDataManager::CreateTable()
 {
     CM_LOG_D("enter CmRdbDataManager CreateTable");

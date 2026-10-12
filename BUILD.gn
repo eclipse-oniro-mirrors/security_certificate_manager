@@ -266,3 +266,11 @@ group("cert_manager_components") {
     ":cert_manager_typer_services",
   ]
 }
+
+group("cert_manager_cmdline") {
+  if (certificate_manager_feature_cmdline_enabled == true) {
+    deps = [ "./cmdline/certmgr:certmgr" ]
+  } else {
+    deps = []
+  }
+}

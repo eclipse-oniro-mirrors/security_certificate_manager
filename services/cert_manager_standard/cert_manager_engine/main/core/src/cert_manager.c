@@ -30,6 +30,7 @@
 #include "cert_manager_query.h"
 #include "cert_manager_ukey_operation.h"
 #include "cm_cert_property_rdb.h"
+#include "cm_config_rdb.h"
 #include "cert_manager_crypto_operation.h"
 #include "cm_log.h"
 #include "cm_type.h"
@@ -67,6 +68,11 @@ int32_t CertManagerInitialize(void)
     }
 
     ret = CreateCertPropertyRdb();
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = CreateCertManagerConfigRdb();
     if (ret != CM_SUCCESS) {
         return ret;
     }

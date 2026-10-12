@@ -23,6 +23,7 @@
 /* Error code definitions split into cm_error_code.h (to cap single-header
  * line count); re-exported here, values and compatibility unchanged */
 #include "cm_error_code.h"
+#include "cm_config_type.h"
 
 #ifdef __cplusplus
 extern "C" {
