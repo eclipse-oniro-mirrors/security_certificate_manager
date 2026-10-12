@@ -221,7 +221,8 @@ ani_object openAuthDialogForUkeyProviderNative(ani_env *env, ani_object dialogIn
     }
     if (!IsSupportDialogSyscap()) {
         CM_LOG_E("check syscap is not supported.");
-        return InvokeCallbackVoid(env, callback);
+        return GenerateResult(env, DIALOG_ERROR_CAPABILITY_NOT_SUPPORTED,
+            Dialog::CAPABILITY_NOT_SUPPORTED_MSG.c_str());
     }
     UkeyProviderDialogParams params;
     params.aniDialogInfo = dialogInfo;

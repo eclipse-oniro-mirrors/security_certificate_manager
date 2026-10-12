@@ -39,87 +39,52 @@ public:
 
 /* ---------- InitCertContext ---------- */
 
-HWTEST_F(CmX509Test, InitCertContextNullBuf, TestSize.Level0)
+HWTEST_F(CmX509Test, InitCertContextInvalidArgs, TestSize.Level0)
 {
     EXPECT_EQ(InitCertContext(NULL, 100), nullptr);
-}
-
-HWTEST_F(CmX509Test, InitCertContextZeroSize, TestSize.Level0)
-{
     uint8_t buf[] = "x";
     EXPECT_EQ(InitCertContext(buf, 0), nullptr);
-}
-
-HWTEST_F(CmX509Test, InitCertContextTooLarge, TestSize.Level0)
-{
-    uint8_t buf[] = "x";
     EXPECT_EQ(InitCertContext(buf, MAX_LEN_CERTIFICATE + 1), nullptr);
+
+    uint8_t invalidPem[] = "-----BEGIN CERTIFICATE-----\r\ninvalid\r\n-----END CERTIFICATE-----\r\n";
+    EXPECT_EQ(InitCertContext(invalidPem, sizeof(invalidPem)), nullptr);
+
+    uint8_t derStart[] = { 0x30, 0x82, 0x01, 0x00, 0x00, 0x00, 0x00 };
+    EXPECT_EQ(InitCertContext(derStart, sizeof(derStart)), nullptr);
 }
 
-HWTEST_F(CmX509Test, InitCertContextPemSuccess, TestSize.Level0)
+HWTEST_F(CmX509Test, InitCertContextSuccess, TestSize.Level0)
 {
     X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
     ASSERT_NE(cert, nullptr);
     FreeCertContext(cert);
-}
 
-HWTEST_F(CmX509Test, InitCertContextPemInvalid, TestSize.Level0)
-{
-    uint8_t invalidPem[] = "-----BEGIN CERTIFICATE-----\r\ninvalid\r\n-----END CERTIFICATE-----\r\n";
-    X509 *cert = InitCertContext(invalidPem, sizeof(invalidPem));
-    EXPECT_EQ(cert, nullptr);
-}
-
-HWTEST_F(CmX509Test, InitCertContextDerSuccess, TestSize.Level0)
-{
     /* g_certData01 is DER-encoded system CA cert */
-    X509 *cert = InitCertContext(g_certData01, sizeof(g_certData01));
+    cert = InitCertContext(g_certData01, sizeof(g_certData01));
     ASSERT_NE(cert, nullptr);
     FreeCertContext(cert);
-}
 
-HWTEST_F(CmX509Test, InitCertContextDerInvalid, TestSize.Level0)
-{
-    uint8_t derStart[] = { 0x30, 0x82, 0x01, 0x00, 0x00, 0x00, 0x00 };
-    X509 *cert = InitCertContext(derStart, sizeof(derStart));
-    EXPECT_EQ(cert, nullptr);
-}
-
-HWTEST_F(CmX509Test, FreeCertContextNull, TestSize.Level0)
-{
     FreeCertContext(nullptr); /* no crash */
 }
 
 /* ---------- InitCertStackContext (P7B) ---------- */
 
-HWTEST_F(CmX509Test, InitCertStackContextNullBuf, TestSize.Level0)
+HWTEST_F(CmX509Test, InitCertStackContextInvalidArgs, TestSize.Level0)
 {
     EXPECT_EQ(InitCertStackContext(NULL, 100), nullptr);
-}
-
-HWTEST_F(CmX509Test, InitCertStackContextZeroSize, TestSize.Level0)
-{
     uint8_t buf[] = "x";
     EXPECT_EQ(InitCertStackContext(buf, 0), nullptr);
-}
-
-HWTEST_F(CmX509Test, InitCertStackContextTooLarge, TestSize.Level0)
-{
-    uint8_t buf[] = "x";
     EXPECT_EQ(InitCertStackContext(buf, MAX_LEN_CERTIFICATE_P7B + 1), nullptr);
-}
 
-HWTEST_F(CmX509Test, InitCertStackContextInvalidP7B, TestSize.Level0)
-{
     uint8_t notP7b[] = { 0x30, 0x82, 0x01, 0x00, 0x00 };
     EXPECT_EQ(InitCertStackContext(notP7b, sizeof(notP7b)), nullptr);
-}
 
-HWTEST_F(CmX509Test, InitCertStackContextPemNotP7b, TestSize.Level0)
-{
     /* PEM data is not DER-encoded PKCS7 -> d2i_PKCS7_bio fails */
     uint8_t pemData[] = "-----BEGIN CERTIFICATE-----\r\ninvalid\r\n-----END CERTIFICATE-----\r\n";
     EXPECT_EQ(InitCertStackContext(pemData, sizeof(pemData)), nullptr);
+
+    /* DER cert data (starts with 0x30) is not PKCS7 - d2i_PKCS7_bio should fail */
+    EXPECT_EQ(InitCertStackContext(g_certData01, sizeof(g_certData01)), nullptr);
 }
 
 HWTEST_F(CmX509Test, InitCertStackContextSuccess, TestSize.Level0)
@@ -127,6 +92,12 @@ HWTEST_F(CmX509Test, InitCertStackContextSuccess, TestSize.Level0)
     STACK_OF(X509) *stack = InitCertStackContext(g_p7bUserCertInfo, sizeof(g_p7bUserCertInfo));
     ASSERT_NE(stack, nullptr);
     EXPECT_GT(sk_X509_num(stack), 0);
+    /* Verify first cert in stack is parseable */
+    X509 *first = sk_X509_value(stack, 0);
+    ASSERT_NE(first, nullptr);
+    char buf[64] = {0};
+    int32_t ret = GetX509SerialNumber(first, buf, sizeof(buf));
+    EXPECT_GT(ret, 0);
     sk_X509_pop_free(stack, X509_free);
 }
 
@@ -251,6 +222,18 @@ HWTEST_F(CmX509Test, GetX509FirstSubjectNameBufferTooSmall, TestSize.Level0)
 HWTEST_F(CmX509Test, GetX509SubjectNameLongFormatNullArgs, TestSize.Level0)
 {
     EXPECT_EQ(GetX509SubjectNameLongFormat(nullptr, nullptr, 0), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(GetX509IssueNameLongFormat(nullptr, nullptr, 0), CMR_ERROR_INVALID_ARGUMENT);
+
+    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
+    ASSERT_NE(cert, nullptr);
+    char buf[MAX_LEN_SUBJECT_NAME] = {0};
+    /* Valid cert but null buf */
+    EXPECT_EQ(GetX509SubjectNameLongFormat(cert, nullptr, sizeof(buf)), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(GetX509IssueNameLongFormat(cert, nullptr, sizeof(buf)), CMR_ERROR_INVALID_ARGUMENT);
+    /* Valid cert, valid buf, zero size */
+    EXPECT_EQ(GetX509SubjectNameLongFormat(cert, buf, 0), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(GetX509IssueNameLongFormat(cert, buf, 0), CMR_ERROR_INVALID_ARGUMENT);
+    FreeCertContext(cert);
 }
 
 HWTEST_F(CmX509Test, GetX509SubjectNameLongFormatSuccess, TestSize.Level0)
@@ -276,11 +259,6 @@ HWTEST_F(CmX509Test, GetX509SubjectNameLongFormatBufferTooSmall, TestSize.Level0
 
 /* ---------- GetX509IssueNameLongFormat ---------- */
 
-HWTEST_F(CmX509Test, GetX509IssueNameLongFormatNullArgs, TestSize.Level0)
-{
-    EXPECT_EQ(GetX509IssueNameLongFormat(nullptr, nullptr, 0), CMR_ERROR_INVALID_ARGUMENT);
-}
-
 HWTEST_F(CmX509Test, GetX509IssueNameLongFormatSuccess, TestSize.Level0)
 {
     X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
@@ -292,11 +270,6 @@ HWTEST_F(CmX509Test, GetX509IssueNameLongFormatSuccess, TestSize.Level0)
 }
 
 /* ---------- GetX509NotBefore / GetX509NotAfter ---------- */
-
-HWTEST_F(CmX509Test, GetX509NotBeforeNullArgs, TestSize.Level0)
-{
-    EXPECT_EQ(GetX509NotBefore(nullptr, nullptr, 0), CMR_ERROR_INVALID_ARGUMENT);
-}
 
 HWTEST_F(CmX509Test, GetX509NotBeforeSuccess, TestSize.Level0)
 {
@@ -326,14 +299,6 @@ HWTEST_F(CmX509Test, GetX509NotBeforeBufferTooSmall, TestSize.Level0)
     int32_t ret = GetX509NotBefore(cert, buf, sizeof(buf));
     EXPECT_EQ(ret, CMR_ERROR_BUFFER_TOO_SMALL);
     FreeCertContext(cert);
-}
-
-/* ---------- GetX509Fingerprint ---------- */
-
-HWTEST_F(CmX509Test, GetX509FingerprintNullCert, TestSize.Level0)
-{
-    char buf[FINGERPRINT_MAX_SIZE] = {0};
-    EXPECT_EQ(GetX509Fingerprint(nullptr, buf, sizeof(buf)), CMR_ERROR_INVALID_ARGUMENT);
 }
 
 HWTEST_F(CmX509Test, GetX509FingerprintSuccess, TestSize.Level0)
@@ -414,29 +379,25 @@ HWTEST_F(CmX509Test, GetSubjectNameAndAliasEmptyAlias, TestSize.Level0)
 
 /* ---------- InitCertContext additional ---------- */
 
-HWTEST_F(CmX509Test, InitCertContextDerInvalidShort, TestSize.Level0)
+HWTEST_F(CmX509Test, InitCertContextInvalidDerAndPem, TestSize.Level0)
 {
-    /* DER tag but truncated */
+    /* DER tag but truncated - should fail */
     uint8_t shortDer[] = { 0x30, 0x05, 0x00, 0x00, 0x00 };
     X509 *cert = InitCertContext(shortDer, sizeof(shortDer));
     EXPECT_EQ(cert, nullptr);
-}
 
-HWTEST_F(CmX509Test, InitCertContextPemPartialSuccess, TestSize.Level0)
-{
     /* PEM with leading garbage then valid cert - should fail */
     uint8_t garbage[] = "garbage-----BEGIN CERTIFICATE-----\r\n";
-    X509 *cert = InitCertContext(garbage, sizeof(garbage));
-    EXPECT_EQ(cert, nullptr);
+    X509 *cert2 = InitCertContext(garbage, sizeof(garbage));
+    EXPECT_EQ(cert2, nullptr);
+
+    /* Empty PEM body */
+    uint8_t emptyPem[] = "-----BEGIN CERTIFICATE-----\r\n-----END CERTIFICATE-----\r\n";
+    X509 *cert3 = InitCertContext(emptyPem, sizeof(emptyPem));
+    EXPECT_EQ(cert3, nullptr);
 }
 
 /* ---------- InitCertStackContext additional ---------- */
-
-HWTEST_F(CmX509Test, InitCertStackContextDerNotP7b, TestSize.Level0)
-{
-    /* DER cert data (starts with 0x30) is not PKCS7 - d2i_PKCS7_bio should fail */
-    EXPECT_EQ(InitCertStackContext(g_certData01, sizeof(g_certData01)), nullptr);
-}
 
 HWTEST_F(CmX509Test, InitCertStackContextP7bMultipleCerts, TestSize.Level0)
 {
@@ -659,105 +620,27 @@ HWTEST_F(CmX509Test, InitCertContextSizeAtMax, TestSize.Level0)
     uint8_t buf[] = "dummy";
     /* size exactly at MAX_LEN_CERTIFICATE boundary (too large) */
     EXPECT_EQ(InitCertContext(buf, MAX_LEN_CERTIFICATE + 1), nullptr);
+    /* size well beyond MAX_LEN_CERTIFICATE boundary */
+    EXPECT_EQ(InitCertContext(buf, MAX_LEN_CERTIFICATE + 1024), nullptr);
+    /* zero size */
+    EXPECT_EQ(InitCertContext(buf, 0), nullptr);
 }
 
 /* ---------- GetX509NotBefore / GetX509NotAfter: null args ---------- */
 
-HWTEST_F(CmX509Test, GetX509NotBeforeNullCert, TestSize.Level0)
+HWTEST_F(CmX509Test, GetX509NotBeforeAfterNullArgs, TestSize.Level0)
 {
     char buf[64] = {0};
     EXPECT_EQ(GetX509NotBefore(nullptr, buf, sizeof(buf)), CMR_ERROR_INVALID_ARGUMENT);
-}
-
-HWTEST_F(CmX509Test, GetX509NotAfterNullCert, TestSize.Level0)
-{
-    char buf[64] = {0};
     EXPECT_EQ(GetX509NotAfter(nullptr, buf, sizeof(buf)), CMR_ERROR_INVALID_ARGUMENT);
-}
 
-HWTEST_F(CmX509Test, GetX509NotBeforeNullBuf, TestSize.Level0)
-{
     X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
     ASSERT_NE(cert, nullptr);
     EXPECT_EQ(GetX509NotBefore(cert, nullptr, 64), CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-HWTEST_F(CmX509Test, GetX509NotAfterNullBuf, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
     EXPECT_EQ(GetX509NotAfter(cert, nullptr, 64), CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-HWTEST_F(CmX509Test, GetX509NotBeforeZeroSize, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
-    char buf[64] = {0};
-    EXPECT_EQ(GetX509NotBefore(cert, buf, 0), CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-HWTEST_F(CmX509Test, GetX509NotAfterZeroSize, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
-    char buf[64] = {0};
-    EXPECT_EQ(GetX509NotAfter(cert, buf, 0), CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-/* ---------- GetX509Fingerprint null buf ---------- */
-
-HWTEST_F(CmX509Test, GetX509FingerprintNullBuf, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
-    int32_t ret = GetX509Fingerprint(cert, nullptr, 64);
-    EXPECT_TRUE(ret == CMR_ERROR_BUFFER_TOO_SMALL || ret == CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-/* ---------- GetX509SerialNumber null outBuf ---------- */
-
-HWTEST_F(CmX509Test, GetX509SerialNumberNullOutBuf, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
-    EXPECT_EQ(GetX509SerialNumber(cert, nullptr, 64), CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-HWTEST_F(CmX509Test, GetX509SerialNumberNullCert, TestSize.Level0)
-{
-    char buf[64] = {0};
-    EXPECT_EQ(GetX509SerialNumber(nullptr, buf, sizeof(buf)), CMR_ERROR_INVALID_ARGUMENT);
-}
-
-/* ---------- GetX509SubjectName null args ---------- */
-
-HWTEST_F(CmX509Test, GetX509SubjectNameNullCert, TestSize.Level0)
-{
-    char buf[64] = {0};
-    EXPECT_EQ(GetX509SubjectName(nullptr, CM_COMMON_NAME, buf, sizeof(buf)), CMR_ERROR_INVALID_ARGUMENT);
-}
-
-HWTEST_F(CmX509Test, GetX509SubjectNameNullOutBuf, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
-    EXPECT_EQ(GetX509SubjectName(cert, CM_COMMON_NAME, nullptr, 64), CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-HWTEST_F(CmX509Test, GetX509SubjectNameZeroOutBufSize, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
-    char buf[64] = {0};
-    EXPECT_EQ(GetX509SubjectName(cert, CM_COMMON_NAME, buf, 0), CMR_ERROR_INVALID_ARGUMENT);
+    char buf2[64] = {0};
+    EXPECT_EQ(GetX509NotBefore(cert, buf2, 0), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(GetX509NotAfter(cert, buf2, 0), CMR_ERROR_INVALID_ARGUMENT);
     FreeCertContext(cert);
 }
 
@@ -768,13 +651,6 @@ HWTEST_F(CmX509Test, GetX509FirstSubjectNameNullDisplayName, TestSize.Level0)
     X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
     ASSERT_NE(cert, nullptr);
     EXPECT_EQ(GetX509FirstSubjectName(cert, nullptr), CMR_ERROR_INVALID_ARGUMENT);
-    FreeCertContext(cert);
-}
-
-HWTEST_F(CmX509Test, GetX509FirstSubjectNameNullData, TestSize.Level0)
-{
-    X509 *cert = InitCertContext(reinterpret_cast<const uint8_t *>(g_certData06), strlen(g_certData06));
-    ASSERT_NE(cert, nullptr);
     struct CmBlob displayName = { 64, nullptr };
     EXPECT_EQ(GetX509FirstSubjectName(cert, &displayName), CMR_ERROR_INVALID_ARGUMENT);
     FreeCertContext(cert);

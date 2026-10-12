@@ -595,6 +595,10 @@ int32_t CmUkeyAuthDialogManager::OpenDialog(const UkeyOpenDialogRequest &req)
         CM_LOG_E("no ukey driver pin dialog registered for the key uri");
         return CMR_DIALOG_ERROR_NOT_REGISTERED;
     }
+    if (driverAbilityChecker_ == nullptr || !driverAbilityChecker_(bundleName, abilityName, req.userId)) {
+        CM_LOG_E("ability check failed.");
+        return CMR_DIALOG_ERROR_NOT_REGISTERED;
+    }
     if (abilityType == CM_UKEY_ABILITY_TYPE_UIABILITY) {
         CM_LOG_E("ukey driver ability type is UIAbility, not supported");
         return CMR_DIALOG_ERROR_UIABILITY_NOT_SUPPORTED;
