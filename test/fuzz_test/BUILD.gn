@@ -140,6 +140,7 @@ group("fuzztest") {
       "./cmcertcommon_fuzzer:fuzztest",
       "./cmcertmanagerquery_fuzzer:fuzztest",
       "./cmcertmanagerapi_fuzzer:fuzztest",
+      "./cmrevocationcache_fuzzer:fuzztest",
       "./serviceparallelize_fuzzer:fuzztest",
     ]
   }
