@@ -30,6 +30,7 @@
 #include "cm_log.h"
 #include "cm_mem.h"
 #include "cm_revocation_cache.h"
+#include "cm_ipc_client.h"
 
 using namespace OHOS::Security::AccessToken;
 
@@ -142,4 +143,16 @@ extern "C" CM_API_EXPORT void CmFreeRevocationCache(struct CmBlob *data)
         data->data = nullptr;
         data->size = 0;
     }
+}
+
+extern "C" CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, enum CmRevocationType type,
+    const struct CmBlob data, int64_t expireTimeUTC)
+{
+    int64_t clamped = 0;
+    int32_t ret = CmRevocationCacheValidateSaveParams(&key, static_cast<uint32_t>(type), &data,
+        expireTimeUTC, &clamped);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    return CmClientSaveRevocationCache(&key, static_cast<uint32_t>(type), &data, expireTimeUTC);
 }

@@ -109,6 +109,9 @@ void CmIpcServiceSetCertManagerConfig(const struct CmBlob *paramSetBlob, struct 
 void CmIpcServiceGetCertManagerConfig(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
     const struct CmContext *context);
 
+void CmIpcServiceSaveRevocationCache(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context);
+
 #ifdef __cplusplus
 }
 #endif

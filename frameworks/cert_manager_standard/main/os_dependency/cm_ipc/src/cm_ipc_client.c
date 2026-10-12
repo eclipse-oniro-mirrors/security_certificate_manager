@@ -20,6 +20,7 @@
 #include "cm_x509.h"
 #include "cm_param.h"
 #include "cm_request.h"
+#include "cm_revocation_cache.h"
 
 static int32_t CmSendParcelInit(struct CmParam *params, uint32_t paramCount,
     struct CmBlob *parcelBlob, struct CmParamSet **sendParamSet)
@@ -1501,5 +1502,38 @@ int32_t CmClientGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertM
 
     CmFreeParamSet(&sendParamSet);
     CM_FREE_BLOB(outBlob);
+    return ret;
+}
+
+int32_t CmClientSaveRevocationCache(const struct CmBlob *key, uint32_t type, const struct CmBlob *data,
+    int64_t expireTimeUTC)
+{
+    int32_t ret = CM_SUCCESS;
+    uint8_t expire8[sizeof(int64_t)] = { 0 };
+    struct CmBlob expireBlob = { sizeof(expire8), expire8 };
+    struct CmBlob parcelBlob = { 0, NULL };
+    struct CmParamSet *sendParamSet = NULL;
+    struct CmParam params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = *key },
+        { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = type },
+        { .tag = CM_TAG_PARAM1_BUFFER, .blob = *data },
+        { .tag = CM_TAG_PARAM2_BUFFER, .blob = expireBlob },
+    };
+
+    CmRevocationCacheEncodeInt64Be(expireTimeUTC, expire8);
+    do {
+        ret = CmSendParcelInit(params, CM_ARRAY_SIZE(params), &parcelBlob, &sendParamSet);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("save revocation cache sendParcel failed");
+            break;
+        }
+
+        ret = SendRequest(CM_MSG_SAVE_REVOCATION_CACHE, &parcelBlob, NULL);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("save revocation cache request failed, ret: %d", ret);
+            break;
+        }
+    } while (0);
+    CmFreeParamSet(&sendParamSet);
     return ret;
 }

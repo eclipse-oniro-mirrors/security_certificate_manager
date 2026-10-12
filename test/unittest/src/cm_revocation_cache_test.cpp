@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <ctime>
 
 #include "cm_revocation_cache.h"
 #include "cert_manager_api.h"
@@ -67,4 +68,25 @@ TEST_F(CmRevocationCacheTest, FreeNullSafe)
     CmFreeRevocationCache(nullptr);
     struct CmBlob b = {0, nullptr};
     CmFreeRevocationCache(&b);
+}
+
+TEST_F(CmRevocationCacheTest, SaveRejectsOversizedData)
+{
+    struct CmBlob key = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("abc")) };
+    uint8_t big[CM_REVOCATION_CACHE_DATA_MAX_LEN + 1] = {1};
+    struct CmBlob data = { sizeof(big), big };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
+        CMR_ERROR_INVALID_ARGUMENT_CACHE_DATA);
+}
+
+TEST_F(CmRevocationCacheTest, SaveRejectsBadArgs)
+{
+    struct CmBlob key = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("abc")) };
+    struct CmBlob data = { 1, reinterpret_cast<uint8_t *>(const_cast<char *>("d")) };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    EXPECT_EQ(CmSaveRevocationCache(key, static_cast<enum CmRevocationType>(9), data, expire),
+        CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data,
+        static_cast<int64_t>(time(nullptr)) - 1), CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
 }
