@@ -139,6 +139,14 @@ CM_API_EXPORT int32_t CmGetCertManagerConfig(const struct CmBlob *keysBlob, stru
 
 CM_API_EXPORT void CmFreeCertManagerConfig(struct CertManagerConfig *config);
 
+CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, enum CmRevocationType type,
+    const struct CmBlob data, int64_t expireTimeUTC);
+
+CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, enum CmRevocationType type,
+    struct CmBlob *data);
+
+CM_API_EXPORT void CmFreeRevocationCache(struct CmBlob *data);
+
 #ifdef __cplusplus
 }
 #endif

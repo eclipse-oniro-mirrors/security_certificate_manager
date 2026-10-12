@@ -105,6 +105,20 @@ extern "C" {
 #define CA_STORE_PATH_USER_SANDBOX_BASE   "/data/certificates/user_cacerts/"
 #define CA_STORE_PATH_USER_SERVICE_BASE   "/data/service/el1/public/cert_manager_service/certificates/user_open/"
 
+#define REVOCATION_CACHE_SANDBOX_BASE  "/data/certificates/revocation_cache/"
+#define REVOCATION_CACHE_SERVICE_BASE  "/data/service/el1/public/cert_manager_service/certificates/revocation_cache/"
+#define CM_REVOCATION_CACHE_KEY_MAX_LEN    1024
+#define CM_REVOCATION_CACHE_DATA_MAX_LEN   ((1024 * 1024) - (8 * 1024))
+#define CM_REVOCATION_CACHE_MAX_VALID_SEC  (30 * 24 * 60 * 60)
+#define CM_REVOCATION_TOKEN_TYPE_HAP     0
+#define CM_REVOCATION_TOKEN_TYPE_NATIVE  1
+#define CM_REVOCATION_TOKEN_TYPE_SHELL   2
+
+enum CmRevocationType {
+    CM_REVOCATION_TYPE_OCSP = 0,
+    CM_REVOCATION_TYPE_CRL = 1,
+};
+
 enum CmKeyDigest {
     CM_DIGEST_NONE = 0,
     CM_DIGEST_MD5 = 1,

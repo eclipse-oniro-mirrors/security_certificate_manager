@@ -39,9 +39,16 @@ if (os_level == "standard") {
     part_name = "certificate_manager"
     public_configs = [ ":cert_manager_config" ]
 
-    sources = [ "../source/cert_manager_api.c" ]
+    sources = [
+      "../source/cert_manager_api.c",
+      "../source/cm_revocation_cache_api.cpp",
+    ]
 
     cflags = [
+      "-Wall",
+      "-Werror",
+    ]
+    cflags_cc = [
       "-Wall",
       "-Werror",
     ]
@@ -55,6 +62,9 @@ if (os_level == "standard") {
       "init:libbegetutil",
       "bounds_checking_function:libsec_shared",
       "hilog:libhilog",
+      "access_token:libaccesstoken_sdk",
+      "ipc:ipc_single",
+      "openssl:libcrypto_shared",
     ]
   }
 }
