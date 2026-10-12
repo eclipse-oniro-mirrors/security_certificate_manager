@@ -40,9 +40,7 @@ extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenTyp
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     const char *base = nullptr;
-    if (tokenType == CM_REVOCATION_TOKEN_TYPE_HAP) {
-        base = REVOCATION_CACHE_SANDBOX_BASE;
-    } else if (tokenType == CM_REVOCATION_TOKEN_TYPE_NATIVE || tokenType == CM_REVOCATION_TOKEN_TYPE_SHELL) {
+    if (tokenType == CM_REVOCATION_TOKEN_TYPE_NATIVE || tokenType == CM_REVOCATION_TOKEN_TYPE_SHELL) {
         base = REVOCATION_CACHE_SERVICE_BASE;
     } else {
         return CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID;
