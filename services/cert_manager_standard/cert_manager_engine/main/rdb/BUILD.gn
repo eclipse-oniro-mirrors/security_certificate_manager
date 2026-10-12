@@ -40,6 +40,7 @@ ohos_static_library("libcert_manager_rdb_static") {
     "src/cm_config_rdb.cpp",
     "src/cm_rdb_data_manager.cpp",
     "src/cm_rdb_open_callback.cpp",
+    "src/cm_revocation_cache_rdb.cpp",
   ]
 
   deps = [ "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static" ]

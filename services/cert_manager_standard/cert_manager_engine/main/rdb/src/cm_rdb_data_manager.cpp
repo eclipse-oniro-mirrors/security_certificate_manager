@@ -129,6 +129,41 @@ std::shared_ptr<NativeRdb::AbsSharedResultSet> CmRdbDataManager::QueryAllData()
     return absSharedResultSet;
 }
 
+bool CmRdbDataManager::ExecuteSql(const std::string &sql, const std::vector<NativeRdb::ValueObject> &args)
+{
+    CM_LOG_D("enter CmRdbDataManager ExecuteSql");
+    auto rdbStore = GetRdbStore();
+    if (rdbStore == nullptr) {
+        CM_LOG_E("rdbStore is nullptr");
+        return false;
+    }
+
+    int ret = rdbStore->ExecuteSql(sql, args);
+    if (ret != NativeRdb::E_OK) {
+        CM_LOG_E("Failed to execute sql, ret: %{public}d", ret);
+        return false;
+    }
+    return true;
+}
+
+std::shared_ptr<NativeRdb::AbsSharedResultSet> CmRdbDataManager::QueryBySql(const std::string &sql,
+    const std::vector<NativeRdb::ValueObject> &args)
+{
+    CM_LOG_D("enter CmRdbDataManager QueryBySql");
+    auto rdbStore = GetRdbStore();
+    if (rdbStore == nullptr) {
+        CM_LOG_E("rdbStore is nullptr");
+        return nullptr;
+    }
+
+    auto absSharedResultSet = rdbStore->QuerySql(sql, args);
+    if (absSharedResultSet == nullptr) {
+        CM_LOG_E("absSharedResultSet is nullptr");
+        return nullptr;
+    }
+    return absSharedResultSet;
+}
+
 bool CmRdbDataManager::CreateTable()
 {
     CM_LOG_D("enter CmRdbDataManager CreateTable");

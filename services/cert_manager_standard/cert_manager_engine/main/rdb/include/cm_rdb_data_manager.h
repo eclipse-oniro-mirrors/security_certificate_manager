@@ -17,6 +17,7 @@
 #define CM_RDB_DATA_MANAGER_H
 
 #include <mutex>
+#include <vector>
 
 #include "rdb_helper.h"
 
@@ -36,6 +37,9 @@ public:
     bool DeleteData(const std::string &primKey, const std::string &keyColumn);
     std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryData(const std::string &primKey, const std::string &keyColumn);
     std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryAllData();
+    bool ExecuteSql(const std::string &sql, const std::vector<NativeRdb::ValueObject> &args);
+    std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryBySql(const std::string &sql,
+        const std::vector<NativeRdb::ValueObject> &args);
 
     bool CreateTable();
     void DelayCloseRdbStore();
