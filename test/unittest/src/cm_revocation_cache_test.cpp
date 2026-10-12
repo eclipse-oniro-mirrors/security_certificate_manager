@@ -49,13 +49,17 @@ TEST_F(CmRevocationCacheTest, BuildRelPathStableHashAndPrefix)
 TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
 {
     char base[300] = {0};
-    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, base, sizeof(base)),
-        CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, base, sizeof(base)), CM_SUCCESS);
+    EXPECT_STREQ(base, REVOCATION_CACHE_SANDBOX_BASE);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, base, sizeof(base)), CM_SUCCESS);
     EXPECT_STREQ(base, REVOCATION_CACHE_SERVICE_BASE);
-    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_SHELL, base, sizeof(base)), CM_SUCCESS);
-    EXPECT_STREQ(base, REVOCATION_CACHE_SERVICE_BASE);
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_SHELL, base, sizeof(base)),
+        CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(99, base, sizeof(base)), CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
+
+    char small[8] = {0};
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, small, sizeof(small)),
+        CMR_ERROR_BUFFER_TOO_SMALL);
 }
 
 TEST_F(CmRevocationCacheTest, FreeNullSafe)

@@ -78,7 +78,8 @@ int32_t CertManagerInitialize(void)
         return ret;
     }
 
-    (void)CmMakeDir(REVOCATION_CACHE_DIR);
+    mode_t mode0701 = S_IRWXU | S_IXOTH;
+    (void)CmUserBakupMakeDir(REVOCATION_CACHE_DIR, &mode0701);
     (void)CreateRevocationCacheRdb();
 
     return CM_SUCCESS;

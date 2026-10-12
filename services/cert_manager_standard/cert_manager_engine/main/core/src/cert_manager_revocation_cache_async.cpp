@@ -116,7 +116,7 @@ extern "C" int32_t CmRunSaveRevocationCacheAsync(const struct CmBlob *key, uint3
         CMFree(keyCopy.data);
         CMFree(dataCopy.data);
         CMFree(task);
-        return CMR_ERROR_MALLOC_FAIL;
+        return CMR_ERROR_INVALID_OPERATION;
     }
     (void)pthread_detach(tid);
     return CM_SUCCESS;

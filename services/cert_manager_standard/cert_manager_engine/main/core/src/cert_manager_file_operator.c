@@ -674,8 +674,11 @@ int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, ui
         }
         written += (uint32_t)n;
     }
-    if (fsync(fd) < 0) {
-        CM_LOG_E("sync file failed");
+    while (fsync(fd) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        CM_LOG_E("sync file failed, errno = 0x%x", errno);
         fdsan_close_with_tag(fd, newTag);
         (void)unlink(tmpPath);
         return CMR_ERROR_WRITE_FILE_FAIL;

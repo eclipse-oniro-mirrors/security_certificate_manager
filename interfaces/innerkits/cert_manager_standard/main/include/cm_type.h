@@ -105,6 +105,7 @@ extern "C" {
 #define CA_STORE_PATH_USER_SANDBOX_BASE   "/data/certificates/user_cacerts/"
 #define CA_STORE_PATH_USER_SERVICE_BASE   "/data/service/el1/public/cert_manager_service/certificates/user_open/"
 
+#define REVOCATION_CACHE_SANDBOX_BASE  "/data/certificates/revocation_cache/"
 #define REVOCATION_CACHE_SERVICE_BASE  "/data/service/el1/public/cert_manager_service/certificates/revocation_cache/"
 #define CM_REVOCATION_CACHE_KEY_MAX_LEN    256
 #define CM_REVOCATION_CACHE_DATA_MAX_LEN   (300 * 1024)
