@@ -25,7 +25,7 @@ class UkeyAuthExtensionAbility extends ExtensionAbility {
   }
 
   onSessionCreate(want, session) {
-    hilog.sLogI(domainID, TAG, 'onSessionCreate, want:' + want.abilityName);
+    hilog.sLogI(domainID, TAG, 'onSessionCreate, want:' + want?.abilityName);
   }
 
   onSessionDestroy(session) {

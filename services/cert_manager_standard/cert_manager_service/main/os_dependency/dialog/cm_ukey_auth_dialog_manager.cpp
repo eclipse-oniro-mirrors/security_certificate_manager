@@ -25,6 +25,8 @@
 #include "cJSON.h"
 #include "extension_ability_info.h"
 #include "hks_api.h"
+#include "hks_param.h"
+#include "hks_tag.h"
 #include "ipc_skeleton.h"
 #include "iservice_registry.h"
 #include "message_option.h"
@@ -238,14 +240,46 @@ bool BuildUkeyDialogParams(const std::string &requestId, const UkeyDialogLaunchP
     return ok;
 }
 
+/* Build the HUKS query param set (paramSetIn) of the ability query: scopes
+ * the lookup to the caller's user space with HKS_TAG_SPECIFIC_USER_ID; on
+ * success *paramSet is owned by the caller (HksFreeParamSet), on failure it
+ * is released here and left null. */
+int32_t BuildAbilityQueryParamSet(int32_t userId, struct HksParamSet **paramSet)
+{
+    int32_t ret = HksInitParamSet(paramSet);
+    if (ret != HKS_SUCCESS) {
+        CM_LOG_E("init huks param set failed, ret: %d", ret);
+        return ret;
+    }
+    struct HksParam userIdParam = {
+        .tag = HKS_TAG_SPECIFIC_USER_ID,
+        .int32Param = userId,
+    };
+    ret = HksAddParams(*paramSet, &userIdParam, 1);
+    if (ret != HKS_SUCCESS) {
+        CM_LOG_E("add userId to huks param set failed, ret: %d", ret);
+        HksFreeParamSet(paramSet);
+    }
+    return ret;
+}
+
 /* HUKS ability query adapter (production assembly, pattern aligned with the
  * kits-layer cm_dialog_api_common.cpp): a query failure counts as "not
- * registered" (spec v4 D22: no default-dialog fallback). */
+ * registered" (spec v4 D22: no default-dialog fallback). The driver ability
+ * is registered in the caller user's HUKS space, so the query carries the
+ * caller userId (HKS_TAG_SPECIFIC_USER_ID) in paramSetIn; without the userId
+ * tag the lookup would only cover the SA's own user space. */
 int32_t QueryUkeyDriverAbility(const struct CmBlob *keyUri,
-    std::string &bundleName, std::string &abilityName, uint32_t &abilityType)
+    std::string &bundleName, std::string &abilityName, uint32_t &abilityType, int32_t userId)
 {
     if (keyUri == nullptr || keyUri->data == nullptr || keyUri->size == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    struct HksParamSet *paramSet = nullptr;
+    int32_t ret = BuildAbilityQueryParamSet(userId, &paramSet);
+    if (ret != HKS_SUCCESS) {
+        return ret;
     }
 
     struct HksAbilityInfo abilityInfo = {};
@@ -255,6 +289,7 @@ int32_t QueryUkeyDriverAbility(const struct CmBlob *keyUri,
         CM_LOG_E("malloc hks ability info buffer failed");
         CM_FREE_PTR(abilityInfo.abilityName.data);
         CM_FREE_PTR(abilityInfo.bundleName.data);
+        HksFreeParamSet(&paramSet);
         return CMR_ERROR_MALLOC_FAIL;
     }
     abilityInfo.abilityName.size = HAP_INFO_MAX_LENGTH;
@@ -263,7 +298,8 @@ int32_t QueryUkeyDriverAbility(const struct CmBlob *keyUri,
         .size = keyUri->size,
         .data = keyUri->data
     };
-    int32_t ret = HksQueryAbilityInfo(&resourceId, &abilityInfo);
+    ret = HksQueryAbilityInfo(&resourceId, paramSet, &abilityInfo);
+    HksFreeParamSet(&paramSet);
     if (ret != HKS_SUCCESS) {
         CM_LOG_E("HksQueryAbilityInfo failed, ret: %d", ret);
         CM_FREE_PTR(abilityInfo.abilityName.data);
@@ -332,17 +368,16 @@ bool QueryDriverUkeyExtensionAbility(const std::string &bundleName,
  * entry's ValidateDriverDialogRequest): blob validity and the customData
  * cap, same check order as the original inline implementation; session
  * single-flight and the ability routing stay inside the lock */
-int32_t ValidateOpenDialogArguments(const struct CmBlob *keyUri,
-    const struct CmBlob *customData, const sptr<IRemoteObject> &clientCallback)
+int32_t ValidateOpenDialogRequest(const UkeyOpenDialogRequest &req)
 {
-    if (keyUri == nullptr || keyUri->data == nullptr || keyUri->size == 0 ||
-        keyUri->size > MAX_LEN_URI || clientCallback == nullptr) {
+    if (req.keyUri.data == nullptr || req.keyUri.size == 0 ||
+        req.keyUri.size > MAX_LEN_URI || req.clientCallback == nullptr) {
         CM_LOG_E("invalid open dialog arguments");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     /* customData re-check (already validated on the client side; defense in depth, spec D19) */
-    if (customData != nullptr && customData->size > CM_UKEY_AUTH_CUSTOM_DATA_MAX_SIZE) {
-        CM_LOG_E("custom data too large: %u", customData->size);
+    if (req.customData.size > CM_UKEY_AUTH_CUSTOM_DATA_MAX_SIZE) {
+        CM_LOG_E("custom data too large: %u", req.customData.size);
         return CMR_DIALOG_ERROR_PARAMETER_VALIDATION_FAILED;
     }
     return CM_SUCCESS;
@@ -535,29 +570,27 @@ int32_t CmUkeyAuthDialogManager::LaunchUiExtensionSessionLocked(const UkeyDialog
     return CM_SUCCESS;
 }
 
-int32_t CmUkeyAuthDialogManager::OpenDialog(const struct CmBlob *keyUri, uint32_t callerUid,
-    uint32_t timeoutSec, const struct CmBlob *customData,
-    const sptr<IRemoteObject> &clientCallback)
+int32_t CmUkeyAuthDialogManager::OpenDialog(const UkeyOpenDialogRequest &req)
 {
-    int32_t ret = ValidateOpenDialogArguments(keyUri, customData, clientCallback);
+    int32_t ret = ValidateOpenDialogRequest(req);
     if (ret != CM_SUCCESS) {
         return ret;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    uint32_t effectiveTimeoutSec = NormalizeTimeoutSecLocked(timeoutSec);
+    uint32_t effectiveTimeoutSec = NormalizeTimeoutSecLocked(req.timeoutSec);
     if (session_ != nullptr) {
         CM_LOG_E("another ukey auth dialog session is in progress");
         return CMR_DIALOG_ERROR_UKEY_DIALOG_IN_PROGRESS;
     }
 
-    /* Routing (spec v4 §4.1/D22): the SA queries by itself and does not
-     * trust the client-declared ability info (D20); only UIExtensionAbility
-     * + PC is admitted to the SA session path; not registered / UIAbility
-     * is rejected synchronously. */
+    /* Routing (spec v4 §4.1/D22): the SA queries by itself and does not trust
+     * the client-declared ability info (D20); only UIExtensionAbility + PC is
+     * admitted; not registered / UIAbility is rejected synchronously. */
     std::string bundleName;
     std::string abilityName;
     uint32_t abilityType = CM_UKEY_ABILITY_TYPE_UIABILITY;
-    int32_t queryRet = (querier_ == nullptr) ? CM_FAILURE : querier_(keyUri, bundleName, abilityName, abilityType);
+    int32_t queryRet = (querier_ == nullptr) ? CM_FAILURE
+        : querier_(&req.keyUri, bundleName, abilityName, abilityType, req.userId);
     if (queryRet != CM_SUCCESS) {
         CM_LOG_E("no ukey driver pin dialog registered for the key uri");
         return CMR_DIALOG_ERROR_NOT_REGISTERED;
@@ -578,13 +611,13 @@ int32_t CmUkeyAuthDialogManager::OpenDialog(const struct CmBlob *keyUri, uint32_
     UkeyDialogLaunchParams params;
     params.bundleName = bundleName;
     params.abilityName = abilityName;
-    params.keyUri = *keyUri;
-    params.callerUid = callerUid;
+    params.keyUri = req.keyUri;
+    params.callerUid = req.callerUid;
     params.timeoutSec = effectiveTimeoutSec;
-    if (customData != nullptr) {
-        params.customData = *customData;
+    if (req.customData.size > 0) {
+        params.customData = req.customData;
     }
-    params.clientCallback = clientCallback;
+    params.clientCallback = req.clientCallback;
     return LaunchUiExtensionSessionLocked(params);
 }
 

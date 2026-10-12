@@ -28,6 +28,8 @@
 #include "cm_ukey_auth_dialog_manager.h"
 
 namespace OHOS::Security::CertManager {
+constexpr uint32_t TEST_USERID = 100;
+
 class FakeLauncher : public SystemDialogLauncher {
 public:
     int32_t Connect(const sptr<IAbilityConnection> &conn) override
@@ -75,10 +77,11 @@ public:
         manager_ = &CmUkeyAuthDialogManager::GetInstance();
         launcher_ = std::make_shared<FakeLauncher>();
         querier_ = [this](const struct CmBlob *keyUri, std::string &bundle,
-                      std::string &ability, uint32_t &type) -> int32_t {
+                      std::string &ability, uint32_t &type, int32_t userId) -> int32_t {
             bundle = driverBundle_;
             ability = driverAbility_;
             type = abilityType_;
+            queriedUserId_ = userId;
             return querierRet_;
         };
         manager_->SetLauncher(launcher_);
@@ -100,6 +103,7 @@ public:
     std::string driverAbility_ = "DrvUIExtAbility";
     int32_t querierRet_ = 0;
     uint32_t abilityType_ = CM_UKEY_ABILITY_TYPE_UIEXTENSION;
+    int32_t queriedUserId_ = -1; // last userId handed to the ability querier (HKS_TAG_SPECIFIC_USER_ID source)
     int renewalCount_ = 0; // keep-alive renewal hook fire count (F1)
     bool pcMode_ = true; // pc checker injection (D15): default allows UIExtension path
     DriverAbilityChecker driverChecker_;
@@ -107,9 +111,18 @@ public:
     std::string callerBundle_ = "com.example.ukeydriver";
     std::string driverAbilityName_ = "MyUkeyAuthExtensionAbility";
     /* convenience wrapper for the OpenDialog signature (customData optional) */
-    int32_t Open(uint32_t timeout = 0, const struct CmBlob *customData = nullptr)
+    int32_t Open(uint32_t timeout = 0, const struct CmBlob *customData = nullptr, int32_t userId = TEST_USERID)
     {
-        return manager_->OpenDialog(&keyUri_, 100, timeout, customData, client_);
+        UkeyOpenDialogRequest req;
+        req.keyUri = keyUri_;
+        req.callerUid = TEST_USERID;
+        req.timeoutSec = timeout;
+        req.clientCallback = client_;
+        req.userId = userId;
+        if (customData != nullptr) {
+            req.customData = *customData;
+        }
+        return manager_->OpenDialog(req);
     }
     /* convenience wrapper for OpenDriverDialog (spec v4 §4.1 ForDriver routing) */
     int32_t OpenDriver(uint32_t abilityType = CM_UKEY_ABILITY_TYPE_UIEXTENSION, uint32_t timeout = 0,
@@ -120,9 +133,9 @@ public:
             reinterpret_cast<uint8_t *>(const_cast<char *>(driverAbilityName_.c_str())) };
         req.abilityType = abilityType;
         req.keyUri = keyUri_;
-        req.callerUid = 100;
+        req.callerUid = TEST_USERID;
         req.callerBundleName = callerBundle_;
-        req.userId = 100;
+        req.userId = TEST_USERID;
         req.timeoutSec = timeout;
         if (customData != nullptr) {
             req.customData = *customData;
@@ -152,6 +165,20 @@ HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogWrongAbilityType, testing::ext::
     ASSERT_EQ(Open(), CMR_DIALOG_ERROR_UIABILITY_NOT_SUPPORTED);
     EXPECT_EQ(launcher_->connectCount_, 0); /* no connection established */
     EXPECT_EQ(manager_->GetRequestIdForTest(), ""); /* single-flight not occupied by any session */
+}
+
+/* The driver ability is registered in the caller account's HUKS space: the
+ * IPC-resolved userId must be handed to the querier (it reaches HUKS as
+ * HKS_TAG_SPECIFIC_USER_ID in paramSetIn), otherwise the query would only
+ * see the SA's own user space. */
+HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogForwardsCallerUserId, testing::ext::TestSize.Level0)
+{
+    ASSERT_EQ(Open(0, nullptr, TEST_USERID), CM_SUCCESS);
+    EXPECT_EQ(queriedUserId_, TEST_USERID);
+    manager_->OnReport(manager_->GetRequestIdForTest(), driverBundle_, 0); // cleanup
+    ASSERT_EQ(Open(0, nullptr, 0), CM_SUCCESS); /* the userId value is passed through unchanged */
+    EXPECT_EQ(queriedUserId_, 0);
+    manager_->OnReport(manager_->GetRequestIdForTest(), driverBundle_, 0); // cleanup
 }
 
 HWTEST_F(CmUkeyAuthDialogManagerTest, PcGateBlocksUiExtensionWhenNotPc, testing::ext::TestSize.Level0)

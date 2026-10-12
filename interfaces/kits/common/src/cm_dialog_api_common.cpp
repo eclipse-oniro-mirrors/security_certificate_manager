@@ -122,7 +122,7 @@ static int32_t QueryAbilityInfo(const CmBlob *keyUri, std::string &abilityName,
         .size = keyUri->size,
         .data = keyUri->data
     };
-    int32_t ret = HksQueryAbilityInfo(&resourceId, &abilityInfo);
+    int32_t ret = HksQueryAbilityInfo(&resourceId, nullptr, &abilityInfo);
     if (ret != HKS_SUCCESS) {
         CM_LOG_E("query ability info failed");
         CM_FREE_PTR(abilityInfo.abilityName.data);

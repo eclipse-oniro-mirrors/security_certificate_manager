@@ -61,9 +61,14 @@ public:
 // it into the HksQueryAbilityInfo adapter: returns the bundle/ability names
 // and abilityType; a query failure counts as "not registered" and is
 // rejected synchronously (spec v4 §4.1/D22; during integration a stub can
-// return a fixed value)
+// return a fixed value). userId is the caller account, resolved by the IPC
+// layer via CmGetProcessInfoForIPC and forwarded as
+// HKS_TAG_SPECIFIC_USER_ID in the HUKS param set, so the registration is
+// looked up in the caller's user space (this static library must not depend
+// on the idl layer; deriving the user from GetCallingUid is unreliable on
+// the SA entry thread)
 using AbilityQuerier = std::function<int32_t(const struct CmBlob *keyUri,
-    std::string &bundleName, std::string &abilityName, uint32_t &abilityType)>;
+    std::string &bundleName, std::string &abilityName, uint32_t &abilityType, int32_t userId)>;
 
 // PC gate injection point (spec D15: consumed only by the UIExtension path;
 // production assembly is the two-level check CmUkeyIsPcPlatformOrPcMode -
@@ -80,6 +85,21 @@ using PcChecker = std::function<bool()>;
 // dialog static library must not depend on the idl layer)
 using DriverAbilityChecker = std::function<bool(const std::string &bundleName,
     const std::string &abilityName, int32_t userId)>;
+
+    /* SA entry parameter set of openUkeyAuthDialog (spec v4 §4.1): split out
+     * of the 6-arg signature to cap the argument count; callerUid is the
+     * calling uid and userId the caller account, both resolved by the IPC
+     * layer from the IPC token (userId via CmGetProcessInfoForIPC, the dialog
+     * static library must not depend on the idl layer);
+     * customData.size == 0 means absent (not carried) */
+    struct UkeyOpenDialogRequest {
+        struct CmBlob keyUri;        /* ukey credential uri */
+        uint32_t callerUid = 0;      /* calling uid (used as dialog param appUid) */
+        uint32_t timeoutSec = 0;     /* seconds, 0 = server default, clamped server-side */
+        struct CmBlob customData;    /* optional caller-opaque data (size 0 = absent) */
+        sptr<IRemoteObject> clientCallback; /* client callback stub */
+        int32_t userId = 0;          /* caller account, for the HUKS ability query */
+    };
 
     /* SA entry parameter set of openAuthDialogForUkeyProvider (spec v4
      * §4.1/D23): split out of the original 9-arg signature to cap the
@@ -138,8 +158,8 @@ public:
     // -1019 not registered / -1020 / CMR_DIALOG_ERROR_*); customData is
     // consumed only during the synchronous launch (written into dialog
     // params) and is not kept with the session
-    int32_t OpenDialog(const struct CmBlob *keyUri, uint32_t callerUid, uint32_t timeoutSec,
-        const struct CmBlob *customData, const sptr<IRemoteObject> &clientCallback);
+    // params in UkeyOpenDialogRequest
+    int32_t OpenDialog(const UkeyOpenDialogRequest &req);
     /* SA entry of openAuthDialogForUkeyProvider (spec v4 §4.1/D23): params in
      * UkeyDriverDialogRequest; abilityType accepts only
      * CM_UKEY_ABILITY_TYPE_UIEXTENSION; BMS validation goes through
