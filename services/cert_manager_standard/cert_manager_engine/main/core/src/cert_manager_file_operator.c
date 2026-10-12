@@ -15,6 +15,7 @@
 
 #include "cert_manager_file_operator.h"
 
+#include <stdio.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -629,4 +630,47 @@ int32_t CmDirRemove(const char *path)
     }
 
     return DirRemove(path);
+}
+
+int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len)
+{
+    if (relPath == NULL || buf == NULL || len == 0) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    char fullPath[PATH_MAX] = {0};
+    int32_t ret = snprintf(fullPath, sizeof(fullPath), "%s%s", REVOCATION_CACHE_DIR, relPath);
+    if ((ret < 0) || ((size_t)ret >= sizeof(fullPath))) {
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+    char tmpPath[PATH_MAX] = {0};
+    ret = snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", fullPath);
+    if ((ret < 0) || ((size_t)ret >= sizeof(tmpPath))) {
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+    int fd = open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if (fd < 0) {
+        CM_LOG_E("open tmp file failed, errno = 0x%x", errno);
+        return CMR_ERROR_OPEN_FILE_FAIL;
+    }
+    uint64_t newTag = CreateFdsanOwnTag(&fd);
+    fdsan_exchange_owner_tag(fd, 0, newTag);
+    if (write(fd, buf, len) < 0) {
+        CM_LOG_E("write tmp file failed, errno = 0x%x", errno);
+        fdsan_close_with_tag(fd, newTag);
+        (void)unlink(tmpPath);
+        return CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    if (fsync(fd) < 0) {
+        CM_LOG_E("sync file failed");
+        fdsan_close_with_tag(fd, newTag);
+        (void)unlink(tmpPath);
+        return CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    fdsan_close_with_tag(fd, newTag);
+    if (rename(tmpPath, fullPath) != 0) {
+        CM_LOG_E("rename tmp file failed, errno = 0x%x", errno);
+        (void)unlink(tmpPath);
+        return CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    return CMR_OK;
 }
