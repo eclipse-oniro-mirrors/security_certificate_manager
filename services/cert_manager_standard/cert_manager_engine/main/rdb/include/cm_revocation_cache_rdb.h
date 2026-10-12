@@ -36,7 +36,7 @@ int32_t DeleteRevocationCacheRecord(const char *filePath);
 
 int32_t QueryRevocationCacheSumSize(uint64_t *totalSize);
 
-int32_t QueryOldestRevocationCacheRecord(struct RevocationCacheRecord *record);
+int32_t QueryRevocationCacheRecordByExpireAsc(struct RevocationCacheRecord *record);
 
 int32_t QueryExpiredRevocationCacheRecord(int64_t nowUtc, struct RevocationCacheRecord *record);
 

@@ -30,8 +30,6 @@
 
 #include "cert_manager_file_operator.h"
 #include "cert_manager_mem.h"
-#include "cert_manager_revocation_cache.h"
-#include "cm_error_code.h"
 #include "cert_manager_storage.h"
 #include "cm_log.h"
 #include "cm_mem.h"
@@ -141,7 +139,7 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
     int64_t now = (int64_t)time(NULL);
     int64_t lastClean = 0;
     ret = GetRevocationCacheMeta(&lastClean);
-    if (ret == CMR_ERROR_NOT_EXIST || (now - lastClean > REVOCATION_CACHE_CLEAN_INTERVAL_SEC)) {
+    if (ret != CM_SUCCESS || (now - lastClean > REVOCATION_CACHE_CLEAN_INTERVAL_SEC)) {
         // clean expired
         struct RevocationCacheRecord rec = { 0 };
         while (QueryExpiredRevocationCacheRecord(now, &rec) == CM_SUCCESS) {
@@ -205,7 +203,7 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
     (void)QueryRevocationCacheSumSize(&totalSize);
     while (totalSize + (uint64_t)data->size > (uint64_t)REVOCATION_CACHE_MAX_TOTAL_BYTES) {
         struct RevocationCacheRecord oldest;
-        if (QueryOldestRevocationCacheRecord(&oldest) != CM_SUCCESS) {
+        if (QueryRevocationCacheRecordByExpireAsc(&oldest) != CM_SUCCESS) {
             break;
         }
         char oldestFull[PATH_MAX] = {0};
@@ -214,15 +212,13 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
         (void)DeleteRevocationCacheRecord(oldest.filePath);
         totalSize = (totalSize >= oldest.dataSize) ? (totalSize - oldest.dataSize) : 0;
     }
-    pthread_mutex_unlock(&g_revocationCacheLock);
-
     // ensure dirs and write
     int32_t writeRet = CMR_OK;
-    if (CmMakeDir(REVOCATION_CACHE_DIR) == CMR_ERROR_MAKE_DIR_FAIL) {
+    mode_t mode0701 = S_IRWXU | S_IXOTH;
+    if (EnsureDirWithMode(REVOCATION_CACHE_DIR, &mode0701) == CMR_ERROR_MAKE_DIR_FAIL) {
         writeRet = CMR_ERROR_MAKE_DIR_FAIL;
         goto cleanup;
     }
-    mode_t mode0701 = S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
     // ensure type dir and prefix dir
     {
         const char *prefixType = (type == CM_REVOCATION_TYPE_OCSP) ? "ocsp" : "crl";
@@ -260,6 +256,7 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
     }
 
 cleanup:
+    pthread_mutex_unlock(&g_revocationCacheLock);
     CMFree(payload);
     return writeRet;
 }

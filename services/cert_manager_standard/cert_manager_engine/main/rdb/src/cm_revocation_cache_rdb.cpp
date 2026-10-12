@@ -254,11 +254,11 @@ static int32_t QuerySingleRecord(const std::string &sql, const std::vector<Nativ
     return ret;
 }
 
-int32_t QueryOldestRevocationCacheRecord(struct RevocationCacheRecord *record)
+int32_t QueryRevocationCacheRecordByExpireAsc(struct RevocationCacheRecord *record)
 {
-    CM_LOG_D("enter QueryOldestRevocationCacheRecord");
+    CM_LOG_D("enter QueryRevocationCacheRecordByExpireAsc");
     std::string sql = std::string(REVOCATION_CACHE_SELECT_COLUMNS) + REVOCATION_CACHE_TABLE_NAME +
-        " ORDER BY " + COLUMN_WRITE_TIME_UTC + " ASC, " + COLUMN_FILE_PATH + " ASC LIMIT 1";
+        " ORDER BY " + COLUMN_EXPIRE_TIME_UTC + " ASC, " + COLUMN_WRITE_TIME_UTC + " ASC LIMIT 1";
     return QuerySingleRecord(sql, std::vector<NativeRdb::ValueObject>(), record);
 }
 

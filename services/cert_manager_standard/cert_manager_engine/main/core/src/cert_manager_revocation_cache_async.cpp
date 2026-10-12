@@ -15,12 +15,13 @@
 
 #include "cert_manager_revocation_cache.h"
 
-#include <thread>
+#include <pthread.h>
 
 #include "securec.h"
 
 #include "cert_manager_mem.h"
 #include "cm_error_code.h"
+#include "cm_log.h"
 
 extern "C" int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, const struct CmBlob *data,
     int64_t expireTimeUtc);
@@ -49,6 +50,28 @@ static int32_t DeepCopyBlob(const struct CmBlob *src, struct CmBlob *dst)
     return CM_SUCCESS;
 }
 
+struct RevocationCacheAsyncTask {
+    struct CmBlob key;
+    struct CmBlob data;
+    uint32_t type;
+    int64_t expireTimeUtc;
+};
+
+static void *RevocationCacheAsyncWorker(void *arg)
+{
+    struct RevocationCacheAsyncTask *task = static_cast<struct RevocationCacheAsyncTask *>(arg);
+    if (task == nullptr) {
+        return nullptr;
+    }
+    (void)CmServiceSaveRevocationCache(&task->key, task->type, &task->data, task->expireTimeUtc);
+    (void)memset_s(task->key.data, task->key.size, 0, task->key.size);
+    (void)memset_s(task->data.data, task->data.size, 0, task->data.size);
+    CMFree(task->key.data);
+    CMFree(task->data.data);
+    CMFree(task);
+    return nullptr;
+}
+
 extern "C" int32_t CmRunSaveRevocationCacheAsync(const struct CmBlob *key, uint32_t type, const struct CmBlob *data,
     int64_t expireTimeUtc)
 {
@@ -69,13 +92,32 @@ extern "C" int32_t CmRunSaveRevocationCacheAsync(const struct CmBlob *key, uint3
         return ret;
     }
 
-    std::thread w([keyCopy, type, dataCopy, expireTimeUtc]() {
-        (void)CmServiceSaveRevocationCache(&keyCopy, type, &dataCopy, expireTimeUtc);
+    struct RevocationCacheAsyncTask *task =
+        static_cast<struct RevocationCacheAsyncTask *>(CMMalloc(sizeof(struct RevocationCacheAsyncTask)));
+    if (task == nullptr) {
         (void)memset_s(keyCopy.data, keyCopy.size, 0, keyCopy.size);
         (void)memset_s(dataCopy.data, dataCopy.size, 0, dataCopy.size);
         CMFree(keyCopy.data);
         CMFree(dataCopy.data);
-    });
-    w.detach();
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(task, sizeof(struct RevocationCacheAsyncTask), 0, sizeof(struct RevocationCacheAsyncTask));
+    task->key = keyCopy;
+    task->data = dataCopy;
+    task->type = type;
+    task->expireTimeUtc = expireTimeUtc;
+
+    pthread_t tid;
+    int32_t createRet = pthread_create(&tid, nullptr, RevocationCacheAsyncWorker, task);
+    if (createRet != 0) {
+        CM_LOG_E("failed to create revocation cache worker thread, err = %d", createRet);
+        (void)memset_s(keyCopy.data, keyCopy.size, 0, keyCopy.size);
+        (void)memset_s(dataCopy.data, dataCopy.size, 0, dataCopy.size);
+        CMFree(keyCopy.data);
+        CMFree(dataCopy.data);
+        CMFree(task);
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)pthread_detach(tid);
     return CM_SUCCESS;
 }

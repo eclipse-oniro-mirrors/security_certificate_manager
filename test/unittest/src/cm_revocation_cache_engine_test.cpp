@@ -23,6 +23,7 @@
 #include "cert_manager_api.h"
 #include "cert_manager_revocation_cache.h"
 #include "cm_mem.h"
+#include "cm_revocation_cache_rdb.h"
 #include "cm_type.h"
 
 using namespace testing::ext;
@@ -30,7 +31,10 @@ using namespace testing::ext;
 namespace {
 class CmRevocationCacheEngineTest : public testing::Test {
 public:
-    static void SetUpTestCase() {}
+    static void SetUpTestCase()
+    {
+        ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+    }
     static void TearDownTestCase() {}
     virtual void SetUp() {}
     virtual void TearDown() {}

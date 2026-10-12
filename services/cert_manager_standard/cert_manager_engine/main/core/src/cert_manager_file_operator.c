@@ -654,11 +654,25 @@ int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, ui
     }
     uint64_t newTag = CreateFdsanOwnTag(&fd);
     fdsan_exchange_owner_tag(fd, 0, newTag);
-    if (write(fd, buf, len) < 0) {
-        CM_LOG_E("write tmp file failed, errno = 0x%x", errno);
-        fdsan_close_with_tag(fd, newTag);
-        (void)unlink(tmpPath);
-        return CMR_ERROR_WRITE_FILE_FAIL;
+    uint32_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, buf + written, len - written);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            CM_LOG_E("write tmp file failed, errno = 0x%x", errno);
+            fdsan_close_with_tag(fd, newTag);
+            (void)unlink(tmpPath);
+            return CMR_ERROR_WRITE_FILE_FAIL;
+        }
+        if (n == 0) {
+            CM_LOG_E("write tmp file made no progress");
+            fdsan_close_with_tag(fd, newTag);
+            (void)unlink(tmpPath);
+            return CMR_ERROR_WRITE_FILE_FAIL;
+        }
+        written += (uint32_t)n;
     }
     if (fsync(fd) < 0) {
         CM_LOG_E("sync file failed");
