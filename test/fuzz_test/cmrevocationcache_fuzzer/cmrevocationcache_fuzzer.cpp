@@ -51,18 +51,12 @@ bool DoSomethingInterestingWithRevocationCache(const uint8_t *data, size_t size)
     uint32_t type = 0;
     if (!GetUintFromBuffer(myData, &remainSize, &offset, &type)) {
         CmFree(myData);
-        if (key.data != nullptr) {
-            CmFree(key.data);
-        }
         return false;
     }
 
     struct CmBlob cacheData = { 0, nullptr };
     if (!GetCmBlobFromBuffer(myData, &remainSize, &offset, &cacheData)) {
         CmFree(myData);
-        if (key.data != nullptr) {
-            CmFree(key.data);
-        }
         return false;
     }
 
@@ -77,12 +71,6 @@ bool DoSomethingInterestingWithRevocationCache(const uint8_t *data, size_t size)
     (void)CmGetRevocationCache(key, static_cast<enum CmRevocationType>(type), &outData);
     CmFreeRevocationCache(&outData);
 
-    if (key.data != nullptr) {
-        CmFree(key.data);
-    }
-    if (cacheData.data != nullptr) {
-        CmFree(cacheData.data);
-    }
     CmFree(myData);
     return true;
 }
