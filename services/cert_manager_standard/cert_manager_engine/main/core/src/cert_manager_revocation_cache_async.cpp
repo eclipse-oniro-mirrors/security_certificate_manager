@@ -86,6 +86,7 @@ extern "C" int32_t CmRunSaveRevocationCacheAsync(const struct CmBlob *key, uint3
     }
     ret = DeepCopyBlob(data, &dataCopy);
     if (ret != CM_SUCCESS) {
+        (void)memset_s(keyCopy.data, keyCopy.size, 0, keyCopy.size);
         CMFree(keyCopy.data);
         keyCopy.data = nullptr;
         keyCopy.size = 0;

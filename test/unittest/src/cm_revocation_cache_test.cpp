@@ -17,6 +17,7 @@
 
 #include <cstring>
 #include <ctime>
+#include <vector>
 
 #include "cm_revocation_cache.h"
 #include "cert_manager_api.h"
@@ -73,8 +74,8 @@ TEST_F(CmRevocationCacheTest, FreeNullSafe)
 TEST_F(CmRevocationCacheTest, SaveRejectsOversizedData)
 {
     struct CmBlob key = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("abc")) };
-    uint8_t big[CM_REVOCATION_CACHE_DATA_MAX_LEN + 1] = {1};
-    struct CmBlob data = { sizeof(big), big };
+    std::vector<uint8_t> big(CM_REVOCATION_CACHE_DATA_MAX_LEN + 1, 1);
+    struct CmBlob data = { static_cast<uint32_t>(big.size()), big.data() };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
     EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
         CMR_ERROR_INVALID_ARGUMENT_CACHE_DATA);

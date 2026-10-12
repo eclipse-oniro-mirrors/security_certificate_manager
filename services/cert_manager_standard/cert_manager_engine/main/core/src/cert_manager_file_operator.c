@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "securec.h"
@@ -635,6 +636,9 @@ int32_t CmDirRemove(const char *path)
 int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len)
 {
     if (relPath == NULL || buf == NULL || len == 0) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (relPath[0] == '/' || strstr(relPath, "..") != NULL) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     char fullPath[PATH_MAX] = {0};

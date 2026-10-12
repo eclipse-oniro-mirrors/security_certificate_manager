@@ -146,7 +146,10 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
             char fullFile[PATH_MAX] = {0};
             (void)snprintf(fullFile, sizeof(fullFile), "%s%s", REVOCATION_CACHE_DIR, rec.filePath);
             (void)unlink(fullFile);
-            (void)DeleteRevocationCacheRecord(rec.filePath);
+            if (DeleteRevocationCacheRecord(rec.filePath) != CM_SUCCESS) {
+                CM_LOG_W("delete expired revocation cache record failed");
+                break;
+            }
             (void)memset_s(&rec, sizeof(rec), 0, sizeof(rec));
         }
         // orphan cleanup
@@ -201,7 +204,7 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
     // capacity
     uint64_t totalSize = 0;
     (void)QueryRevocationCacheSumSize(&totalSize);
-    while (totalSize + (uint64_t)data->size > (uint64_t)REVOCATION_CACHE_MAX_TOTAL_BYTES) {
+    while (totalSize + (uint64_t)payloadLen > (uint64_t)REVOCATION_CACHE_MAX_TOTAL_BYTES) {
         struct RevocationCacheRecord oldest;
         if (QueryRevocationCacheRecordByExpireAsc(&oldest) != CM_SUCCESS) {
             break;
@@ -209,7 +212,10 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
         char oldestFull[PATH_MAX] = {0};
         (void)snprintf(oldestFull, sizeof(oldestFull), "%s%s", REVOCATION_CACHE_DIR, oldest.filePath);
         (void)unlink(oldestFull);
-        (void)DeleteRevocationCacheRecord(oldest.filePath);
+        if (DeleteRevocationCacheRecord(oldest.filePath) != CM_SUCCESS) {
+            CM_LOG_W("delete revocation cache record for capacity failed");
+            break;
+        }
         totalSize = (totalSize >= oldest.dataSize) ? (totalSize - oldest.dataSize) : 0;
     }
     // ensure dirs and write
@@ -249,7 +255,7 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
         writeRet = CMR_ERROR_MEM_OPERATION_COPY;
         goto cleanup;
     }
-    recWrite.dataSize = (uint64_t)data->size;
+    recWrite.dataSize = (uint64_t)sizeof(int64_t) + (uint64_t)data->size;
     if (InsertRevocationCacheRecord(&recWrite) != CM_SUCCESS) {
         writeRet = CMR_ERROR_WRITE_FILE_FAIL;
         goto cleanup;

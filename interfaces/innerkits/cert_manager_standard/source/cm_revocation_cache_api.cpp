@@ -154,5 +154,5 @@ extern "C" CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, 
     if (ret != CM_SUCCESS) {
         return ret;
     }
-    return CmClientSaveRevocationCache(&key, static_cast<uint32_t>(type), &data, expireTimeUTC);
+    return CmClientSaveRevocationCache(&key, static_cast<uint32_t>(type), &data, clamped);
 }
