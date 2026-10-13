@@ -15,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include "securec.h"
+
 #include "cm_param.h"
 #include "cm_type.h"
 
@@ -555,5 +557,276 @@ HWTEST_F(CmParamTest, CmParamTest027, TestSize.Level0)
 
     CmFreeParamSet(&paramSet);
     CmFreeParamSet(&outParamSet);
+}
+
+/**
+* @tc.name: CmParamTest028
+* @tc.desc: test CmBuildParamSet size > CM_DEFAULT_PARAM_SET_SIZE (triggers realloc path)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest028, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    /* Add a large blob param so that total paramSet size exceeds CM_DEFAULT_PARAM_SET_SIZE (512) */
+    uint32_t blobSize = 600;
+    uint8_t *largeBuf = (uint8_t *)malloc(blobSize);
+    ASSERT_NE(largeBuf, nullptr);
+    (void)memset_s(largeBuf, blobSize, 'A', blobSize);
+    struct CmParam param = {
+        .tag = CM_TAG_PARAM0_BUFFER,
+        .blob = { blobSize, largeBuf }
+    };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    CmFreeParamSet(&paramSet);
+    free(largeBuf);
+}
+
+/**
+* @tc.name: CmParamTest029
+* @tc.desc: test CmGetParamSet with FreshParamSet offset > size (malformed paramSet)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest029, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    /* Create a malformed paramSet: paramsCnt > 0 but paramSetSize only accounts for header
+       so FreshParamSet will detect offset > size */
+    paramSet->paramsCnt = 2;
+    paramSet->paramSetSize = sizeof(struct CmParamSet) + sizeof(struct CmParam); /* too small for 2 params */
+
+    struct CmParamSet *outParamSet = nullptr;
+    ret = CmGetParamSet(paramSet, paramSet->paramSetSize, &outParamSet);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_PARAMSET_ARG);
+
+    CmFreeParamSet(&paramSet);
+    CmFreeParamSet(&outParamSet);
+}
+
+/**
+* @tc.name: CmParamTest030
+* @tc.desc: test CmGetParamSet with FreshParamSet blob.size overflow (offset + blob.size overflow)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest030, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    uint8_t tempBuf[] = "this is for test030";
+    paramSet->paramsCnt = 1;
+    paramSet->paramSetSize += sizeof(struct CmParam) + sizeof(tempBuf);
+    paramSet->params[0].tag = CM_TAG_PARAM0_BUFFER;
+    /* Set blob.size to a value that would cause offset + blob.size to overflow uint32_t */
+    paramSet->params[0].blob.size = UINT32_MAX - 10;
+    paramSet->params[0].blob.data = tempBuf;
+
+    struct CmParamSet *outParamSet = nullptr;
+    ret = CmGetParamSet(paramSet, paramSet->paramSetSize, &outParamSet);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_PARAMSET_ARG);
+
+    CmFreeParamSet(&paramSet);
+    CmFreeParamSet(&outParamSet);
+}
+
+/**
+* @tc.name: CmParamTest031
+* @tc.desc: test CmAddParams with blob.size that would overflow paramSetSize
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest031, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    uint8_t tempBuf[] = "overflow test";
+    struct CmParam param = {
+        .tag = CM_TAG_PARAM0_BUFFER,
+        .blob = { UINT32_MAX, tempBuf }
+    };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_PARAMSET_ARG);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmParamTest032
+* @tc.desc: test CmBuildParamSet with FreshParamSet offset > size (malformed)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest032, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    /* Malformed: paramsCnt > 0 but paramSetSize only has room for header + 1 param,
+       but we claim 2 params -> FreshParamSet offset > size */
+    paramSet->paramsCnt = 2;
+    paramSet->paramSetSize = sizeof(struct CmParamSet) + sizeof(struct CmParam);
+    paramSet->params[0].tag = CM_TAG_PARAM0_BOOL;
+    paramSet->params[0].boolParam = true;
+
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_PARAMSET_ARG);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmParamTest033
+* @tc.desc: test CmBuildParamSet with blob param that triggers memcpy_s copy path (isCopy=true)
+*           This covers the isCopy && memcpy_s branch at L89 in CmFreshParamSet.
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest033, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    uint8_t tempBuf[] = "test blob for copy path";
+    struct CmParam param = {
+        .tag = CM_TAG_PARAM0_BUFFER,
+        .blob = { sizeof(tempBuf), tempBuf }
+    };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmParamTest034
+* @tc.desc: test CmBuildParamSet with multiple blob params (isCopy=true, multiple memcpy_s)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest034, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    uint8_t buf1[] = "first blob";
+    uint8_t buf2[] = "second blob data";
+    struct CmParam params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = { sizeof(buf1), buf1 } },
+        { .tag = CM_TAG_PARAM1_BUFFER, .blob = { sizeof(buf2), buf2 } },
+    };
+    ret = CmAddParams(paramSet, params, sizeof(params) / sizeof(struct CmParam));
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmParamTest035
+* @tc.desc: test CmBuildParamSet with non-blob params only (no memcpy_s copy path)
+*           This covers the case where CmGetTagType != CM_TAG_TYPE_BYTES for all params.
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest035, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    struct CmParam params[] = {
+        { .tag = CM_TAG_PARAM0_BOOL, .boolParam = true },
+        { .tag = CM_TAG_PARAM1_UINT32, .uint32Param = 42 },
+    };
+    ret = CmAddParams(paramSet, params, sizeof(params) / sizeof(struct CmParam));
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmParamTest036
+* @tc.desc: test CmGetParamSet with invalid paramSet (size mismatch)
+*           This covers FreshParamSet error path where paramSetSize != offset.
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest036, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    /* Set up a paramSet with a non-BYTES param but with paramSetSize that doesn't match offset */
+    paramSet->paramsCnt = 1;
+    paramSet->paramSetSize = sizeof(struct CmParamSet) + sizeof(struct CmParam) + 10; /* extra 10 bytes */
+    paramSet->params[0].tag = CM_TAG_PARAM0_BOOL;
+    paramSet->params[0].boolParam = true;
+
+    struct CmParamSet *outParamSet = nullptr;
+    ret = CmGetParamSet(paramSet, paramSet->paramSetSize, &outParamSet);
+    /* FreshParamSet will detect paramSetSize != offset */
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_PARAMSET_ARG);
+
+    CmFreeParamSet(&paramSet);
+    CmFreeParamSet(&outParamSet);
+}
+
+/**
+* @tc.name: CmParamTest037
+* @tc.desc: test CmBuildParamSet with invalid paramSet (CmFreshParamSet ret != CM_SUCCESS)
+*           This covers the L70 branch in CmFreshParamSet.
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest037, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    /* Set paramSetSize to a value that will fail CmCheckParamSet in CmFreshParamSet */
+    paramSet->paramsCnt = 1;
+    paramSet->paramSetSize = sizeof(struct CmParamSet) + sizeof(struct CmParam);
+    paramSet->params[0].tag = CM_TAG_PARAM0_BOOL;
+    /* Now corrupt the paramSetSize so CmCheckParamSet fails in CmFreshParamSet */
+    paramSet->paramSetSize = CM_PARAM_SET_MAX_SIZE + 1;
+
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_PARAMSET_ARG);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmParamTest038
+* @tc.desc: test CmFreeParamSet with valid paramSet
+* @tc.type: FUNC
+*/
+HWTEST_F(CmParamTest, CmParamTest038, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    CmFreeParamSet(&paramSet);
+    EXPECT_EQ(paramSet, nullptr);
 }
 } // end of namespace

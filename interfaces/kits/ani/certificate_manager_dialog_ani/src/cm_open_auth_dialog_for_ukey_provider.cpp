@@ -41,7 +41,7 @@ CmOpenAuthDialogForUkeyProvider::CmOpenAuthDialogForUkeyProvider(ani_env *env,
 int32_t CmOpenAuthDialogForUkeyProvider::ParseDialogInfoFromEnv()
 {
     ani_string aniAbilityName = nullptr;
-    ani_double aniAbilityType = 0;
+    ani_int aniAbilityType = 0;
     int32_t ret = ParseUkeyAniDialogInfo(env, this->aniParams.aniDialogInfo, aniAbilityName,
         aniAbilityType);
     if (ret != CM_SUCCESS) {
@@ -135,7 +135,7 @@ int32_t CmOpenAuthDialogForUkeyProvider::GetParamsFromEnv()
     }
     /* optional timeout in seconds; non-number/NaN maps to a param error
      * (NaN fails both bounds, so the negated form rejects it) */
-    if (!(req.timeout >= 0 && req.timeout <= UINT32_MAX)) {
+    if (!(req.timeout >= 0 && static_cast<uint32_t>(req.timeout) <= UINT32_MAX)) {
         CM_LOG_E("invalid timeout value");
         return CMR_DIALOG_ERROR_PARAM_INVALID;
     }

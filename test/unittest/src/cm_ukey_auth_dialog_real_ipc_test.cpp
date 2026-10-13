@@ -29,26 +29,14 @@
 #include "cm_type.h"
 #include "cm_ukey_ability_type.h"
 
+using namespace CertmanagerTest;
 namespace {
+static uint32_t g_selfTokenId = 0;
+static MockHapToken* g_MockHap = nullptr;
 std::atomic<int32_t> g_asyncResult(0xDEADBEEF);
 std::atomic<bool> g_asyncFired(false);
 /* ForDriver probe sentinel: stays 0xDEADBEEF until the callback fires */
 std::atomic<int32_t> g_driverProbeFired(0xDEADBEEF);
-
-/* On a host without SA 3512 (qemu/local), CmLoadSystemAbility returns null
- * and the sync call fails fast with CMR_ERROR_NULL_POINTER - the acceptable
- * path declared in the file header; strict assertions apply only when the
- * SA answers (probe semantics per spec unchanged, on-device behavior
- * unchanged). */
-inline bool SaUnavailableOnHost(int32_t ret)
-{
-    return ret == CMR_ERROR_NULL_POINTER;
-}
-
-inline void LogSkipSaUnavailable()
-{
-    GTEST_LOG_(INFO) << "SA unavailable on host, skip strict assertion";
-}
 }
 
 static void RealIpcResultCallback(int32_t resultCode, void *userData)
@@ -71,6 +59,26 @@ public:
         g_asyncResult = 0xDEADBEEF;
         g_asyncFired = false;
         g_driverProbeFired = 0xDEADBEEF;
+        g_selfTokenId = GetSelfTokenID();
+        CmTestCommon::SetTestEnvironment(g_selfTokenId);
+    }
+
+    static void TearDownTestCase(void)
+    {
+        CmTestCommon::ResetTestEnvironment();
+    }
+
+    void SetUp()
+    {
+        g_MockHap = new (std::nothrow) MockHapToken();
+    }
+
+    void TearDown()
+    {
+        if (g_MockHap != nullptr) {
+            delete g_MockHap;
+            g_MockHap = nullptr;
+        }
     }
 };
 
@@ -84,13 +92,8 @@ HWTEST_F(CmUkeyDialogRealIpcTest, OpenDialogUnregisteredKeyNoCallbackProbe, test
     req.keyUri.data = reinterpret_cast<uint8_t *>(uri);
     req.keyUri.size = sizeof(uri);
 
-    CertmanagerTest::MockHapToken mockHap({ "ohos.permission.ACCESS_CERT_MANAGER" });
     int32_t ret = CmOpenUkeyAuthDialog(&req, RealIpcResultCallback, nullptr);
     GTEST_LOG_(INFO) << "CmOpenUkeyAuthDialog sync ret = " << ret;
-    if (SaUnavailableOnHost(ret)) {
-        LogSkipSaUnavailable();
-        return;
-    }
     sleep(1);
     EXPECT_FALSE(g_asyncFired.load());
 }
@@ -126,13 +129,8 @@ HWTEST_F(CmUkeyDialogRealIpcTest, OpenDialogRealIpcProbe, testing::ext::TestSize
     req.customData.data = customData;
     req.customData.size = sizeof(customData);
 
-    CertmanagerTest::MockHapToken mockHap({ "ohos.permission.ACCESS_CERT_MANAGER" });
     int32_t ret = CmOpenUkeyAuthDialog(&req, RealIpcResultCallback, nullptr);
     GTEST_LOG_(INFO) << "CmOpenUkeyAuthDialog sync ret = " << ret;
-    if (SaUnavailableOnHost(ret)) {
-        LogSkipSaUnavailable();
-        return;
-    }
     EXPECT_EQ(ret, CMR_DIALOG_ERROR_NOT_REGISTERED);
     EXPECT_FALSE(g_asyncFired.load());
 }
@@ -155,14 +153,9 @@ HWTEST_F(CmUkeyDialogRealIpcTest, OpenDriverDialogRealIpcProbe, testing::ext::Te
     req.keyUri.data = reinterpret_cast<uint8_t *>(uri);
     req.keyUri.size = sizeof(uri);
 
-    CertmanagerTest::MockHapToken mockHap({ "ohos.permission.CRYPTO_EXTENSION_REGISTER" });
     int32_t ret = CmOpenUkeyAuthDialogForDriver(&dialogInfo, &req, DriverProbeResultCallback,
         nullptr);
     GTEST_LOG_(INFO) << "CmOpenUkeyAuthDialogForDriver sync ret = " << ret;
-    if (SaUnavailableOnHost(ret)) {
-        LogSkipSaUnavailable();
-        return;
-    }
     sleep(1);
     EXPECT_TRUE(ret == CMR_DIALOG_ERROR_NOT_REGISTERED || ret == CMR_DIALOG_ERROR_NOT_PC_DEVICE)
         << "ret = " << ret;
@@ -174,6 +167,11 @@ HWTEST_F(CmUkeyDialogRealIpcTest, OpenDriverDialogRealIpcProbe, testing::ext::Te
  * synchronously with -1011 (JS 201). */
 HWTEST_F(CmUkeyDialogRealIpcTest, OpenDriverDialogNoPermissionProbe, testing::ext::TestSize.Level0)
 {
+    if (g_MockHap != nullptr) {
+        delete g_MockHap;
+        g_MockHap = nullptr;
+    }
+    g_MockHap = new (std::nothrow) MockHapToken({});
     char abilityName[] = "MyUkeyAuthExtensionAbility";
     struct UkeyAuthDialogInfo dialogInfo = {};
     dialogInfo.abilityName.data = reinterpret_cast<uint8_t *>(abilityName);
@@ -188,10 +186,6 @@ HWTEST_F(CmUkeyDialogRealIpcTest, OpenDriverDialogNoPermissionProbe, testing::ex
     int32_t ret = CmOpenUkeyAuthDialogForDriver(&dialogInfo, &req, DriverProbeResultCallback,
         nullptr);
     GTEST_LOG_(INFO) << "CmOpenUkeyAuthDialogForDriver(no-perm) sync ret = " << ret;
-    if (SaUnavailableOnHost(ret)) {
-        LogSkipSaUnavailable();
-        return;
-    }
     EXPECT_EQ(ret, CMR_DIALOG_ERROR_PERMISSION_DENIED);
     EXPECT_EQ(g_driverProbeFired.load(), 0xDEADBEEF); /* sync rejection never fires */
 }

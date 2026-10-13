@@ -57,8 +57,9 @@ int32_t ParseUkeyAniRequest(ani_env *env, ani_object request, CmUkeyAniRequest &
 
     ani_ref timeoutRef = nullptr;
     if (GetRefField(env, request, "timeoutDuration", timeoutRef, isUndefined) && !isUndefined) {
-        if (env->Object_GetFieldByName_Double(request, "timeoutDuration", &out.timeout) != ANI_OK) {
-            CM_LOG_E("read timeoutDuration failed");
+        if (env->Object_CallMethodByName_Int(reinterpret_cast<ani_object>(timeoutRef),
+            "toInt", ":i", &out.timeout) != ANI_OK) {
+            CM_LOG_E("timeoutRef toInt failed");
             return CMR_DIALOG_ERROR_PARAM_INVALID;
         }
     } /* absent/undefined keeps 0 (= server default 300s) */
@@ -71,7 +72,7 @@ int32_t ParseUkeyAniRequest(ani_env *env, ani_object request, CmUkeyAniRequest &
 }
 
 int32_t ParseUkeyAniDialogInfo(ani_env *env, ani_object dialogInfo, ani_string &abilityName,
-    ani_double &abilityType)
+    ani_int &abilityType)
 {
     if (env == nullptr || dialogInfo == nullptr) {
         CM_LOG_E("invalid dialog info object");
@@ -90,8 +91,14 @@ int32_t ParseUkeyAniDialogInfo(ani_env *env, ani_object dialogInfo, ani_string &
         CM_LOG_E("abilityType is missing or undefined");
         return CMR_DIALOG_ERROR_PARAM_INVALID;
     }
-    if (env->Object_GetFieldByName_Double(dialogInfo, "abilityType", &abilityType) != ANI_OK) {
-        CM_LOG_E("read abilityType failed");
+    ani_enum_item abilityTypeRef = nullptr;
+    if (env->Object_GetFieldByName_Ref(dialogInfo, "abilityType",
+        reinterpret_cast<ani_ref *>(&abilityTypeRef)) != ANI_OK) {
+        CM_LOG_E("get abilityType failed");
+        return CMR_DIALOG_ERROR_PARAM_INVALID;
+    }
+    if (env->EnumItem_GetValue_Int(abilityTypeRef, &abilityType) != ANI_OK) {
+        CM_LOG_E("get abilityType value failed");
         return CMR_DIALOG_ERROR_PARAM_INVALID;
     }
     return CM_SUCCESS;

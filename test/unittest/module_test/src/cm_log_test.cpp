@@ -1054,5 +1054,276 @@ HWTEST_F(CmLogTest, CmIpcClientTest044, TestSize.Level0)
     ret = CmParamSetToParams(paramSet, params, cnt);
     EXPECT_EQ(ret, CMR_ERROR_PARAM_NOT_EXIST);
 }
+
+/**
+* @tc.name: CmIpcClientTest045
+* @tc.desc: TestIpcClient: CmParamSetToParams - CM_TAG_TYPE_UINT normal path
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest045, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    uint32_t storeVal = 42;
+    struct CmParam param = { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = storeVal };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    uint32_t outVal = 0;
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = &outVal },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(outVal, storeVal);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest046
+* @tc.desc: TestIpcClient: CmParamSetToParams - CM_TAG_TYPE_BOOL normal path
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest046, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    bool boolVal = true;
+    struct CmParam param = { .tag = CM_TAG_PARAM0_BOOL, .boolParam = boolVal };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    bool outVal = false;
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BOOL, .boolParam = &outVal },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(outVal, true);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest047
+* @tc.desc: TestIpcClient: CmParamSetToParams - CM_TAG_TYPE_BYTES normal path
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest047, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    uint8_t bufData[] = "test_data";
+    struct CmParam param = {
+        .tag = CM_TAG_PARAM0_BUFFER,
+        .blob = { sizeof(bufData), bufData }
+    };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    struct CmBlob outBlob = { 0, nullptr };
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = &outBlob },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(outBlob.size, sizeof(bufData));
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest048
+* @tc.desc: TestIpcClient: CmParamSetToParams - CM_TAG_TYPE_INT normal path
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest048, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    int32_t intVal = -123;
+    /* Use a tag with CM_TAG_TYPE_INT type bits - construct manually since no enum exists */
+    uint32_t intTag = CM_TAG_TYPE_INT | 30006;
+    struct CmParam param = { .tag = intTag, .int32Param = intVal };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    int32_t outVal = 0;
+    struct CmParamOut params[] = {
+        { .tag = intTag, .int32Param = &outVal },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(outVal, intVal);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest049
+* @tc.desc: TestIpcClient: CmParamSetToParams - CM_TAG_TYPE_ULONG normal path
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest049, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    uint64_t ulongVal = 0x123456789ABCDEFULL;
+    uint32_t ulongTag = CM_TAG_TYPE_ULONG | 30007;
+    struct CmParam param = { .tag = ulongTag, .uint64Param = ulongVal };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    uint64_t outVal = 0;
+    struct CmParamOut params[] = {
+        { .tag = ulongTag, .uint64Param = &outVal },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(outVal, ulongVal);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest050
+* @tc.desc: TestIpcClient: CmParamSetToParams - invalid tag type (default branch)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest050, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    /* Use an invalid tag type (0 << 28 = CM_TAG_TYPE_INVALID) */
+    uint32_t invalidTag = CM_TAG_TYPE_INVALID | 30001;
+    struct CmParam param = { .tag = invalidTag, .uint32Param = 42 };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    uint32_t outVal = 0;
+    struct CmParamOut params[] = {
+        { .tag = invalidTag, .uint32Param = &outVal },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_PARAMSET_ARG);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest051
+* @tc.desc: TestIpcClient: CmParamSetToParams - null blob param (CM_PARAM_BUFFER_NULL_INTERVAL path)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest051, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    /* Add a NULL blob param using CM_TAG_PARAM0_NULL tag */
+    uint8_t tmpData = 0;
+    struct CmParam param = {
+        .tag = CM_TAG_PARAM0_NULL,
+        .blob = { sizeof(tmpData), &tmpData }
+    };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    /* Request CM_TAG_PARAM0_BUFFER - since it doesn't exist, GetNullBlobParam is called
+       which looks for CM_TAG_PARAM0_NULL tag */
+    struct CmBlob outBlob = { 100, (uint8_t*)"dummy" };
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = &outBlob },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(outBlob.size, 0);
+    EXPECT_EQ(outBlob.data, nullptr);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest052
+* @tc.desc: TestIpcClient: CmParamSetToParams - null blob param with non-BYTES tag (error path)
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest052, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    /* Request a UINT32 tag that doesn't exist in paramSet - GetNullBlobParam is called
+       but tag type is not CM_TAG_TYPE_BYTES, so returns CMR_ERROR_PARAM_NOT_EXIST */
+    uint32_t outVal = 0;
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = &outVal },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CMR_ERROR_PARAM_NOT_EXIST);
+
+    CmFreeParamSet(&paramSet);
+}
+
+/**
+* @tc.name: CmIpcClientTest053
+* @tc.desc: TestIpcClient: CmParamSetToParams - null blob param but NULL tag not found
+* @tc.type: FUNC
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest053, TestSize.Level0)
+{
+    struct CmParamSet *paramSet = nullptr;
+    int32_t ret = CmInitParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    /* Add a UINT32 param so paramSet is non-empty */
+    uint32_t storeVal = 42;
+    struct CmParam param = { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = storeVal };
+    ret = CmAddParams(paramSet, &param, 1);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    ret = CmBuildParamSet(&paramSet);
+    EXPECT_EQ(ret, CM_SUCCESS);
+
+    /* Request CM_TAG_PARAM0_BUFFER which doesn't exist, and CM_TAG_PARAM0_NULL also doesn't exist */
+    struct CmBlob outBlob = { 0, nullptr };
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = &outBlob },
+    };
+    ret = CmParamSetToParams(paramSet, params, 1);
+    EXPECT_EQ(ret, CMR_ERROR_PARAM_NOT_EXIST);
+
+    CmFreeParamSet(&paramSet);
+}
 }
 // end of namespace

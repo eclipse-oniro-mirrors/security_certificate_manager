@@ -449,6 +449,17 @@ void ThrowError(napi_env env, int32_t errorCode, const std::string errMsg,
     }
 }
 
+void ThrowBusinessError(napi_env env, int32_t errorCode,
+    OHOS::Security::CertManager::CmMetricsReport *metricsReport)
+{
+    const char *errorMessage = GetJsErrorMsg(errorCode);
+    if (errorMessage == nullptr) {
+        return;
+    }
+    int32_t outputCode = TranformErrorCode(errorCode);
+    ThrowError(env, outputCode, errorMessage, metricsReport);
+}
+
 void GeneratePromise(napi_env env, napi_deferred deferred, int32_t resultCode,
     napi_value *result, int32_t length)
 {

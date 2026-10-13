@@ -126,7 +126,7 @@ export namespace certificateManagerDialog {
 
   export interface UkeyAuthRequest {
     keyUri: string,
-    timeoutDuration?: number, /* auth timeout in seconds; absent = server default 300s */
+    timeoutDuration?: int, /* auth timeout in seconds; absent = server default 300s */
     customData?: Uint8Array /* opaque data (<= 2048 bytes) delivered base64 to custom dialogs only */
   }
 

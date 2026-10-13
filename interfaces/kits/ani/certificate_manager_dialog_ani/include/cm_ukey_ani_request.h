@@ -26,7 +26,7 @@ namespace OHOS::Security::CertManager::Ani {
  * cap the argument count of the native binding entry) */
 struct CmUkeyAniRequest {
     ani_string keyUri = nullptr;      /* required string (undefined already 401-checked at the ets layer) */
-    ani_double timeout = 0;           /* optional number, default 0 = server default 300s */
+    ani_int timeout = 0;           /* optional number, default 0 = server default 300s */
     ani_object customData = nullptr;  /* optional Uint8Array, nullptr = absent */
 };
 
@@ -38,7 +38,7 @@ int32_t ParseUkeyAniRequest(ani_env *env, ani_object request, CmUkeyAniRequest &
 /* Parse the UkeyAuthDialogInfo ets object (abilityName required string,
  * abilityType required number; missing/undefined -> 401) */
 int32_t ParseUkeyAniDialogInfo(ani_env *env, ani_object dialogInfo, ani_string &abilityName,
-    ani_double &abilityType);
+    ani_int &abilityType);
 
 } // namespace OHOS::Security::CertManager::Ani
 

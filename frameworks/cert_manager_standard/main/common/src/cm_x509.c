@@ -468,6 +468,10 @@ static struct tm *GetLocalTime(ASN1_TIME *asn1Time)
 
     time_t localTimeSec = utcTimeSec + curLocalTimeSec - curUtcTimeSec;
     struct tm *localTimeResult = CmMalloc(sizeof(struct tm));
+    if (localTimeResult == NULL) {
+        CM_LOG_E("Failed to allocate memory for local time result");
+        return NULL;
+    }
     struct tm *retLocalTime = localtime_r(&localTimeSec, localTimeResult);
     if (retLocalTime == NULL) {
         CM_LOG_E("Failed to get local time.");
