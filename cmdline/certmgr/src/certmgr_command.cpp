@@ -29,10 +29,12 @@
 #include "cert_manager_api.h"
 #include "cm_type.h"
 #include "os_account_manager.h"
+#ifdef SUPPORT_USERIAM
 #include "user_auth_client.h"
 #include "user_auth_client_callback.h"
 #include "user_auth_client_defines.h"
 #include "iam_common_defines.h"
+#endif
 #include "locale_config.h"
 #include "locale_matcher.h"
 #include "authorization_client.h"
@@ -147,8 +149,9 @@ static int32_t QueryGlobalCaConfig(GlobalCaConfig &cfg)
     struct CertManagerConfig config = { 0, nullptr };
     int32_t ret = CmGetCertManagerConfig(NULL, &config);
     if (ret != CM_SUCCESS) {
-        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to query cert manager config");
-        return MapSdkErrToCmdErr(ret);
+        int32_t cmdErr = MapSdkErrToCmdErr(ret);
+        WriteError(cmdErr, "Failed to query cert manager config");
+        return cmdErr;
     }
 
     cfg.defaultConfig = "enable";
@@ -237,13 +240,6 @@ std::string GetErrName(int32_t errCode)
     }
 }
 
-void WriteError(int32_t errCode, const std::string &detail)
-{
-    std::string msg = "ERROR - " + GetErrName(errCode) + ", code: " +
-        std::to_string(errCode) + ". Details: " + detail + "\n";
-    CertMgrCommand::WriteStdErr(msg);
-}
-
 static std::string GetErrDetail(int32_t errCode)
 {
     switch (errCode) {
@@ -260,7 +256,7 @@ static std::string GetErrDetail(int32_t errCode)
         case CM_CMD_ERR_PERMISSION_DENIED:
             return "The device does not allow the current user to manage the CA certificate of the global user";
         case CM_CMD_ERR_INTERNAL_ERROR:
-            return "Permission denied";
+            return "Internal error";
         case CM_CMD_ERR_USER_CANCELLED:
             return "The user cancelled the operation";
         default:
@@ -268,7 +264,22 @@ static std::string GetErrDetail(int32_t errCode)
     }
 }
 
+static std::string g_commandName;
+
+void SetCommandName(const std::string &name)
+{
+    g_commandName = name;
+}
+
+void WriteError(int32_t errCode, const std::string &detail)
+{
+    std::string prefix = g_commandName.empty() ? "certmgr error" : "certmgr " + g_commandName + " error";
+    std::string msg = prefix + ", " + GetErrName(errCode) + " : " + detail + "\n";
+    CertMgrCommand::WriteStdErr(msg);
+}
+
 namespace {
+#ifdef SUPPORT_USERIAM
 using namespace OHOS::UserIam::UserAuth;
 
 /* IAM authentication result codes */
@@ -282,7 +293,7 @@ struct LocaleTitleEntry {
 
 static const LocaleTitleEntry TITLE_MAP[] = {
     {"zh-CN", "您正在安装用户CA证书，为网站启用此证书后，第三方将可以查看发送给网站的任何敏感数据"},
-    {"en-US", "You are installing a user CA certificate. If this certificate is enabled for a websites, "
+    {"en-US", "You are installing a user CA certificate. If this certificate is enabled for a website, "
               "third parties will be able to view any sensitive data sent to the website."},
     {"zh-HK", "您正在安裝用戶CA證書，為網站啟用此證書後，第三方將可以查看發送給網站的任何敏感數據"},
     {"zh-TW", "您正在安裝使用者CA憑證，為網站啟用此憑證後，第三方將可以檢視傳送給網站的任何敏感資料"},
@@ -346,6 +357,7 @@ private:
     int32_t &result_;
     bool &done_;
 };
+#endif
 }
 
 static constexpr size_t CHALLENGE_LEN = 8;
@@ -365,6 +377,7 @@ static std::vector<uint8_t> GenerateChallenge()
     return challenge;
 }
 
+#ifdef SUPPORT_USERIAM
 static int32_t MapAuthResult(int32_t authResult)
 {
     if (authResult == IAM_AUTH_SUCCESS || authResult == IAM_ERR_NO_VALID_SOLUTION) {
@@ -410,6 +423,7 @@ int32_t AuthenticateUser(int32_t userId)
 
     return MapAuthResult(authResult);
 }
+#endif
 
 class AdminAuthCallback final : public AccountSA::AuthorizationCallback {
 public:
@@ -501,6 +515,7 @@ int32_t CertMgrCommand::Execute(int argc, char *argv[])
 std::unique_ptr<CertMgrCommand> CertMgrCommand::Create(const std::string &name)
 {
     if (name == "installUserCA") {
+        SetCommandName("installUserCA");
         return std::make_unique<InstallUserCACommand>();
     }
     return nullptr;
@@ -516,13 +531,6 @@ void CertMgrCommand::WriteStdOut(const std::string &msg)
 {
     (void)fwrite(msg.c_str(), 1, msg.size(), stdout);
     (void)fflush(stdout);
-}
-
-void CertMgrCommand::WriteError(int32_t errCode, const std::string &detail)
-{
-    std::string msg = "ERROR - " + GetErrName(errCode) + ", code: " +
-        std::to_string(errCode) + ". Details: " + detail + "\n";
-    WriteStdErr(msg);
 }
 
 int32_t CertMgrCommand::GetUserId()
@@ -622,7 +630,12 @@ int32_t InstallUserCACommand::AuthenticateAndCheckPermission(int32_t &userId)
     }
 
     userId = static_cast<int32_t>(INIT_INVALID_VALUE);
+#ifdef SUPPORT_USERIAM
     return AuthenticateUser(authUserId);
+#else
+    WriteError(CM_CMD_ERR_INTERNAL_ERROR, "User authentication is not supported in this build");
+    return CM_CMD_ERR_INTERNAL_ERROR;
+#endif
 }
 
 int32_t InstallUserCACommand::InstallPemDer(const struct CmBlob &certBlob, int32_t userId)
@@ -677,6 +690,14 @@ int32_t InstallUserCACommand::Run()
     int32_t ret = ReadCertData(certBlob);
     if (ret != CM_CMD_SUCCESS) {
         return ret;
+    }
+
+    // Validate certificate size according to format
+    uint32_t maxSize = (certFormat_ == PEM_DER) ? MAX_LEN_CERTIFICATE : MAX_LEN_CERTIFICATE_P7B;
+    if (certBlob.size > maxSize) {
+        WriteError(CM_CMD_ERR_PARAM_INVALID, "Invalid file size: " + std::to_string(certBlob.size));
+        free(certBlob.data);
+        return CM_CMD_ERR_PARAM_INVALID;
     }
 
     int32_t userId;

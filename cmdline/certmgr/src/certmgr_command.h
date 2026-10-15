@@ -40,6 +40,8 @@ int32_t MapSdkErrToCmdErr(int32_t sdkErr);
 
 std::string GetErrName(int32_t errCode);
 
+void SetCommandName(const std::string &name);
+
 void WriteError(int32_t errCode, const std::string &detail);
 
 int32_t ReadFileData(const std::string &filePath, struct CmBlob &outBlob);
@@ -50,7 +52,9 @@ bool HasPipeInput();
 
 int32_t CheckGlobalUserCaPermission(int32_t userId);
 
+#ifdef SUPPORT_USERIAM
 int32_t AuthenticateUser(int32_t userId);
+#endif
 
 int32_t AuthenticateAdmin();
 
@@ -64,7 +68,6 @@ public:
 
     static void WriteStdErr(const std::string &msg);
     static void WriteStdOut(const std::string &msg);
-    static void WriteError(int32_t errCode, const std::string &detail);
     static int32_t GetUserId();
 
 protected:

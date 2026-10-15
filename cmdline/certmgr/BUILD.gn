@@ -47,6 +47,7 @@ if (certificate_manager_feature_cmdline_enabled == true) {
 
     if (useriam_user_auth_enable) {
       external_deps += [ "user_auth_framework:userauth_client" ]
+      defines += [ "SUPPORT_USERIAM" ]
     }
 
     subsystem_name = "security"
