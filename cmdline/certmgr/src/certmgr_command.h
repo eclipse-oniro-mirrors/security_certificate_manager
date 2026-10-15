@@ -26,9 +26,21 @@
 namespace CertMgr {
 
 // Error codes for cmdline tool
-constexpr int32_t CM_CMD_ERR_PARAM_INVALID = 29700006;
-constexpr int32_t CM_CMD_ERR_PERMISSION_DENIED = 29700005;
-constexpr int32_t CM_CMD_ERR_USER_CANCELLED = 29700002;
+constexpr int32_t CM_CMD_SUCCESS = 0;
+constexpr int32_t CM_CMD_ERR_PARAM_INVALID = 1;
+constexpr int32_t CM_CMD_ERR_OPEN_FILE_FAIL = 2;
+constexpr int32_t CM_CMD_ERR_INVALID_CERT_FORMAT = 3;
+constexpr int32_t CM_CMD_ERR_MAX_CERT_COUNT_REACHED = 4;
+constexpr int32_t CM_CMD_ERR_DEVICE_ENTER_ADVSECMODE = 5;
+constexpr int32_t CM_CMD_ERR_PERMISSION_DENIED = 6;
+constexpr int32_t CM_CMD_ERR_INTERNAL_ERROR = 7;
+constexpr int32_t CM_CMD_ERR_USER_CANCELLED = 8;
+
+int32_t MapSdkErrToCmdErr(int32_t sdkErr);
+
+std::string GetErrName(int32_t errCode);
+
+void WriteError(int32_t errCode, const std::string &detail);
 
 int32_t ReadFileData(const std::string &filePath, struct CmBlob &outBlob);
 
@@ -37,8 +49,6 @@ int32_t ReadPipeData(struct CmBlob &outBlob);
 bool HasPipeInput();
 
 int32_t CheckGlobalUserCaPermission(int32_t userId);
-
-std::string ConvertErrCodeToMsg(int32_t errCode);
 
 int32_t AuthenticateUser(int32_t userId);
 
@@ -54,6 +64,7 @@ public:
 
     static void WriteStdErr(const std::string &msg);
     static void WriteStdOut(const std::string &msg);
+    static void WriteError(int32_t errCode, const std::string &detail);
     static int32_t GetUserId();
 
 protected:
