@@ -86,6 +86,10 @@ TEST_F(CmRevocationCacheRdbTest, MetaDeleteThenGetReturnsNotFound)
     ASSERT_EQ(DeleteRevocationCacheMeta(), CM_SUCCESS);
     int64_t v = 0;
     EXPECT_EQ(GetRevocationCacheMeta(&v), CMR_ERROR_NOT_FOUND);
+    /* meta can be written again after deletion: the row is re-created */
+    ASSERT_EQ(SetRevocationCacheMeta(999), CM_SUCCESS);
+    ASSERT_EQ(GetRevocationCacheMeta(&v), CM_SUCCESS);
+    EXPECT_EQ(v, 999);
 }
 
 TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
@@ -93,6 +97,15 @@ TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
     /* deleting a path that was never inserted must still report success */
     EXPECT_EQ(DeleteRevocationCacheRecord("ocsp/zz/never-inserted.cache"), CM_SUCCESS);
+
+    /* deleting an already deleted record stays successful and leaves nothing behind */
+    struct RevocationCacheRecord r = { 2000000000LL, "ocsp/zz/twice.cache", 8 };
+    ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
+    ASSERT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
+    EXPECT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
+    uint64_t total = 77; /* must be reset to 0: the table is empty again */
+    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    EXPECT_EQ(total, 0u);
 }
 
 TEST_F(CmRevocationCacheRdbTest, QueryEmptyTableReturnsNoPaths)
@@ -114,6 +127,17 @@ TEST_F(CmRevocationCacheRdbTest, QueryRejectsNullArgs)
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
     EXPECT_EQ(QueryRevocationCacheSumSize(nullptr), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(QueryAllRevocationCacheFilePaths(nullptr, nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    /* a single null out parameter is rejected the same way */
+    uint32_t count = 0;
+    EXPECT_EQ(QueryAllRevocationCacheFilePaths(nullptr, &count), CMR_ERROR_INVALID_ARGUMENT);
+    char **paths = nullptr;
+    EXPECT_EQ(QueryAllRevocationCacheFilePaths(&paths, nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    /* record queries and mutations guard their pointers too */
+    EXPECT_EQ(QueryRevocationCacheRecordByExpireAsc(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(QueryExpiredRevocationCacheRecord(0, nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(InsertRevocationCacheRecord(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(DeleteRevocationCacheRecord(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(GetRevocationCacheMeta(nullptr), CMR_ERROR_INVALID_ARGUMENT);
 }
 
 TEST_F(CmRevocationCacheRdbTest, InsertDuplicatePathReplaces)

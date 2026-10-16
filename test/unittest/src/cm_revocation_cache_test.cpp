@@ -22,6 +22,7 @@
 
 #include "cm_revocation_cache.h"
 #include "cert_manager_api.h"
+#include "cm_mem.h"
 #include "securec.h"
 
 using namespace testing::ext;
@@ -42,6 +43,11 @@ TEST_F(CmRevocationCacheTest, BuildRelPathRejectsInvalidType)
     char rel[300] = {0};
     EXPECT_EQ(CmRevocationCacheBuildRelPath(INVALID_REVOCATION_TYPE, &key, rel, sizeof(rel)),
         CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
+    /* valid types must still build a path: guards against over-rejecting */
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel, sizeof(rel)), CM_SUCCESS);
+    EXPECT_EQ(strncmp(rel, "ocsp/", strlen("ocsp/")), 0);
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_CRL, &key, rel, sizeof(rel)), CM_SUCCESS);
+    EXPECT_EQ(strncmp(rel, "crl/", strlen("crl/")), 0);
 }
 
 TEST_F(CmRevocationCacheTest, BuildRelPathStableHashAndPrefix)
@@ -77,11 +83,19 @@ TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
         CMR_ERROR_BUFFER_TOO_SMALL);
 }
 
-TEST_F(CmRevocationCacheTest, FreeNullSafe)
+TEST_F(CmRevocationCacheTest, FreeNullAndRepeatSafe)
 {
     CmFreeRevocationCache(nullptr);
-    struct CmBlob b = {0, nullptr};
-    CmFreeRevocationCache(&b);
+    struct CmBlob empty = { 0, nullptr };
+    CmFreeRevocationCache(&empty); /* no buffer attached: must be a no-op */
+
+    /* free a heap buffer: the blob must be reset so a repeated free stays safe */
+    struct CmBlob out = { 8, static_cast<uint8_t *>(CmMalloc(8)) };
+    ASSERT_NE(out.data, nullptr);
+    CmFreeRevocationCache(&out);
+    EXPECT_EQ(out.data, nullptr);
+    EXPECT_EQ(out.size, 0u);
+    CmFreeRevocationCache(&out); /* double free must stay safe */
 }
 
 TEST_F(CmRevocationCacheTest, SaveRejectsOversizedData)
@@ -143,6 +157,8 @@ TEST_F(CmRevocationCacheTest, GetShellCallerRejected)
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
+    EXPECT_EQ(out.data, nullptr); /* out params must stay clean on rejection */
+    EXPECT_EQ(out.size, 0u);
 }
 
 TEST_F(CmRevocationCacheTest, SaveShellCallerRejected)
@@ -214,6 +230,11 @@ TEST_F(CmRevocationCacheTest, BuildBasePathRejectsBadBuffer)
         CMR_ERROR_INVALID_ARGUMENT);
     char base[300] = { 0 };
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, base, 0),
+        CMR_ERROR_INVALID_ARGUMENT);
+    /* the guard applies to every allowed token type */
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, nullptr, 300),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, base, 0),
         CMR_ERROR_INVALID_ARGUMENT);
 }
 

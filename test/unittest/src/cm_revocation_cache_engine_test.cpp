@@ -143,6 +143,12 @@ TEST_F(CmRevocationCacheEngineTest, GetMissingKeyReturnsNotExist)
     struct CmBlob key = { 7, keyBuf };
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_CRL, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(out.data, nullptr); /* out params must stay clean on failure */
+    EXPECT_EQ(out.size, 0u);
+    /* the ocsp store behaves the same for an absent key */
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(out.data, nullptr);
+    EXPECT_EQ(out.size, 0u);
 }
 
 TEST_F(CmRevocationCacheEngineTest, RejectExpiredExpireTime)
@@ -327,7 +333,18 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
 {
     uint8_t buf[] = "x";
     /* the prefix directory does not exist, opening the tmp file must fail */
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/zz/never-created.cache", buf, sizeof(buf) - 1),
+    const char *missingOcsp = "ocsp/zz/never-created.cache";
+    EXPECT_EQ(CmRevocationCacheWriteAtomic(missingOcsp, buf, sizeof(buf) - 1), CMR_ERROR_OPEN_FILE_FAIL);
+    /* the failed write must not leave a partial tmp or cache file behind */
+    char leftover[PATH_MAX] = { 0 };
+    ASSERT_GE(snprintf_s(leftover, sizeof(leftover), sizeof(leftover) - 1, "%s%s.tmp", REVOCATION_CACHE_DIR,
+        missingOcsp), 0);
+    EXPECT_EQ(access(leftover, F_OK), -1);
+    ASSERT_GE(snprintf_s(leftover, sizeof(leftover), sizeof(leftover) - 1, "%s%s", REVOCATION_CACHE_DIR,
+        missingOcsp), 0);
+    EXPECT_EQ(access(leftover, F_OK), -1);
+    /* the crl store fails the same way when its directory is missing */
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("crl/zz/never-created.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_OPEN_FILE_FAIL);
 }
 
@@ -461,12 +478,20 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
 
 TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
 {
-    /* HAP callers read from their sandbox base, where nothing exists in this test */
-    MockHapToken mockHap;
+    /* write an entry as native so the service-store file really exists */
     uint8_t keyBuf[] = "hapkey1";
     struct CmBlob key = { 7, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+
+    /* HAP callers read from their sandbox base and must not see the native entry */
+    MockHapToken mockHap;
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(out.data, nullptr); /* out params must stay clean on failure */
+    EXPECT_EQ(out.size, 0u);
 }
 
 TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
