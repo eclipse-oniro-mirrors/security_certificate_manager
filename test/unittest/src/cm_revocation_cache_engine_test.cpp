@@ -20,12 +20,17 @@
 
 #include <gtest/gtest.h>
 
+#include <limits.h>
+#include <unistd.h>
+
 #include "cert_manager_api.h"
 #include "cert_manager_revocation_cache.h"
+#include "cert_manager_storage.h"
 #include "cm_mem.h"
 #include "cm_revocation_cache_rdb.h"
 #include "cm_test_common.h"
 #include "cm_type.h"
+#include "securec.h"
 
 using namespace testing::ext;
 using namespace CertmanagerTest;
@@ -33,6 +38,25 @@ using namespace CertmanagerTest;
 namespace {
 constexpr int64_t ALREADY_EXPIRED_SEC = 10; /* expire offset already in the past */
 MockNativeToken *g_mockNative = nullptr;
+
+/* remove all revocation cache records, files and meta left by this or previous test runs */
+void CleanupRevocationCacheState()
+{
+    char **paths = nullptr;
+    uint32_t count = 0;
+    if (QueryAllRevocationCacheFilePaths(&paths, &count) == CM_SUCCESS) {
+        for (uint32_t i = 0; i < count; i++) {
+            char full[PATH_MAX] = { 0 };
+            if (snprintf_s(full, sizeof(full), sizeof(full) - 1, "%s%s", REVOCATION_CACHE_DIR,
+                paths[i]) >= 0) {
+                (void)unlink(full);
+            }
+            (void)DeleteRevocationCacheRecord(paths[i]);
+        }
+        FreeRevocationCacheFilePaths(paths, count);
+    }
+    (void)DeleteRevocationCacheMeta();
+}
 
 class CmRevocationCacheEngineTest : public testing::Test {
 public:
@@ -57,11 +81,13 @@ void CmRevocationCacheEngineTest::TearDownTestCase()
 /* CmGetRevocationCache only serves HAP/native callers; mock self as a native process */
 void CmRevocationCacheEngineTest::SetUp()
 {
+    CleanupRevocationCacheState(); /* clear leftovers from previous runs/cases */
     g_mockNative = new (std::nothrow) MockNativeToken("foundation");
 }
 
 void CmRevocationCacheEngineTest::TearDown()
 {
+    CleanupRevocationCacheState(); /* remove records/files/meta created by this case */
     if (g_mockNative != nullptr) {
         delete g_mockNative;
         g_mockNative = nullptr;

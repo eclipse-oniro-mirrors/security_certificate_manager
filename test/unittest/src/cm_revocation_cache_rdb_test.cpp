@@ -15,11 +15,47 @@
 
 #include <gtest/gtest.h>
 
+#include <limits.h>
+#include <unistd.h>
+
+#include "cert_manager_storage.h"
 #include "cm_revocation_cache_rdb.h"
+#include "securec.h"
 
 using namespace testing::ext;
 
+namespace {
+/* remove all revocation cache records, files and meta left by this or previous test runs */
+void CleanupRevocationCacheState()
+{
+    char **paths = nullptr;
+    uint32_t count = 0;
+    if (QueryAllRevocationCacheFilePaths(&paths, &count) == CM_SUCCESS) {
+        for (uint32_t i = 0; i < count; i++) {
+            char full[PATH_MAX] = { 0 };
+            if (snprintf_s(full, sizeof(full), sizeof(full) - 1, "%s%s", REVOCATION_CACHE_DIR,
+                paths[i]) >= 0) {
+                (void)unlink(full);
+            }
+            (void)DeleteRevocationCacheRecord(paths[i]);
+        }
+        FreeRevocationCacheFilePaths(paths, count);
+    }
+    (void)DeleteRevocationCacheMeta();
+}
+}
+
 class CmRevocationCacheRdbTest : public testing::Test {
+public:
+    void SetUp() override
+    {
+        ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+        CleanupRevocationCacheState();
+    }
+    void TearDown() override
+    {
+        CleanupRevocationCacheState();
+    }
 };
 
 TEST_F(CmRevocationCacheRdbTest, CreateInsertQueryDelete)

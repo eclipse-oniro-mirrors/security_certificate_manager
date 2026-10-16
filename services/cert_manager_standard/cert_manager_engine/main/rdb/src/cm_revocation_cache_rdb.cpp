@@ -438,6 +438,22 @@ int32_t SetRevocationCacheMeta(int64_t value)
     return CM_SUCCESS;
 }
 
+int32_t DeleteRevocationCacheMeta(void)
+{
+    CM_LOG_D("enter DeleteRevocationCacheMeta");
+    if (revocationCacheMetaRdbDataManager == nullptr) {
+        CM_LOG_E("revocationCacheMetaRdbDataManager is nullptr");
+        return CMR_ERROR_NULL_POINTER;
+    }
+
+    if (!revocationCacheMetaRdbDataManager->DeleteData(std::string(REVOCATION_CACHE_LAST_CLEANUP_KEY),
+        COLUMN_CONFIG_KEY)) {
+        CM_LOG_E("Failed to delete revocation cache meta");
+        return CMR_ERROR_DELETE_RDB_DATA_FAIL;
+    }
+    return CM_SUCCESS;
+}
+
 #ifdef __cplusplus
 }
 #endif

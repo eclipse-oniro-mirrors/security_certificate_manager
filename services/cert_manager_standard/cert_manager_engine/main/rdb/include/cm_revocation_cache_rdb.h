@@ -48,6 +48,8 @@ int32_t GetRevocationCacheMeta(int64_t *value);
 
 int32_t SetRevocationCacheMeta(int64_t value);
 
+int32_t DeleteRevocationCacheMeta(void);
+
 #ifdef __cplusplus
 }
 #endif
