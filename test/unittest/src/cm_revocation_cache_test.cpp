@@ -207,3 +207,26 @@ TEST_F(CmRevocationCacheTest, Int64BeRoundTrip)
     CmRevocationCacheEncodeInt64Be(1, nullptr); /* null output must be a no-op */
     EXPECT_EQ(CmRevocationCacheDecodeInt64Be(nullptr), 0); /* null input decodes to 0 */
 }
+
+TEST_F(CmRevocationCacheTest, BuildBasePathRejectsBadBuffer)
+{
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, nullptr, 300),
+        CMR_ERROR_INVALID_ARGUMENT);
+    char base[300] = { 0 };
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, base, 0),
+        CMR_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_F(CmRevocationCacheTest, ValidateSaveParamsRejectsNullClampOut)
+{
+    uint8_t keyBuf[] = "abc";
+    struct CmBlob key = { 3, keyBuf };
+    uint8_t dataBuf[] = "d";
+    struct CmBlob data = { 1, dataBuf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    EXPECT_EQ(CmRevocationCacheValidateSaveParams(&key, CM_REVOCATION_TYPE_OCSP, &data, expire, nullptr),
+        CMR_ERROR_INVALID_ARGUMENT);
+    int64_t clamped = 0;
+    EXPECT_EQ(CmRevocationCacheValidateSaveParams(&key, CM_REVOCATION_TYPE_OCSP, &data, expire, &clamped),
+        CM_SUCCESS);
+}

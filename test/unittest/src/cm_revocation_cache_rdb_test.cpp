@@ -109,6 +109,13 @@ TEST_F(CmRevocationCacheRdbTest, QueryEmptyTableReturnsNoPaths)
     EXPECT_EQ(total, 0u);
 }
 
+TEST_F(CmRevocationCacheRdbTest, QueryRejectsNullArgs)
+{
+    ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+    EXPECT_EQ(QueryRevocationCacheSumSize(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(QueryAllRevocationCacheFilePaths(nullptr, nullptr), CMR_ERROR_INVALID_ARGUMENT);
+}
+
 TEST_F(CmRevocationCacheRdbTest, InsertDuplicatePathReplaces)
 {
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
