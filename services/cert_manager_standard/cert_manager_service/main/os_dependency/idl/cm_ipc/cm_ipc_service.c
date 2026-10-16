@@ -29,12 +29,14 @@
 #include "cm_ipc_service_serialization.h"
 #include "cert_manager_service_ipc_interface_code.h"
 #include "cert_manager_ukey_operation.h"
+#include "cm_revocation_cache.h"
 
 #include "cert_manager.h"
 #include "cert_manager_check.h"
 #include "cert_manager_key_operation.h"
 #include "cert_manager_permission_check.h"
 #include "cert_manager_query.h"
+#include "cert_manager_revocation_cache.h"
 #include "cert_manager_service.h"
 #include "cert_manager_status.h"
 #include "cert_manager_uri.h"
@@ -1756,4 +1758,55 @@ void CmIpcServiceGetCertManagerConfig(const struct CmBlob *paramSetBlob, struct 
     }
     CmFreeParamSet(&paramSet);
     CM_LOG_I("leave CmIpcServiceGetCertManagerConfig: ret = %d", ret);
+}
+
+void CmIpcServiceSaveRevocationCache(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context)
+{
+    (void)outData;
+    int32_t ret;
+    uint32_t type = 0;
+    struct CmContext cmContext = { 0 };
+    struct CmBlob key = { 0, NULL }, data = { 0, NULL }, expire8 = { 0, NULL };
+    struct CmParamSet *paramSet = NULL;
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = &key },
+        { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = &type },
+        { .tag = CM_TAG_PARAM1_BUFFER, .blob = &data },
+        { .tag = CM_TAG_PARAM2_BUFFER, .blob = &expire8 },
+    };
+
+    do {
+        ret = GetInputParams(paramSetBlob, &paramSet, &cmContext, params, CM_ARRAY_SIZE(params));
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("SaveRevocationCache get input params failed, ret = %d", ret);
+            break;
+        }
+        if (expire8.size != sizeof(int64_t)) {
+            ret = CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME;
+            break;
+        }
+        /* The shared revocation cache accepts writes from any HAP/native caller by design;
+         * record the caller for auditing even though no permission gate is applied here. */
+        CM_LOG_I("SaveRevocationCache from uid=%u userId=%u", cmContext.uid, cmContext.userId);
+        int64_t expireIn = CmRevocationCacheDecodeInt64Be(expire8.data);
+        int64_t expire = 0;
+        ret = CmRevocationCacheValidateSaveParams(&key, type, &data, expireIn, &expire);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("SaveRevocationCache validate failed, ret = %d", ret);
+            break;
+        }
+        ret = CmRunSaveRevocationCacheAsync(&key, type, &data, expire);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("SaveRevocationCache start async failed, ret = %d", ret);
+            break;
+        }
+        CmSendResponse(context, CM_SUCCESS, NULL);
+    } while (0);
+
+    if (ret != CM_SUCCESS) {
+        CmSendResponse(context, ret, NULL);
+    }
+    CmFreeParamSet(&paramSet);
+    CM_LOG_I("leave CmIpcServiceSaveRevocationCache: ret = %d", ret);
 }

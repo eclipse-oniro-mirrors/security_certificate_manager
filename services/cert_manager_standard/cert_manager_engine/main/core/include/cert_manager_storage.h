@@ -143,5 +143,8 @@ int32_t CmGetCertBackupFilePath(const X509 *userCertX509, uint32_t userId, char 
 }
 #endif
 
-#endif /* CERT_MANAGER_STORAGE_H */
+#define REVOCATION_CACHE_DIR               REVOCATION_CACHE_SERVICE_BASE
+#define REVOCATION_CACHE_MAX_TOTAL_BYTES   (50 * 1024 * 1024)
+#define REVOCATION_CACHE_CLEAN_INTERVAL_SEC (24 * 3600)
 
+#endif /* CERT_MANAGER_STORAGE_H */

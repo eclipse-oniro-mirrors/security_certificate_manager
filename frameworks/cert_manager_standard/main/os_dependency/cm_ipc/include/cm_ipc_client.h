@@ -106,6 +106,9 @@ int32_t CmClientOpenUkeyAuthDialogForDriver(const struct UkeyAuthDialogInfo *dia
 
 int32_t CmClientReportUkeyAuthResult(const struct CmBlob *requestId, int32_t resultCode);
 
+int32_t CmClientSaveRevocationCache(const struct CmBlob *key, uint32_t type, const struct CmBlob *data,
+    int64_t expireTimeUTC);
+
 #ifdef __cplusplus
 }
 #endif

@@ -37,6 +37,14 @@ const std::string CERT_MANAGER_CONFIG_TABLE_NAME = "cert_manager_config";
 const std::string COLUMN_CONFIG_KEY = "CONFIG_KEY";
 const std::string COLUMN_CONFIG_VALUE = "CONFIG_VALUE";
 
+const std::string REVOCATION_CACHE_TABLE_NAME = "revocation_cache";
+const std::string COLUMN_EXPIRE_TIME_UTC = "EXPIRE_TIME_UTC";
+const std::string COLUMN_WRITE_TIME_UTC = "WRITE_TIME_UTC";
+const std::string COLUMN_FILE_PATH = "FILE_PATH";
+const std::string COLUMN_DATA_SIZE = "DATA_SIZE";
+const std::string REVOCATION_CACHE_META_TABLE_NAME = "revocation_cache_meta";
+const std::string REVOCATION_CACHE_LAST_CLEANUP_KEY = "last_cleanup_utc";
+
 namespace OHOS {
 namespace Security {
 namespace CertManager {

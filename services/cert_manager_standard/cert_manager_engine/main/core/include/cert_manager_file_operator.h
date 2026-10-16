@@ -74,6 +74,7 @@ int32_t CmUidLayerGetFileCountAndNames(const char *path, struct CmBlob *fileName
 int32_t CmGetSubDir(void *dirp, struct CmFileDirentInfo *direntInfo);
 
 int32_t CmDirRemove(const char *path);
+int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len);
 
 #ifdef __cplusplus
 }
