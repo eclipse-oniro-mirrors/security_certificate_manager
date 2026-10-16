@@ -38,8 +38,6 @@ const std::string COLUMN_CONFIG_KEY = "CONFIG_KEY";
 const std::string COLUMN_CONFIG_VALUE = "CONFIG_VALUE";
 
 const std::string REVOCATION_CACHE_TABLE_NAME = "revocation_cache";
-const std::string COLUMN_KEY_HASH = "KEY_HASH";
-const std::string COLUMN_REVOCATION_TYPE = "TYPE";
 const std::string COLUMN_EXPIRE_TIME_UTC = "EXPIRE_TIME_UTC";
 const std::string COLUMN_WRITE_TIME_UTC = "WRITE_TIME_UTC";
 const std::string COLUMN_FILE_PATH = "FILE_PATH";

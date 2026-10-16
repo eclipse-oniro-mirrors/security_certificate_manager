@@ -18,6 +18,15 @@
 
 #include "cm_type.h"
 
+/*
+ * Caller token types accepted by the revocation cache API. These values mirror
+ * OHOS::Security::AccessToken::ATokenTypeEnum; the duplication is checked at
+ * compile time by static_assert in cm_revocation_cache_api.cpp.
+ */
+#define CM_REVOCATION_TOKEN_TYPE_HAP     0
+#define CM_REVOCATION_TOKEN_TYPE_NATIVE  1
+#define CM_REVOCATION_TOKEN_TYPE_SHELL   2
+
 #ifdef __cplusplus
 extern "C" {
 #endif

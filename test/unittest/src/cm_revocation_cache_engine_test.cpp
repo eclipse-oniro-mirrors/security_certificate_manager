@@ -29,6 +29,8 @@
 using namespace testing::ext;
 
 namespace {
+constexpr int64_t ALREADY_EXPIRED_SEC = 10; /* expire offset already in the past */
+
 class CmRevocationCacheEngineTest : public testing::Test {
 public:
     static void SetUpTestCase()
@@ -43,36 +45,44 @@ public:
 
 TEST_F(CmRevocationCacheEngineTest, SaveThenGetRoundTrip)
 {
-    struct CmBlob key = { 4, reinterpret_cast<uint8_t *>(const_cast<char *>("key1")) };
-    struct CmBlob data = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("DER")) };
+    uint8_t keyBuf[] = "key1";
+    uint8_t dataBuf[] = "DER";
+    struct CmBlob key = { 4, keyBuf };
+    struct CmBlob data = { 3, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
     ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
-    ASSERT_EQ(out.size, 3u);
-    EXPECT_EQ(memcmp(out.data, "DER", 3), 0);
+    const uint8_t expectDer[] = "DER";
+    ASSERT_EQ(out.size, sizeof(expectDer) - 1);
+    EXPECT_EQ(memcmp(out.data, expectDer, sizeof(expectDer) - 1), 0);
     CmFreeRevocationCache(&out);
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetMissingKeyReturnsNotExist)
 {
-    struct CmBlob key = { 7, reinterpret_cast<uint8_t *>(const_cast<char *>("nokey00")) };
+    uint8_t keyBuf[] = "nokey00";
+    struct CmBlob key = { 7, keyBuf };
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_CRL, &out), CMR_ERROR_NOT_EXIST);
 }
 
 TEST_F(CmRevocationCacheEngineTest, RejectExpiredExpireTime)
 {
-    struct CmBlob key = { 1, reinterpret_cast<uint8_t *>(const_cast<char *>("k")) };
-    struct CmBlob data = { 1, reinterpret_cast<uint8_t *>(const_cast<char *>("d")) };
+    uint8_t keyBuf[] = "k";
+    uint8_t dataBuf[] = "d";
+    struct CmBlob key = { 1, keyBuf };
+    struct CmBlob data = { 1, dataBuf };
     EXPECT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_CRL, &data,
-        static_cast<int64_t>(time(nullptr)) - 10), CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
+        static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC), CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
 }
 
 TEST_F(CmRevocationCacheEngineTest, ClampBeyondMaxValid)
 {
-    struct CmBlob key = { 2, reinterpret_cast<uint8_t *>(const_cast<char *>("k2")) };
-    struct CmBlob data = { 2, reinterpret_cast<uint8_t *>(const_cast<char *>("d2")) };
+    uint8_t keyBuf[] = "k2";
+    uint8_t dataBuf[] = "d2";
+    struct CmBlob key = { 2, keyBuf };
+    struct CmBlob data = { 2, dataBuf };
     int64_t far = static_cast<int64_t>(time(nullptr)) + 100LL * 24 * 3600; /* > 30d → clamp, not error */
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, far), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
@@ -82,15 +92,19 @@ TEST_F(CmRevocationCacheEngineTest, ClampBeyondMaxValid)
 
 TEST_F(CmRevocationCacheEngineTest, ResaveSameKeyLastWriteWins)
 {
-    struct CmBlob key = { 2, reinterpret_cast<uint8_t *>(const_cast<char *>("k3")) };
-    struct CmBlob d1 = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("AAA")) };
-    struct CmBlob d2 = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("BBB")) };
+    uint8_t keyBuf[] = "k3";
+    uint8_t d1Buf[] = "AAA";
+    uint8_t d2Buf[] = "BBB";
+    struct CmBlob key = { 2, keyBuf };
+    struct CmBlob d1 = { 3, d1Buf };
+    struct CmBlob d2 = { 3, d2Buf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &d1, expire), CM_SUCCESS);
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &d2, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
     ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
-    ASSERT_EQ(out.size, 3u);
-    EXPECT_EQ(memcmp(out.data, "BBB", 3), 0);
+    const uint8_t expectData[] = "BBB";
+    ASSERT_EQ(out.size, sizeof(expectData) - 1);
+    EXPECT_EQ(memcmp(out.data, expectData, sizeof(expectData) - 1), 0);
     CmFreeRevocationCache(&out);
 }

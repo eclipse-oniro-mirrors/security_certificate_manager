@@ -24,28 +24,38 @@
 
 using namespace testing::ext;
 
+namespace {
+constexpr uint32_t INVALID_REVOCATION_TYPE = 99;
+constexpr uint32_t SHA256_HEX_LEN = 64; /* sha256 hex digest length */
+constexpr uint32_t HASH_PREFIX_LEN = 2;  /* sub dir prefix length */
+}
+
 class CmRevocationCacheTest : public testing::Test {
 };
 
 TEST_F(CmRevocationCacheTest, BuildRelPathRejectsInvalidType)
 {
-    struct CmBlob key = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("abc")) };
+    uint8_t keyBuf[] = "abc";
+    struct CmBlob key = { 3, keyBuf };
     char rel[300] = {0};
-    EXPECT_EQ(CmRevocationCacheBuildRelPath(99, &key, rel, sizeof(rel)),
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(INVALID_REVOCATION_TYPE, &key, rel, sizeof(rel)),
         CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
 }
 
 TEST_F(CmRevocationCacheTest, BuildRelPathStableHashAndPrefix)
 {
-    struct CmBlob key = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("abc")) };
+    uint8_t keyBuf[] = "abc";
+    struct CmBlob key = { 3, keyBuf };
     char rel1[300] = {0};
     char rel2[300] = {0};
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel1, sizeof(rel1)), CM_SUCCESS);
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel2, sizeof(rel2)), CM_SUCCESS);
     EXPECT_STREQ(rel1, rel2);
-    EXPECT_EQ(strncmp(rel1, "ocsp/", 5), 0);
-    EXPECT_EQ(strlen(rel1), strlen("ocsp/") + 2 + 1 + 64 + strlen(".cache"));
-    EXPECT_EQ(strncmp(rel1 + 5, rel1 + 8, 2), 0); /* prefix == first 2 hex chars */
+    EXPECT_EQ(strncmp(rel1, "ocsp/", strlen("ocsp/")), 0);
+    EXPECT_EQ(strlen(rel1), strlen("ocsp/") + HASH_PREFIX_LEN + 1 + SHA256_HEX_LEN + strlen(".cache"));
+    /* sub dir prefix equals the first 2 hex chars of the key hash */
+    const uint32_t prefixOff = strlen("ocsp/");
+    EXPECT_EQ(strncmp(rel1 + prefixOff, rel1 + prefixOff + 1 + HASH_PREFIX_LEN, HASH_PREFIX_LEN), 0);
 }
 
 TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
@@ -57,7 +67,8 @@ TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
     EXPECT_STREQ(base, REVOCATION_CACHE_SERVICE_BASE);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_SHELL, base, sizeof(base)),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
-    EXPECT_EQ(CmRevocationCacheBuildBasePath(99, base, sizeof(base)), CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(INVALID_REVOCATION_TYPE, base, sizeof(base)),
+        CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
 
     char small[8] = {0};
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, small, sizeof(small)),
@@ -73,7 +84,8 @@ TEST_F(CmRevocationCacheTest, FreeNullSafe)
 
 TEST_F(CmRevocationCacheTest, SaveRejectsOversizedData)
 {
-    struct CmBlob key = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("abc")) };
+    uint8_t keyBuf[] = "abc";
+    struct CmBlob key = { 3, keyBuf };
     std::vector<uint8_t> big(CM_REVOCATION_CACHE_DATA_MAX_LEN + 1, 1);
     struct CmBlob data = { static_cast<uint32_t>(big.size()), big.data() };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
@@ -83,11 +95,13 @@ TEST_F(CmRevocationCacheTest, SaveRejectsOversizedData)
 
 TEST_F(CmRevocationCacheTest, SaveRejectsBadArgs)
 {
-    struct CmBlob key = { 3, reinterpret_cast<uint8_t *>(const_cast<char *>("abc")) };
-    struct CmBlob data = { 1, reinterpret_cast<uint8_t *>(const_cast<char *>("d")) };
+    uint8_t keyBuf[] = "abc";
+    uint8_t dataBuf[] = "d";
+    struct CmBlob key = { 3, keyBuf };
+    struct CmBlob data = { 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
-    EXPECT_EQ(CmSaveRevocationCache(key, static_cast<enum CmRevocationType>(9), data, expire),
-        CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
+    EXPECT_EQ(CmSaveRevocationCache(key, static_cast<enum CmRevocationType>(INVALID_REVOCATION_TYPE), data,
+        expire), CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
     EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data,
         static_cast<int64_t>(time(nullptr)) - 1), CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
 }

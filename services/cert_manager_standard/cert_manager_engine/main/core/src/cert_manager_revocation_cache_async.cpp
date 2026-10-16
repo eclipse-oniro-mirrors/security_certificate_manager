@@ -23,8 +23,50 @@
 #include "cm_error_code.h"
 #include "cm_log.h"
 
-extern "C" int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, const struct CmBlob *data,
-    int64_t expireTimeUtc);
+/*
+ * Upper bound of concurrent detached save worker threads. Beyond this limit the
+ * save is executed synchronously on the caller thread to apply back-pressure,
+ * so the service can never be driven into unbounded thread/memory growth by a
+ * caller flooding CmSaveRevocationCache.
+ */
+static const uint32_t REVOCATION_CACHE_MAX_CONCURRENT_SAVES = 4;
+
+static pthread_mutex_t g_revocationCacheWorkerLock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t g_revocationCacheActiveWorkers = 0;
+
+static bool AcquireWorkerSlot(void)
+{
+    bool acquired = false;
+    (void)pthread_mutex_lock(&g_revocationCacheWorkerLock);
+    if (g_revocationCacheActiveWorkers < REVOCATION_CACHE_MAX_CONCURRENT_SAVES) {
+        g_revocationCacheActiveWorkers++;
+        acquired = true;
+    }
+    (void)pthread_mutex_unlock(&g_revocationCacheWorkerLock);
+    return acquired;
+}
+
+static void ReleaseWorkerSlot(void)
+{
+    (void)pthread_mutex_lock(&g_revocationCacheWorkerLock);
+    if (g_revocationCacheActiveWorkers > 0) {
+        g_revocationCacheActiveWorkers--;
+    }
+    (void)pthread_mutex_unlock(&g_revocationCacheWorkerLock);
+}
+
+static void ZeroAndFreeBlob(struct CmBlob *blob)
+{
+    if (blob == nullptr || blob->data == nullptr) {
+        return;
+    }
+    if (blob->size > 0) {
+        (void)memset_s(blob->data, blob->size, 0, blob->size);
+    }
+    CMFree(blob->data);
+    blob->data = nullptr;
+    blob->size = 0;
+}
 
 static int32_t DeepCopyBlob(const struct CmBlob *src, struct CmBlob *dst)
 {
@@ -60,15 +102,13 @@ struct RevocationCacheAsyncTask {
 static void *RevocationCacheAsyncWorker(void *arg)
 {
     struct RevocationCacheAsyncTask *task = static_cast<struct RevocationCacheAsyncTask *>(arg);
-    if (task == nullptr) {
-        return nullptr;
+    if (task != nullptr) {
+        (void)CmServiceSaveRevocationCache(&task->key, task->type, &task->data, task->expireTimeUtc);
+        ZeroAndFreeBlob(&task->key);
+        ZeroAndFreeBlob(&task->data);
+        CMFree(task);
     }
-    (void)CmServiceSaveRevocationCache(&task->key, task->type, &task->data, task->expireTimeUtc);
-    (void)memset_s(task->key.data, task->key.size, 0, task->key.size);
-    (void)memset_s(task->data.data, task->data.size, 0, task->data.size);
-    CMFree(task->key.data);
-    CMFree(task->data.data);
-    CMFree(task);
+    ReleaseWorkerSlot();
     return nullptr;
 }
 
@@ -86,20 +126,24 @@ extern "C" int32_t CmRunSaveRevocationCacheAsync(const struct CmBlob *key, uint3
     }
     ret = DeepCopyBlob(data, &dataCopy);
     if (ret != CM_SUCCESS) {
-        (void)memset_s(keyCopy.data, keyCopy.size, 0, keyCopy.size);
-        CMFree(keyCopy.data);
-        keyCopy.data = nullptr;
-        keyCopy.size = 0;
+        ZeroAndFreeBlob(&keyCopy);
         return ret;
+    }
+
+    if (!AcquireWorkerSlot()) {
+        CM_LOG_W("revocation cache workers saturated, saving synchronously");
+        int32_t syncRet = CmServiceSaveRevocationCache(&keyCopy, type, &dataCopy, expireTimeUtc);
+        ZeroAndFreeBlob(&keyCopy);
+        ZeroAndFreeBlob(&dataCopy);
+        return syncRet;
     }
 
     struct RevocationCacheAsyncTask *task =
         static_cast<struct RevocationCacheAsyncTask *>(CMMalloc(sizeof(struct RevocationCacheAsyncTask)));
     if (task == nullptr) {
-        (void)memset_s(keyCopy.data, keyCopy.size, 0, keyCopy.size);
-        (void)memset_s(dataCopy.data, dataCopy.size, 0, dataCopy.size);
-        CMFree(keyCopy.data);
-        CMFree(dataCopy.data);
+        ReleaseWorkerSlot();
+        ZeroAndFreeBlob(&keyCopy);
+        ZeroAndFreeBlob(&dataCopy);
         return CMR_ERROR_MALLOC_FAIL;
     }
     (void)memset_s(task, sizeof(struct RevocationCacheAsyncTask), 0, sizeof(struct RevocationCacheAsyncTask));
@@ -112,10 +156,9 @@ extern "C" int32_t CmRunSaveRevocationCacheAsync(const struct CmBlob *key, uint3
     int32_t createRet = pthread_create(&tid, nullptr, RevocationCacheAsyncWorker, task);
     if (createRet != 0) {
         CM_LOG_E("failed to create revocation cache worker thread, err = %d", createRet);
-        (void)memset_s(keyCopy.data, keyCopy.size, 0, keyCopy.size);
-        (void)memset_s(dataCopy.data, dataCopy.size, 0, dataCopy.size);
-        CMFree(keyCopy.data);
-        CMFree(dataCopy.data);
+        ReleaseWorkerSlot();
+        ZeroAndFreeBlob(&keyCopy);
+        ZeroAndFreeBlob(&dataCopy);
         CMFree(task);
         return CMR_ERROR_INVALID_OPERATION;
     }

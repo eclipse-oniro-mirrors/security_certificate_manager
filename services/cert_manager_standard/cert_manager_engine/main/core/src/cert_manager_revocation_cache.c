@@ -47,19 +47,19 @@ static int32_t EnsureDirWithMode(const char *dir, const mode_t *mode)
     return ret;
 }
 
+static const size_t CACHE_SUFFIX_LEN = sizeof(".cache") - 1;
+static const size_t TMP_SUFFIX_LEN = sizeof(".tmp") - 1;
+
 static bool IsFileNameCache(const char *name)
 {
     if (name == NULL) {
         return false;
     }
     size_t len = strlen(name);
-    if (len < 6) {
+    if (len < CACHE_SUFFIX_LEN) {
         return false;
     }
-    if (strcmp(name + len - 6, ".cache") == 0) {
-        return true;
-    }
-    return false;
+    return strcmp(name + len - CACHE_SUFFIX_LEN, ".cache") == 0;
 }
 
 static bool IsFileNameTmp(const char *name)
@@ -68,13 +68,10 @@ static bool IsFileNameTmp(const char *name)
         return false;
     }
     size_t len = strlen(name);
-    if (len < 4) {
+    if (len < TMP_SUFFIX_LEN) {
         return false;
     }
-    if (strcmp(name + len - 4, ".tmp") == 0) {
-        return true;
-    }
-    return false;
+    return strcmp(name + len - TMP_SUFFIX_LEN, ".tmp") == 0;
 }
 
 static int32_t BuildRelPathFromFileName(const char *prefix, const char *hexName, char *relPath, uint32_t relPathLen)
@@ -82,8 +79,8 @@ static int32_t BuildRelPathFromFileName(const char *prefix, const char *hexName,
     if (prefix == NULL || hexName == NULL || relPath == NULL || relPathLen == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    int ret = snprintf(relPath, relPathLen, "%s/%c%c/%s", prefix, hexName[0], hexName[1], hexName);
-    if ((ret < 0) || ((uint32_t)ret >= relPathLen)) {
+    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s", prefix, hexName[0], hexName[1], hexName);
+    if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
     return CMR_OK;
@@ -105,6 +102,185 @@ static bool IsPathInValidSet(char **paths, uint32_t count, const char *targetRel
     return false;
 }
 
+static int32_t RemoveExpiredRecords(int64_t now)
+{
+    struct RevocationCacheRecord rec = { 0 };
+    while (QueryExpiredRevocationCacheRecord(now, &rec) == CM_SUCCESS) {
+        char fullFile[PATH_MAX] = {0};
+        if (snprintf_s(fullFile, sizeof(fullFile), sizeof(fullFile) - 1, "%s%s", REVOCATION_CACHE_DIR,
+            rec.filePath) >= 0) {
+            (void)unlink(fullFile);
+        }
+        if (DeleteRevocationCacheRecord(rec.filePath) != CM_SUCCESS) {
+            CM_LOG_W("delete expired revocation cache record failed");
+            return CMR_ERROR;
+        }
+        (void)memset_s(&rec, sizeof(rec), 0, sizeof(rec));
+    }
+    return CMR_OK;
+}
+
+static void RemoveOrphanFileIfNeed(const char *subDir, const char *typePrefix,
+    const struct CmFileDirentInfo *file, char **paths, uint32_t pathCount)
+{
+    if (IsFileNameTmp(file->fileName)) {
+        char tmpFull[PATH_MAX] = {0};
+        if (snprintf_s(tmpFull, sizeof(tmpFull), sizeof(tmpFull) - 1, "%s/%s", subDir,
+            file->fileName) >= 0) {
+            (void)unlink(tmpFull);
+        }
+        return;
+    }
+    if (!IsFileNameCache(file->fileName)) {
+        return;
+    }
+    char relCand[512] = {0};
+    if (BuildRelPathFromFileName(typePrefix, file->fileName, relCand, sizeof(relCand)) != CM_SUCCESS) {
+        return;
+    }
+    if (IsPathInValidSet(paths, pathCount, relCand)) {
+        return;
+    }
+    char fullCand[PATH_MAX] = {0};
+    if (snprintf_s(fullCand, sizeof(fullCand), sizeof(fullCand) - 1, "%s%s", REVOCATION_CACHE_DIR,
+        relCand) >= 0) {
+        (void)unlink(fullCand);
+    }
+}
+
+static int32_t RemoveOrphanRecords(void)
+{
+    char **paths = NULL;
+    uint32_t pathCount = 0;
+    if (QueryAllRevocationCacheFilePaths(&paths, &pathCount) != CM_SUCCESS) {
+        return CMR_OK;
+    }
+    const char *types[] = { "ocsp", "crl" };
+    for (uint32_t t = 0; t < CM_ARRAY_SIZE(types); ++t) {
+        char typeDir[PATH_MAX] = {0};
+        if (snprintf_s(typeDir, sizeof(typeDir), sizeof(typeDir) - 1, "%s%s/", REVOCATION_CACHE_DIR,
+            types[t]) < 0) {
+            continue;
+        }
+        void *dirp = CmOpenDir(typeDir);
+        if (dirp == NULL) {
+            continue;
+        }
+        struct CmFileDirentInfo dent;
+        while (CmGetSubDir(dirp, &dent) == CM_SUCCESS) {
+            char subDir[PATH_MAX] = {0};
+            if (snprintf_s(subDir, sizeof(subDir), sizeof(subDir) - 1, "%s%s", typeDir,
+                dent.fileName) < 0) {
+                continue;
+            }
+            void *subp = CmOpenDir(subDir);
+            if (subp == NULL) {
+                continue;
+            }
+            struct CmFileDirentInfo f;
+            while (CmGetDirFile(subp, &f) == CM_SUCCESS) {
+                RemoveOrphanFileIfNeed(subDir, types[t], &f, paths, pathCount);
+            }
+            CmCloseDir(subp);
+        }
+        CmCloseDir(dirp);
+    }
+    FreeRevocationCacheFilePaths(paths, pathCount);
+    return CMR_OK;
+}
+
+/*
+ * Expired/orphan cleanup must stay inside the save lock: unlinking files while
+ * another thread is writing the same key would delete a freshly written entry.
+ * The cost is bounded because it only runs once per REVOCATION_CACHE_CLEAN_INTERVAL_SEC.
+ */
+static void CleanupExpiredAndOrphans(int64_t now)
+{
+    (void)RemoveExpiredRecords(now);
+    (void)RemoveOrphanRecords();
+    (void)SetRevocationCacheMeta(now);
+}
+
+static void EvictUntilCapacity(uint64_t payloadLen, uint64_t *totalSize)
+{
+    while (*totalSize + payloadLen > (uint64_t)REVOCATION_CACHE_MAX_TOTAL_BYTES) {
+        struct RevocationCacheRecord oldest;
+        if (QueryRevocationCacheRecordByExpireAsc(&oldest) != CM_SUCCESS) {
+            break;
+        }
+        char oldestFull[PATH_MAX] = {0};
+        if (snprintf_s(oldestFull, sizeof(oldestFull), sizeof(oldestFull) - 1, "%s%s", REVOCATION_CACHE_DIR,
+            oldest.filePath) >= 0) {
+            (void)unlink(oldestFull);
+        }
+        if (DeleteRevocationCacheRecord(oldest.filePath) != CM_SUCCESS) {
+            CM_LOG_W("delete revocation cache record for capacity failed");
+            break;
+        }
+        *totalSize = (*totalSize >= oldest.dataSize) ? (*totalSize - oldest.dataSize) : 0;
+    }
+}
+
+static int32_t EnsureCacheDirs(uint32_t type, const char *relPath)
+{
+    mode_t mode0701 = S_IRWXU | S_IXOTH;
+    if (EnsureDirWithMode(REVOCATION_CACHE_DIR, &mode0701) == CMR_ERROR_MAKE_DIR_FAIL) {
+        return CMR_ERROR_MAKE_DIR_FAIL;
+    }
+    const char *prefixType = (type == CM_REVOCATION_TYPE_OCSP) ? "ocsp" : "crl";
+    char typeDir[PATH_MAX] = {0};
+    if (snprintf_s(typeDir, sizeof(typeDir), sizeof(typeDir) - 1, "%s%s/", REVOCATION_CACHE_DIR,
+        prefixType) >= 0) {
+        (void)EnsureDirWithMode(typeDir, &mode0701);
+    }
+
+    char hexName[PATH_MAX] = {0};
+    const char *lastSlash = strrchr(relPath, '/');
+    if (lastSlash != NULL) {
+        (void)strncpy_s(hexName, sizeof(hexName), lastSlash + 1, strlen(lastSlash + 1) - CACHE_SUFFIX_LEN);
+    }
+    if (hexName[0] != '\0' && hexName[1] != '\0') {
+        char prefixDir[PATH_MAX] = {0};
+        if (snprintf_s(prefixDir, sizeof(prefixDir), sizeof(prefixDir) - 1, "%s%s/%c%c/", REVOCATION_CACHE_DIR,
+            prefixType, hexName[0], hexName[1]) >= 0) {
+            (void)EnsureDirWithMode(prefixDir, &mode0701);
+        }
+    }
+    return CMR_OK;
+}
+
+static int32_t BuildRevocationCachePayload(int64_t clampedExpire, const struct CmBlob *data,
+    uint8_t **payloadOut, uint32_t *payloadLenOut)
+{
+    uint32_t payloadLen = (uint32_t)sizeof(int64_t) + data->size;
+    uint8_t *payload = (uint8_t *)CMMalloc(payloadLen);
+    if (payload == NULL) {
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    CmRevocationCacheEncodeInt64Be(clampedExpire, payload);
+    if (memcpy_s(payload + sizeof(int64_t), payloadLen - sizeof(int64_t), data->data, data->size) != EOK) {
+        CMFree(payload);
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    *payloadOut = payload;
+    *payloadLenOut = payloadLen;
+    return CM_SUCCESS;
+}
+
+static int32_t SaveRevocationCacheRecord(const char *relPath, int64_t clampedExpire, uint64_t dataSize)
+{
+    struct RevocationCacheRecord recWrite = { 0 };
+    recWrite.expireTimeUtc = clampedExpire;
+    if (strncpy_s(recWrite.filePath, sizeof(recWrite.filePath), relPath, strlen(relPath)) != EOK) {
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    recWrite.dataSize = dataSize;
+    if (InsertRevocationCacheRecord(&recWrite) != CM_SUCCESS) {
+        return CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    return CMR_OK;
+}
+
 int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, const struct CmBlob *data,
     int64_t expireTimeUtc)
 {
@@ -124,124 +300,29 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
         return ret;
     }
 
-    uint32_t payloadLen = (uint32_t)sizeof(int64_t) + data->size;
-    uint8_t *payload = (uint8_t *)CMMalloc(payloadLen);
-    if (payload == NULL) {
-        return CMR_ERROR_MALLOC_FAIL;
-    }
-    CmRevocationCacheEncodeInt64Be(clampedExpire, payload);
-    if (memcpy_s(payload + sizeof(int64_t), payloadLen - sizeof(int64_t), data->data, data->size) != EOK) {
-        CMFree(payload);
-        return CMR_ERROR_MEM_OPERATION_COPY;
+    uint8_t *payload = NULL;
+    uint32_t payloadLen = 0;
+    ret = BuildRevocationCachePayload(clampedExpire, data, &payload, &payloadLen);
+    if (ret != CM_SUCCESS) {
+        return ret;
     }
 
+    int32_t writeRet = CMR_OK;
     pthread_mutex_lock(&g_revocationCacheLock);
     int64_t now = (int64_t)time(NULL);
     int64_t lastClean = 0;
     ret = GetRevocationCacheMeta(&lastClean);
     if (ret != CM_SUCCESS || (now - lastClean > REVOCATION_CACHE_CLEAN_INTERVAL_SEC)) {
-        // clean expired
-        struct RevocationCacheRecord rec = { 0 };
-        while (QueryExpiredRevocationCacheRecord(now, &rec) == CM_SUCCESS) {
-            char fullFile[PATH_MAX] = {0};
-            (void)snprintf(fullFile, sizeof(fullFile), "%s%s", REVOCATION_CACHE_DIR, rec.filePath);
-            (void)unlink(fullFile);
-            if (DeleteRevocationCacheRecord(rec.filePath) != CM_SUCCESS) {
-                CM_LOG_W("delete expired revocation cache record failed");
-                break;
-            }
-            (void)memset_s(&rec, sizeof(rec), 0, sizeof(rec));
-        }
-        // orphan cleanup
-        char **paths = NULL;
-        uint32_t pathCount = 0;
-        if (QueryAllRevocationCacheFilePaths(&paths, &pathCount) == CM_SUCCESS) {
-            const char *base = REVOCATION_CACHE_DIR;
-            const char *types[] = { "ocsp", "crl" };
-            for (uint32_t t = 0; t < 2; ++t) {
-                char typeDir[PATH_MAX] = {0};
-                (void)snprintf(typeDir, sizeof(typeDir), "%s%s/", base, types[t]);
-                void *dirp = CmOpenDir(typeDir);
-                if (dirp == NULL) {
-                    continue;
-                }
-                struct CmFileDirentInfo dent;
-                while (CmGetSubDir(dirp, &dent) == CM_SUCCESS) {
-                    char subDir[PATH_MAX] = {0};
-                    (void)snprintf(subDir, sizeof(subDir), "%s%s", typeDir, dent.fileName);
-                    void *subp = CmOpenDir(subDir);
-                    if (subp == NULL) {
-                        continue;
-                    }
-                    struct CmFileDirentInfo f;
-                    while (CmGetDirFile(subp, &f) == CM_SUCCESS) {
-                        if (IsFileNameTmp(f.fileName)) {
-                            char tmpFull[PATH_MAX] = {0};
-                            (void)snprintf(tmpFull, sizeof(tmpFull), "%s/%s", subDir, f.fileName);
-                            (void)unlink(tmpFull);
-                            continue;
-                        }
-                        if (IsFileNameCache(f.fileName)) {
-                            char relCand[512] = {0};
-                            if (BuildRelPathFromFileName(types[t], f.fileName, relCand, sizeof(relCand)) == CM_SUCCESS) {
-                                if (!IsPathInValidSet(paths, pathCount, relCand)) {
-                                    char fullCand[PATH_MAX] = {0};
-                                    (void)snprintf(fullCand, sizeof(fullCand), "%s%s", base, relCand);
-                                    (void)unlink(fullCand);
-                                }
-                            }
-                        }
-                    }
-                    CmCloseDir(subp);
-                }
-                CmCloseDir(dirp);
-            }
-            FreeRevocationCacheFilePaths(paths, pathCount);
-        }
-        (void)SetRevocationCacheMeta(now);
+        CleanupExpiredAndOrphans(now);
     }
 
-    // capacity
     uint64_t totalSize = 0;
     (void)QueryRevocationCacheSumSize(&totalSize);
-    while (totalSize + (uint64_t)payloadLen > (uint64_t)REVOCATION_CACHE_MAX_TOTAL_BYTES) {
-        struct RevocationCacheRecord oldest;
-        if (QueryRevocationCacheRecordByExpireAsc(&oldest) != CM_SUCCESS) {
-            break;
-        }
-        char oldestFull[PATH_MAX] = {0};
-        (void)snprintf(oldestFull, sizeof(oldestFull), "%s%s", REVOCATION_CACHE_DIR, oldest.filePath);
-        (void)unlink(oldestFull);
-        if (DeleteRevocationCacheRecord(oldest.filePath) != CM_SUCCESS) {
-            CM_LOG_W("delete revocation cache record for capacity failed");
-            break;
-        }
-        totalSize = (totalSize >= oldest.dataSize) ? (totalSize - oldest.dataSize) : 0;
-    }
-    // ensure dirs and write
-    int32_t writeRet = CMR_OK;
-    mode_t mode0701 = S_IRWXU | S_IXOTH;
-    if (EnsureDirWithMode(REVOCATION_CACHE_DIR, &mode0701) == CMR_ERROR_MAKE_DIR_FAIL) {
+    EvictUntilCapacity((uint64_t)payloadLen, &totalSize);
+
+    if (EnsureCacheDirs(type, relPath) == CMR_ERROR_MAKE_DIR_FAIL) {
         writeRet = CMR_ERROR_MAKE_DIR_FAIL;
         goto cleanup;
-    }
-    // ensure type dir and prefix dir
-    {
-        const char *prefixType = (type == CM_REVOCATION_TYPE_OCSP) ? "ocsp" : "crl";
-        char typeDir[PATH_MAX] = {0};
-        (void)snprintf(typeDir, sizeof(typeDir), "%s%s/", REVOCATION_CACHE_DIR, prefixType);
-        (void)EnsureDirWithMode(typeDir, &mode0701);
-        // ensure prefix dir
-        char hexName[PATH_MAX] = {0};
-        const char *lastSlash = strrchr(relPath, '/');
-        if (lastSlash != NULL) {
-            (void)strncpy_s(hexName, sizeof(hexName), lastSlash + 1, strlen(lastSlash + 1) - 6);
-        }
-        if (hexName[0] != '\0' && hexName[1] != '\0') {
-            char prefixDir[PATH_MAX] = {0};
-            (void)snprintf(prefixDir, sizeof(prefixDir), "%s%s/%c%c/", REVOCATION_CACHE_DIR, prefixType, hexName[0], hexName[1]);
-            (void)EnsureDirWithMode(prefixDir, &mode0701);
-        }
     }
 
     writeRet = CmRevocationCacheWriteAtomic(relPath, payload, payloadLen);
@@ -249,20 +330,12 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
         goto cleanup;
     }
 
-    struct RevocationCacheRecord recWrite = { 0 };
-    recWrite.expireTimeUtc = clampedExpire;
-    if (strncpy_s(recWrite.filePath, sizeof(recWrite.filePath), relPath, strlen(relPath)) != EOK) {
-        writeRet = CMR_ERROR_MEM_OPERATION_COPY;
-        goto cleanup;
-    }
-    recWrite.dataSize = (uint64_t)sizeof(int64_t) + (uint64_t)data->size;
-    if (InsertRevocationCacheRecord(&recWrite) != CM_SUCCESS) {
-        writeRet = CMR_ERROR_WRITE_FILE_FAIL;
-        goto cleanup;
-    }
+    writeRet = SaveRevocationCacheRecord(relPath, clampedExpire,
+        (uint64_t)sizeof(int64_t) + (uint64_t)data->size);
 
 cleanup:
     pthread_mutex_unlock(&g_revocationCacheLock);
+    (void)memset_s(payload, payloadLen, 0, payloadLen);
     CMFree(payload);
     return writeRet;
 }

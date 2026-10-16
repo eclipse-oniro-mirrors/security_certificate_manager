@@ -21,8 +21,12 @@
 #include <openssl/evp.h>
 
 #include "cm_log.h"
+#include "cm_type.h"
+#include "securec.h"
 
-#define CM_REVOCATION_HEX_LEN (EVP_MAX_MD_SIZE * 2)
+#define CM_REVOCATION_HEX_CHARS_PER_BYTE 2
+#define CM_REVOCATION_NIBBLE_BITS 4 /* hex half-byte bits */
+#define CM_REVOCATION_HEX_LEN (EVP_MAX_MD_SIZE * CM_REVOCATION_HEX_CHARS_PER_BYTE)
 
 static bool CmRevocationCacheIsTypeValid(uint32_t type)
 {
@@ -54,13 +58,13 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
     static const char hexDigits[] = "0123456789abcdef";
     char hex[CM_REVOCATION_HEX_LEN + 1] = { 0 };
     for (unsigned int i = 0; i < mdLen; ++i) {
-        hex[i * 2] = hexDigits[(md[i] >> 4) & 0x0F];
-        hex[i * 2 + 1] = hexDigits[md[i] & 0x0F];
+        hex[i * CM_REVOCATION_HEX_CHARS_PER_BYTE] = hexDigits[(md[i] >> CM_REVOCATION_NIBBLE_BITS) & 0x0F];
+        hex[i * CM_REVOCATION_HEX_CHARS_PER_BYTE + 1] = hexDigits[md[i] & 0x0F];
     }
 
     const char *prefix = (type == CM_REVOCATION_TYPE_OCSP) ? "ocsp" : "crl";
-    int ret = snprintf(relPath, relPathLen, "%s/%c%c/%s.cache", prefix, hex[0], hex[1], hex);
-    if ((ret < 0) || ((uint32_t)ret >= relPathLen)) {
+    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s.cache", prefix, hex[0], hex[1], hex);
+    if (ret < 0) {
         CM_LOG_E("revocation cache rel path buffer too small");
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
@@ -74,7 +78,7 @@ void CmRevocationCacheEncodeInt64Be(int64_t v, uint8_t *out8)
     }
     uint64_t u = (uint64_t)v;
     for (uint32_t i = 0; i < sizeof(int64_t); ++i) {
-        out8[i] = (uint8_t)((u >> ((sizeof(int64_t) - 1 - i) * 8)) & 0xFF);
+        out8[i] = (uint8_t)((u >> ((sizeof(int64_t) - 1 - i) * CM_BITS_PER_BYTE)) & 0xFF);
     }
 }
 
@@ -85,7 +89,7 @@ int64_t CmRevocationCacheDecodeInt64Be(const uint8_t *in8)
     }
     uint64_t u = 0;
     for (uint32_t i = 0; i < sizeof(int64_t); ++i) {
-        u = (u << 8) | in8[i];
+        u = (u << CM_BITS_PER_BYTE) | in8[i];
     }
     return (int64_t)u;
 }

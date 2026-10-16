@@ -55,8 +55,8 @@ int32_t CreateRevocationCacheRdb(void)
     cacheConfig.dbName = CERT_MANAGER_RDB_NAME;
     cacheConfig.tableName = REVOCATION_CACHE_TABLE_NAME;
     cacheConfig.createTableSql = std::string("CREATE TABLE IF NOT EXISTS " + REVOCATION_CACHE_TABLE_NAME +
-        "(KEY_HASH TEXT NOT NULL, TYPE TEXT NOT NULL, EXPIRE_TIME_UTC INTEGER NOT NULL, " +
-        "WRITE_TIME_UTC INTEGER NOT NULL, FILE_PATH TEXT PRIMARY KEY, DATA_SIZE INTEGER NOT NULL)");
+        "(EXPIRE_TIME_UTC INTEGER NOT NULL, WRITE_TIME_UTC INTEGER NOT NULL, " +
+        "FILE_PATH TEXT PRIMARY KEY, DATA_SIZE INTEGER NOT NULL)");
     revocationCacheRdbDataManager = std::make_shared<CmRdbDataManager>(cacheConfig);
     if (!revocationCacheRdbDataManager->CreateTable()) {
         CM_LOG_E("Failed to create revocation_cache table");
@@ -91,8 +91,6 @@ int32_t InsertRevocationCacheRecord(const struct RevocationCacheRecord *record)
     }
 
     NativeRdb::ValuesBucket valuesBucket;
-    valuesBucket.PutString(COLUMN_KEY_HASH, std::string(""));
-    valuesBucket.PutString(COLUMN_REVOCATION_TYPE, std::string(""));
     valuesBucket.PutLong(COLUMN_EXPIRE_TIME_UTC, record->expireTimeUtc);
     valuesBucket.PutLong(COLUMN_WRITE_TIME_UTC, static_cast<int64_t>(std::time(nullptr)));
     valuesBucket.PutString(COLUMN_FILE_PATH, std::string(record->filePath));
@@ -272,6 +270,33 @@ int32_t QueryExpiredRevocationCacheRecord(int64_t nowUtc, struct RevocationCache
     return QuerySingleRecord(sql, args, record);
 }
 
+static int32_t AppendCurrentRowPath(NativeRdb::AbsSharedResultSet *resultSet, char **pathArray, uint32_t *validCount)
+{
+    int pathIndex = 0;
+    if (resultSet->GetColumnIndex(COLUMN_FILE_PATH, pathIndex) != NativeRdb::E_OK) {
+        CM_LOG_E("GetColumnIndex for path failed");
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    std::string path;
+    if (resultSet->GetString(pathIndex, path) != NativeRdb::E_OK) {
+        CM_LOG_E("GetString for path failed");
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    char *pathStr = static_cast<char *>(CmMalloc(path.size() + 1));
+    if (pathStr == nullptr) {
+        CM_LOG_E("malloc path string failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    if (memcpy_s(pathStr, path.size() + 1, path.c_str(), path.size() + 1) != EOK) {
+        CM_LOG_E("memcpy_s path failed");
+        CmFree(pathStr);
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    pathArray[*validCount] = pathStr;
+    (*validCount)++;
+    return CM_SUCCESS;
+}
+
 int32_t QueryAllRevocationCacheFilePaths(char ***paths, uint32_t *count)
 {
     CM_LOG_D("enter QueryAllRevocationCacheFilePaths");
@@ -316,36 +341,12 @@ int32_t QueryAllRevocationCacheFilePaths(char ***paths, uint32_t *count)
     uint32_t validCount = 0;
     int32_t ret = resultSet->GoToFirstRow();
     while (ret == NativeRdb::E_OK && validCount < capacity) {
-        int pathIndex = 0;
-        if (resultSet->GetColumnIndex(COLUMN_FILE_PATH, pathIndex) != NativeRdb::E_OK) {
-            CM_LOG_E("GetColumnIndex for path failed");
+        int32_t appendRet = AppendCurrentRowPath(resultSet.get(), pathArray, &validCount);
+        if (appendRet != CM_SUCCESS) {
             FreeRevocationCacheFilePaths(pathArray, validCount);
             resultSet->Close();
-            return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+            return appendRet;
         }
-        std::string path;
-        if (resultSet->GetString(pathIndex, path) != NativeRdb::E_OK) {
-            CM_LOG_E("GetString for path failed");
-            FreeRevocationCacheFilePaths(pathArray, validCount);
-            resultSet->Close();
-            return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-        }
-        char *pathStr = static_cast<char *>(CmMalloc(path.size() + 1));
-        if (pathStr == nullptr) {
-            CM_LOG_E("malloc path string failed");
-            FreeRevocationCacheFilePaths(pathArray, validCount);
-            resultSet->Close();
-            return CMR_ERROR_MALLOC_FAIL;
-        }
-        if (memcpy_s(pathStr, path.size() + 1, path.c_str(), path.size() + 1) != EOK) {
-            CM_LOG_E("memcpy_s path failed");
-            CmFree(pathStr);
-            FreeRevocationCacheFilePaths(pathArray, validCount);
-            resultSet->Close();
-            return CMR_ERROR_MEM_OPERATION_COPY;
-        }
-        pathArray[validCount] = pathStr;
-        validCount++;
         ret = resultSet->GoToNextRow();
     }
     resultSet->Close();
@@ -414,7 +415,8 @@ int32_t GetRevocationCacheMeta(int64_t *value)
     }
     resultSet->Close();
 
-    *value = std::strtoll(strValue.c_str(), nullptr, 10);
+    constexpr int DECIMAL_BASE = 10;
+    *value = std::strtoll(strValue.c_str(), nullptr, DECIMAL_BASE);
     return CM_SUCCESS;
 }
 

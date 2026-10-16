@@ -633,6 +633,51 @@ int32_t CmDirRemove(const char *path)
     return DirRemove(path);
 }
 
+static int32_t WriteAllToFd(int fd, const uint8_t *buf, uint32_t len)
+{
+    uint32_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, buf + written, len - written);
+        if (n < 0) {
+            if (errno != EINTR) {
+                CM_LOG_E("write tmp file failed, errno = 0x%x", errno);
+                return CMR_ERROR_WRITE_FILE_FAIL;
+            }
+            continue;
+        }
+        if (n == 0) {
+            CM_LOG_E("write tmp file made no progress");
+            return CMR_ERROR_WRITE_FILE_FAIL;
+        }
+        written += (uint32_t)n;
+    }
+    while (fsync(fd) < 0) {
+        if (errno != EINTR) {
+            CM_LOG_E("sync file failed, errno = 0x%x", errno);
+            return CMR_ERROR_WRITE_FILE_FAIL;
+        }
+    }
+    return CMR_OK;
+}
+
+static void SyncParentDir(const char *fullPath)
+{
+    char dirPath[PATH_MAX] = {0};
+    if (strcpy_s(dirPath, sizeof(dirPath), fullPath) != EOK) {
+        return;
+    }
+    char *slash = strrchr(dirPath, '/');
+    if (slash == NULL) {
+        return;
+    }
+    *slash = '\0';
+    int dirFd = open(dirPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd >= 0) {
+        (void)fsync(dirFd);
+        (void)close(dirFd);
+    }
+}
+
 int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len)
 {
     if (relPath == NULL || buf == NULL || len == 0) {
@@ -642,56 +687,36 @@ int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, ui
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     char fullPath[PATH_MAX] = {0};
-    int32_t ret = snprintf(fullPath, sizeof(fullPath), "%s%s", REVOCATION_CACHE_DIR, relPath);
-    if ((ret < 0) || ((size_t)ret >= sizeof(fullPath))) {
+    int32_t ret = snprintf_s(fullPath, sizeof(fullPath), sizeof(fullPath) - 1, "%s%s",
+        REVOCATION_CACHE_DIR, relPath);
+    if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
     char tmpPath[PATH_MAX] = {0};
-    ret = snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", fullPath);
-    if ((ret < 0) || ((size_t)ret >= sizeof(tmpPath))) {
+    ret = snprintf_s(tmpPath, sizeof(tmpPath), sizeof(tmpPath) - 1, "%s.tmp", fullPath);
+    if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
-    int fd = open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    int fd = open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if (fd < 0) {
         CM_LOG_E("open tmp file failed, errno = 0x%x", errno);
         return CMR_ERROR_OPEN_FILE_FAIL;
     }
     uint64_t newTag = CreateFdsanOwnTag(&fd);
     fdsan_exchange_owner_tag(fd, 0, newTag);
-    uint32_t written = 0;
-    while (written < len) {
-        ssize_t n = write(fd, buf + written, len - written);
-        if (n < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            CM_LOG_E("write tmp file failed, errno = 0x%x", errno);
-            fdsan_close_with_tag(fd, newTag);
-            (void)unlink(tmpPath);
-            return CMR_ERROR_WRITE_FILE_FAIL;
-        }
-        if (n == 0) {
-            CM_LOG_E("write tmp file made no progress");
-            fdsan_close_with_tag(fd, newTag);
-            (void)unlink(tmpPath);
-            return CMR_ERROR_WRITE_FILE_FAIL;
-        }
-        written += (uint32_t)n;
-    }
-    while (fsync(fd) < 0) {
-        if (errno == EINTR) {
-            continue;
-        }
-        CM_LOG_E("sync file failed, errno = 0x%x", errno);
-        fdsan_close_with_tag(fd, newTag);
-        (void)unlink(tmpPath);
-        return CMR_ERROR_WRITE_FILE_FAIL;
-    }
+    int32_t writeRet = WriteAllToFd(fd, buf, len);
     fdsan_close_with_tag(fd, newTag);
+    if (writeRet != CMR_OK) {
+        (void)unlink(tmpPath);
+        return writeRet;
+    }
     if (rename(tmpPath, fullPath) != 0) {
         CM_LOG_E("rename tmp file failed, errno = 0x%x", errno);
         (void)unlink(tmpPath);
         return CMR_ERROR_WRITE_FILE_FAIL;
     }
+    /* fsync the parent directory so the rename survives a power loss */
+    SyncParentDir(fullPath);
     return CMR_OK;
 }

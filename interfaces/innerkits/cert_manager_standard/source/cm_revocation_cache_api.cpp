@@ -34,6 +34,20 @@
 
 using namespace OHOS::Security::AccessToken;
 
+static_assert(static_cast<int32_t>(ATokenTypeEnum::TOKEN_HAP) == CM_REVOCATION_TOKEN_TYPE_HAP,
+    "CM_REVOCATION_TOKEN_TYPE_HAP must match ATokenTypeEnum::TOKEN_HAP");
+static_assert(static_cast<int32_t>(ATokenTypeEnum::TOKEN_NATIVE) == CM_REVOCATION_TOKEN_TYPE_NATIVE,
+    "CM_REVOCATION_TOKEN_TYPE_NATIVE must match ATokenTypeEnum::TOKEN_NATIVE");
+static_assert(static_cast<int32_t>(ATokenTypeEnum::TOKEN_SHELL) == CM_REVOCATION_TOKEN_TYPE_SHELL,
+    "CM_REVOCATION_TOKEN_TYPE_SHELL must match ATokenTypeEnum::TOKEN_SHELL");
+
+static bool CmRevocationCacheIsCallerAllowed(void)
+{
+    auto tokenType = AccessTokenKit::GetTokenType(
+        static_cast<AccessTokenID>(OHOS::IPCSkeleton::GetSelfTokenID()));
+    return (tokenType == ATokenTypeEnum::TOKEN_HAP) || (tokenType == ATokenTypeEnum::TOKEN_NATIVE);
+}
+
 extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenType, char *basePath,
     uint32_t basePathLen)
 {
@@ -41,9 +55,9 @@ extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenTyp
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     const char *base = nullptr;
-    if (tokenType == CM_REVOCATION_TOKEN_TYPE_HAP) {
+    if (tokenType == static_cast<int32_t>(ATokenTypeEnum::TOKEN_HAP)) {
         base = REVOCATION_CACHE_SANDBOX_BASE;
-    } else if (tokenType == CM_REVOCATION_TOKEN_TYPE_NATIVE) {
+    } else if (tokenType == static_cast<int32_t>(ATokenTypeEnum::TOKEN_NATIVE)) {
         base = REVOCATION_CACHE_SERVICE_BASE;
     } else {
         return CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID;  /* TOKEN_SHELL / unknown rejected */
@@ -54,43 +68,9 @@ extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenTyp
     return CM_SUCCESS;
 }
 
-extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, enum CmRevocationType type,
-    struct CmBlob *data)
+static int32_t CmReadRevocationCacheFile(const char *fullPath, struct CmBlob *data)
 {
-    if (data == nullptr) {
-        return CMR_ERROR_NULL_POINTER;
-    }
-    data->data = nullptr;
-    data->size = 0;
-
-    if (type != CM_REVOCATION_TYPE_OCSP && type != CM_REVOCATION_TYPE_CRL) {
-        return CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE;
-    }
-    if (CmCheckBlob(&key) != CM_SUCCESS || key.size > CM_REVOCATION_CACHE_KEY_MAX_LEN) {
-        return CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY;
-    }
-
-    char relPath[CERT_MAX_PATH_LEN] = { 0 };
-    int32_t ret = CmRevocationCacheBuildRelPath((uint32_t)type, &key, relPath, sizeof(relPath));
-    if (ret != CM_SUCCESS) {
-        return ret;
-    }
-
-    auto tokenType = AccessTokenKit::GetTokenType(
-        static_cast<AccessTokenID>(OHOS::IPCSkeleton::GetSelfTokenID()));
-    char basePath[CERT_MAX_PATH_LEN] = { 0 };
-    ret = CmRevocationCacheBuildBasePath((int32_t)tokenType, basePath, sizeof(basePath));
-    if (ret != CM_SUCCESS) {
-        return ret;
-    }
-
-    char fullPath[CERT_MAX_PATH_LEN] = { 0 };
-    int n = snprintf(fullPath, sizeof(fullPath), "%s%s", basePath, relPath);
-    if (n < 0 || (uint32_t)n >= sizeof(fullPath)) {
-        return CMR_ERROR_BUFFER_TOO_SMALL;
-    }
-
-    int fd = open(fullPath, O_RDONLY);
+    int fd = open(fullPath, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         return CMR_ERROR_NOT_EXIST;
     }
@@ -135,6 +115,44 @@ extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, e
     return CM_SUCCESS;
 }
 
+extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, enum CmRevocationType type,
+    struct CmBlob *data)
+{
+    if (data == nullptr) {
+        return CMR_ERROR_NULL_POINTER;
+    }
+    data->data = nullptr;
+    data->size = 0;
+
+    if (type != CM_REVOCATION_TYPE_OCSP && type != CM_REVOCATION_TYPE_CRL) {
+        return CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE;
+    }
+    if (CmCheckBlob(&key) != CM_SUCCESS || key.size > CM_REVOCATION_CACHE_KEY_MAX_LEN) {
+        return CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY;
+    }
+
+    char relPath[CERT_MAX_PATH_LEN] = { 0 };
+    int32_t ret = CmRevocationCacheBuildRelPath((uint32_t)type, &key, relPath, sizeof(relPath));
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    auto tokenType = AccessTokenKit::GetTokenType(
+        static_cast<AccessTokenID>(OHOS::IPCSkeleton::GetSelfTokenID()));
+    char basePath[CERT_MAX_PATH_LEN] = { 0 };
+    ret = CmRevocationCacheBuildBasePath(static_cast<int32_t>(tokenType), basePath, sizeof(basePath));
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    char fullPath[CERT_MAX_PATH_LEN] = { 0 };
+    int n = snprintf_s(fullPath, sizeof(fullPath), sizeof(fullPath) - 1, "%s%s", basePath, relPath);
+    if (n < 0) {
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+    return CmReadRevocationCacheFile(fullPath, data);
+}
+
 extern "C" CM_API_EXPORT void CmFreeRevocationCache(struct CmBlob *data)
 {
     if (data != nullptr && data->data != nullptr) {
@@ -153,6 +171,9 @@ extern "C" CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, 
         expireTimeUTC, &clamped);
     if (ret != CM_SUCCESS) {
         return ret;
+    }
+    if (!CmRevocationCacheIsCallerAllowed()) {
+        return CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID;
     }
     return CmClientSaveRevocationCache(&key, static_cast<uint32_t>(type), &data, clamped);
 }

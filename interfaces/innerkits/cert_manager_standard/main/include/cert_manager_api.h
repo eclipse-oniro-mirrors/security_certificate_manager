@@ -142,6 +142,12 @@ CM_API_EXPORT void CmFreeCertManagerConfig(struct CertManagerConfig *config);
 CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, enum CmRevocationType type,
     const struct CmBlob data, int64_t expireTimeUTC);
 
+/*
+ * Get cached revocation data for the given key and type.
+ * The cache is shared across applications and its content is not authenticated
+ * by this component, so the caller MUST cryptographically verify the returned
+ * data (for example an OCSP/CRL signature) before trusting it.
+ */
 CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, enum CmRevocationType type,
     struct CmBlob *data);
 
