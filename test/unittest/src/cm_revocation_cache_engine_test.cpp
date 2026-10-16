@@ -24,23 +24,49 @@
 #include "cert_manager_revocation_cache.h"
 #include "cm_mem.h"
 #include "cm_revocation_cache_rdb.h"
+#include "cm_test_common.h"
 #include "cm_type.h"
 
 using namespace testing::ext;
+using namespace CertmanagerTest;
 
 namespace {
 constexpr int64_t ALREADY_EXPIRED_SEC = 10; /* expire offset already in the past */
+MockNativeToken *g_mockNative = nullptr;
 
 class CmRevocationCacheEngineTest : public testing::Test {
 public:
-    static void SetUpTestCase()
-    {
-        ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
-    }
-    static void TearDownTestCase() {}
-    virtual void SetUp() {}
-    virtual void TearDown() {}
+    static void SetUpTestCase();
+    static void TearDownTestCase();
+    void SetUp();
+    void TearDown();
 };
+
+void CmRevocationCacheEngineTest::SetUpTestCase()
+{
+    /* record the shell token so MockNativeToken can query atm with shell identity */
+    CmTestCommon::SetTestEnvironment(GetSelfTokenID());
+    ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+}
+
+void CmRevocationCacheEngineTest::TearDownTestCase()
+{
+    CmTestCommon::ResetTestEnvironment();
+}
+
+/* CmGetRevocationCache only serves HAP/native callers; mock self as a native process */
+void CmRevocationCacheEngineTest::SetUp()
+{
+    g_mockNative = new (std::nothrow) MockNativeToken("foundation");
+}
+
+void CmRevocationCacheEngineTest::TearDown()
+{
+    if (g_mockNative != nullptr) {
+        delete g_mockNative;
+        g_mockNative = nullptr;
+    }
+}
 } // namespace
 
 TEST_F(CmRevocationCacheEngineTest, SaveThenGetRoundTrip)
