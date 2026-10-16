@@ -15,12 +15,14 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <vector>
 
 #include "cm_revocation_cache.h"
 #include "cert_manager_api.h"
+#include "securec.h"
 
 using namespace testing::ext;
 
@@ -104,4 +106,104 @@ TEST_F(CmRevocationCacheTest, SaveRejectsBadArgs)
         expire), CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
     EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data,
         static_cast<int64_t>(time(nullptr)) - 1), CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
+}
+
+TEST_F(CmRevocationCacheTest, SaveRejectsOversizedKey)
+{
+    uint8_t keyBuf[CM_REVOCATION_CACHE_KEY_MAX_LEN + 1] = { 0 };
+    (void)memset_s(keyBuf, sizeof(keyBuf), 'k', sizeof(keyBuf));
+    struct CmBlob key = { sizeof(keyBuf), keyBuf };
+    uint8_t dataBuf[] = "d";
+    struct CmBlob data = { 1, dataBuf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
+        CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
+}
+
+TEST_F(CmRevocationCacheTest, GetRejectsBadArgs)
+{
+    uint8_t keyBuf[] = "gk";
+    struct CmBlob key = { 2, keyBuf };
+    uint8_t keyBufBig[CM_REVOCATION_CACHE_KEY_MAX_LEN + 1] = { 0 };
+    (void)memset_s(keyBufBig, sizeof(keyBufBig), 'g', sizeof(keyBufBig));
+    struct CmBlob bigKey = { sizeof(keyBufBig), keyBufBig };
+    struct CmBlob out = { 0, nullptr };
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, nullptr), CMR_ERROR_NULL_POINTER);
+    EXPECT_EQ(CmGetRevocationCache(key, static_cast<enum CmRevocationType>(INVALID_REVOCATION_TYPE), &out),
+        CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
+    EXPECT_EQ(CmGetRevocationCache(bigKey, CM_REVOCATION_TYPE_OCSP, &out),
+        CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
+}
+
+TEST_F(CmRevocationCacheTest, GetShellCallerRejected)
+{
+    /* this suite never mocks the caller, so the process keeps its shell identity */
+    uint8_t keyBuf[] = "shkey1";
+    struct CmBlob key = { 6, keyBuf };
+    struct CmBlob out = { 0, nullptr };
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out),
+        CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
+}
+
+TEST_F(CmRevocationCacheTest, SaveShellCallerRejected)
+{
+    /* caller validation rejects the shell identity before any IPC is attempted */
+    uint8_t keyBuf[] = "shkey1";
+    struct CmBlob key = { 6, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
+        CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
+}
+
+TEST_F(CmRevocationCacheTest, BuildRelPathRejectsBadKey)
+{
+    char rel[300] = { 0 };
+    uint8_t keyBuf[CM_REVOCATION_CACHE_KEY_MAX_LEN + 1] = { 0 };
+    (void)memset_s(keyBuf, sizeof(keyBuf), 'k', sizeof(keyBuf));
+    struct CmBlob emptyKey = { 0, keyBuf };
+    struct CmBlob bigKey = { sizeof(keyBuf), keyBuf };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, nullptr, rel, sizeof(rel)),
+        CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &emptyKey, rel, sizeof(rel)),
+        CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &bigKey, rel, sizeof(rel)),
+        CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
+}
+
+TEST_F(CmRevocationCacheTest, BuildRelPathAcceptsMaxKey)
+{
+    uint8_t keyBuf[CM_REVOCATION_CACHE_KEY_MAX_LEN] = { 0 };
+    (void)memset_s(keyBuf, sizeof(keyBuf), 'm', sizeof(keyBuf));
+    struct CmBlob key = { sizeof(keyBuf), keyBuf };
+    char rel[300] = { 0 };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_CRL, &key, rel, sizeof(rel)), CM_SUCCESS);
+    EXPECT_EQ(strncmp(rel, "crl/", strlen("crl/")), 0); /* also covers the crl prefix branch */
+}
+
+TEST_F(CmRevocationCacheTest, BuildRelPathRejectsBadBuffer)
+{
+    uint8_t keyBuf[] = "abc";
+    struct CmBlob key = { 3, keyBuf };
+    char rel[300] = { 0 };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, nullptr, sizeof(rel)),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel, 0),
+        CMR_ERROR_INVALID_ARGUMENT);
+    char small[8] = { 0 };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, small, sizeof(small)),
+        CMR_ERROR_BUFFER_TOO_SMALL);
+}
+
+TEST_F(CmRevocationCacheTest, Int64BeRoundTrip)
+{
+    const int64_t values[] = { 0, 1, -1, INT64_MAX, INT64_MIN };
+    for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+        uint8_t buf[sizeof(int64_t)] = { 0 };
+        CmRevocationCacheEncodeInt64Be(values[i], buf);
+        EXPECT_EQ(CmRevocationCacheDecodeInt64Be(buf), values[i]);
+    }
+    CmRevocationCacheEncodeInt64Be(1, nullptr); /* null output must be a no-op */
+    EXPECT_EQ(CmRevocationCacheDecodeInt64Be(nullptr), 0); /* null input decodes to 0 */
 }

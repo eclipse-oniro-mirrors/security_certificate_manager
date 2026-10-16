@@ -78,3 +78,50 @@ TEST_F(CmRevocationCacheRdbTest, MetaRoundTrip)
     ASSERT_EQ(GetRevocationCacheMeta(&v), CM_SUCCESS);
     EXPECT_EQ(v, 12345);
 }
+
+TEST_F(CmRevocationCacheRdbTest, MetaDeleteThenGetReturnsNotFound)
+{
+    ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+    ASSERT_EQ(SetRevocationCacheMeta(424242), CM_SUCCESS);
+    ASSERT_EQ(DeleteRevocationCacheMeta(), CM_SUCCESS);
+    int64_t v = 0;
+    EXPECT_EQ(GetRevocationCacheMeta(&v), CMR_ERROR_NOT_FOUND);
+}
+
+TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
+{
+    ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+    /* deleting a path that was never inserted must still report success */
+    EXPECT_EQ(DeleteRevocationCacheRecord("ocsp/zz/never-inserted.cache"), CM_SUCCESS);
+}
+
+TEST_F(CmRevocationCacheRdbTest, QueryEmptyTableReturnsNoPaths)
+{
+    ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+    char **paths = nullptr;
+    uint32_t count = 1; /* must be reset to 0 by the query */
+    ASSERT_EQ(QueryAllRevocationCacheFilePaths(&paths, &count), CM_SUCCESS);
+    EXPECT_EQ(count, 0u);
+    EXPECT_EQ(paths, nullptr);
+    FreeRevocationCacheFilePaths(paths, count);
+    uint64_t total = 99; /* must be reset to 0 as well */
+    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    EXPECT_EQ(total, 0u);
+}
+
+TEST_F(CmRevocationCacheRdbTest, InsertDuplicatePathReplaces)
+{
+    ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+    struct RevocationCacheRecord first = { 2000000000LL, "ocsp/dd/dup.cache", 100 };
+    ASSERT_EQ(InsertRevocationCacheRecord(&first), CM_SUCCESS);
+    /* inserting the same path again must replace the row, not duplicate it */
+    struct RevocationCacheRecord second = { 2000000500LL, "ocsp/dd/dup.cache", 200 };
+    ASSERT_EQ(InsertRevocationCacheRecord(&second), CM_SUCCESS);
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    EXPECT_EQ(total, 200u);
+    struct RevocationCacheRecord oldest = { 0 };
+    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&oldest), CM_SUCCESS);
+    EXPECT_EQ(oldest.dataSize, 200u); /* the newest values win */
+    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/dd/dup.cache"), CM_SUCCESS);
+}
