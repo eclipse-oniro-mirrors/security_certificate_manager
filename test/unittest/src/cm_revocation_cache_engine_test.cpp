@@ -119,7 +119,7 @@ static void FixCmDataOwnershipForSa(void)
     (void)nftw("/data/service/el1/public/cert_manager_service", ChownTreeToSa, 16, FTW_PHYS);
 }
 
-/* ---------- FORMAL store helpers (the macro switch only redirects the local store) ---------- */
+/* ---------- FORMAL store helpers (the test build only isolates the local rdb) ---------- */
 
 /* artifacts this run pushed into the FORMAL store through the real SA; flushed in TearDown */
 static std::vector<std::pair<std::string, std::string>> g_formalLeftovers;
@@ -669,8 +669,8 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     ASSERT_FALSE(formalFull.empty()); /* registered: TearDown cleans even on abort */
     ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
 
-    /* the SA persists asynchronously into the FORMAL store: poll the raw file itself
-       (the SDK read path is macro-isolated to the local test store in this build) */
+    /* the SA persists asynchronously into the FORMAL store: verify the raw file
+       itself, including the on-disk big-endian expiry header encoding */
     uint8_t fileBuf[64] = { 0 };
     uint32_t fileLen = 0;
     bool persisted = false;
@@ -707,8 +707,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
         ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
     }
 
-    /* back to native: the FORMAL shared store must hold the HAP-written entry; poll
-       the raw file (the SDK read path is macro-isolated to the local test store) */
+    /* back to native: the FORMAL shared store must hold the HAP-written entry */
     uint8_t fileBuf[64] = { 0 };
     uint32_t fileLen = 0;
     bool persisted = false;
