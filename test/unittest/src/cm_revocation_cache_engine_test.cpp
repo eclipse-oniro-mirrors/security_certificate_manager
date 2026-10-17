@@ -180,7 +180,7 @@ static int64_t DecodeExpireHeader(const uint8_t *buf)
 {
     int64_t expire = 0;
     for (uint32_t i = 0; i < sizeof(int64_t); i++) {
-        expire = (expire << 8) | buf[i];
+        expire = (expire << CHAR_BIT) | buf[i];
     }
     return expire;
 }
@@ -267,7 +267,7 @@ TEST_F(CmRevocationCacheEngineTest, ClampBeyondMaxValid)
     uint8_t keyBuf[] = "k2";
     uint8_t dataBuf[] = "d2";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
-    struct CmBlob data = { 2, dataBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     int64_t far = static_cast<int64_t>(time(nullptr)) + FAR_FUTURE_SEC; /* > 30d cap: clamped, not an error */
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, far), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
@@ -342,8 +342,9 @@ TEST_F(CmRevocationCacheEngineTest, RejectExpireAtNow)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "d";
     struct CmBlob data = { 1, dataBuf };
-    EXPECT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr))), CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
+    int64_t nowSec = static_cast<int64_t>(time(nullptr)); /* expire == now is the reject boundary */
+    EXPECT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, nowSec),
+        CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetExpiredEntryReturnsNotExist)
