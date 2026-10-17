@@ -99,11 +99,38 @@ static int ChownTreeToSa(const char *path, const struct stat *st, int type, stru
     return 0;
 }
 
+static int RemoveTreeEntry(const char *path, const struct stat *st, int type, struct FTW *ftw)
+{
+    (void)st;
+    (void)ftw;
+    if (type == FTW_D || type == FTW_DP) {
+        (void)rmdir(path); /* FTW_DEPTH visits children first, so dirs are empty here */
+    } else {
+        (void)unlink(path);
+    }
+    return 0;
+}
+
 /*
- * On a TDD device the cert manager data tree is usually created first by this root
- * test process, so the pulled-up SA (uid cert_manager_server) cannot open its own
- * rdb database or write its cache directories. Hand the whole data root back to
- * the SA before pulling it up; running as root this is idempotent.
+ * The engine-level cases run in this root process and create the cache
+ * directories (revocation_cache/<type>/<prefix>) with root ownership. The SA
+ * (uid cert_manager_server) then fails its atomic rename with EACCES when
+ * saving through IPC, and chowning the tree back is not permitted for the test
+ * process on device. Deleting is allowed though (same as teardown cleanup), so
+ * drop the whole tree before pulling up the SA and let its own save pipeline
+ * recreate every level with the SA's ownership.
+ */
+static void RemoveRevocationCacheTree(void)
+{
+    (void)nftw(REVOCATION_CACHE_DIR, RemoveTreeEntry, 16, FTW_DEPTH | FTW_PHYS);
+}
+
+/*
+ * Best-effort safety net: hand the formal data root back to the SA in case any
+ * part of it was created by this root process (e.g. on a fresh device). On TDD
+ * devices the shell domain is typically not allowed to chown system data files,
+ * so the cache-tree removal below is the mechanism that actually guarantees the
+ * SA can write; this chown only helps where the policy permits it.
  */
 static void FixCmDataOwnershipForSa(void)
 {
@@ -602,7 +629,9 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
 
 TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
 {
-    /* the FORMAL store may hold root-created leftovers; give it back to the SA first */
+    /* drop the root-owned cache tree so the SA recreates it itself (see helper) */
+    CleanupRevocationCacheState();
+    RemoveRevocationCacheTree();
     FixCmDataOwnershipForSa();
     /* full SDK save chain: param check -> native caller check -> IPC -> SA async save */
     uint8_t keyBuf[] = "sdkkey1";
@@ -637,7 +666,9 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
 
 TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
 {
-    /* the FORMAL store may hold root-created leftovers; give it back to the SA first */
+    /* drop the root-owned cache tree so the SA recreates it itself (see helper) */
+    CleanupRevocationCacheState();
+    RemoveRevocationCacheTree();
     FixCmDataOwnershipForSa();
     /* HAP callers are allowed to save through the SDK as well */
     uint8_t keyBuf[] = "hapkey2";
