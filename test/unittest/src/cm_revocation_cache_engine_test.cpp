@@ -18,6 +18,7 @@
 #include <cstring>
 #include <ctime>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -25,6 +26,7 @@
 #include <ftw.h>
 #include <limits.h>
 #include <pwd.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "cert_manager_api.h"
@@ -32,6 +34,8 @@
 #include "cert_manager_revocation_cache.h"
 #include "cert_manager_storage.h"
 #include "cm_mem.h"
+#include "cm_rdb_config.h"
+#include "cm_rdb_data_manager.h"
 #include "cm_revocation_cache.h"
 #include "cm_revocation_cache_rdb.h"
 #include "cm_test_common.h"
@@ -115,6 +119,84 @@ static void FixCmDataOwnershipForSa(void)
     (void)nftw("/data/service/el1/public/cert_manager_service", ChownTreeToSa, 16, FTW_PHYS);
 }
 
+/* ---------- FORMAL store helpers (the macro switch only redirects the local store) ---------- */
+
+/* artifacts this run pushed into the FORMAL store through the real SA; flushed in TearDown */
+static std::vector<std::pair<std::string, std::string>> g_formalLeftovers;
+
+/*
+ * Compute the FORMAL-store file path of key and register it for TearDown cleanup,
+ * so the SA-written artifact is removed even when the case aborts midway.
+ * Returns the absolute path (empty on failure).
+ */
+static std::string RegisterFormalArtifact(const struct CmBlob *key, uint32_t type)
+{
+    char relPath[512] = { 0 };
+    char full[PATH_MAX] = { 0 };
+    if (CmRevocationCacheBuildRelPath(type, key, relPath, sizeof(relPath)) != CM_SUCCESS ||
+        snprintf_s(full, sizeof(full), sizeof(full) - 1, "%s%s", REVOCATION_CACHE_SERVICE_BASE,
+            relPath) < 0) {
+        return "";
+    }
+    g_formalLeftovers.push_back({ full, relPath });
+    return full;
+}
+
+/* read the whole cache file the SA persisted (8-byte big-endian expiry + payload) */
+static bool ReadFormalCacheFile(const std::string &fullPath, uint8_t *buf, uint32_t bufLen, uint32_t *outLen)
+{
+    FILE *fp = fopen(fullPath.c_str(), "rb");
+    if (fp == nullptr) {
+        return false;
+    }
+    size_t n = fread(buf, 1, bufLen, fp);
+    (void)fclose(fp);
+    if (n < sizeof(int64_t)) {
+        return false;
+    }
+    *outLen = static_cast<uint32_t>(n);
+    return true;
+}
+
+/* decode the 8-byte big-endian expiry header the SA wrote in front of the payload */
+static int64_t DecodeExpireHeader(const uint8_t *buf)
+{
+    int64_t expire = 0;
+    for (uint32_t i = 0; i < sizeof(int64_t); i++) {
+        expire = (expire << 8) | buf[i];
+    }
+    return expire;
+}
+
+/*
+ * Drop the exact row the SA wrote into the FORMAL database for one artifact. Only
+ * the case's own record is deleted; production rows in the shared table are never
+ * touched. If the formal db does not exist the SA persisted nothing: nothing to do.
+ */
+static void CleanupFormalRevocationRecord(const std::string &relPath)
+{
+    struct stat st;
+    if (stat("/data/service/el1/public/cert_manager_service/rdb/cert_manager.db", &st) != 0) {
+        return;
+    }
+    OHOS::Security::CertManager::RdbConfig cfg;
+    cfg.dbPath = "/data/service/el1/public/cert_manager_service/rdb";
+    cfg.dbName = CERT_MANAGER_RDB_NAME;
+    cfg.tableName = REVOCATION_CACHE_TABLE_NAME;
+    OHOS::Security::CertManager::CmRdbDataManager manager(cfg);
+    (void)manager.DeleteData(relPath, COLUMN_FILE_PATH);
+}
+
+/* unlink the FORMAL files and drop their db rows; safe to call repeatedly */
+static void FlushFormalLeftovers()
+{
+    for (const auto &item : g_formalLeftovers) {
+        (void)unlink(item.first.c_str());
+        CleanupFormalRevocationRecord(item.second);
+    }
+    g_formalLeftovers.clear();
+}
+
 class CmRevocationCacheEngineTest : public testing::Test {
 public:
     static void SetUpTestCase();
@@ -138,6 +220,7 @@ void CmRevocationCacheEngineTest::TearDownTestCase()
 /* CmGetRevocationCache only serves HAP/native callers; mock self as a native process */
 void CmRevocationCacheEngineTest::SetUp()
 {
+    FlushFormalLeftovers(); /* belt and braces: formal artifacts a previous case left behind */
     CleanupRevocationCacheState(); /* clear leftovers from previous runs/cases */
     g_mockNative = new (std::nothrow) MockNativeToken("foundation");
 }
@@ -145,6 +228,7 @@ void CmRevocationCacheEngineTest::SetUp()
 void CmRevocationCacheEngineTest::TearDown()
 {
     CleanupRevocationCacheState(); /* remove records/files/meta created by this case */
+    FlushFormalLeftovers(); /* remove FORMAL-store artifacts saved through the real SA */
     if (g_mockNative != nullptr) {
         delete g_mockNative;
         g_mockNative = nullptr;
@@ -573,7 +657,7 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
 
 TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
 {
-    /* data files were created by this root process; give them back to the SA first */
+    /* the FORMAL store may hold root-created leftovers; give it back to the SA first */
     FixCmDataOwnershipForSa();
     /* full SDK save chain: param check -> native caller check -> IPC -> SA async save */
     uint8_t keyBuf[] = "sdkkey1";
@@ -581,27 +665,34 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    std::string formalFull = RegisterFormalArtifact(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(formalFull.empty()); /* registered: TearDown cleans even on abort */
     ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
 
-    /* the SA persists asynchronously: poll until the entry is readable (bounded ~10s) */
-    struct CmBlob out = { 0, nullptr };
-    int32_t ret = CMR_ERROR_NOT_EXIST;
-    for (int round = 0; round < 100 && ret != CM_SUCCESS; round++) {
-        ret = CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out);
-        if (ret != CM_SUCCESS) {
+    /* the SA persists asynchronously into the FORMAL store: poll the raw file itself
+       (the SDK read path is macro-isolated to the local test store in this build) */
+    uint8_t fileBuf[64] = { 0 };
+    uint32_t fileLen = 0;
+    bool persisted = false;
+    for (int round = 0; round < 100 && !persisted; round++) {
+        persisted = ReadFormalCacheFile(formalFull, fileBuf, sizeof(fileBuf), &fileLen);
+        if (!persisted) {
             usleep(100 * 1000);
         }
     }
-    ASSERT_EQ(ret, CM_SUCCESS);
+    ASSERT_TRUE(persisted);
     const uint8_t expectDer[] = "SDK-DER";
-    ASSERT_EQ(out.size, sizeof(expectDer) - 1);
-    EXPECT_EQ(memcmp(out.data, expectDer, sizeof(expectDer) - 1), 0);
-    CmFreeRevocationCache(&out);
+    ASSERT_EQ(fileLen, sizeof(expectDer) - 1 + sizeof(int64_t));
+    /* 8-byte big-endian expiry header in front of the payload, still in the future */
+    int64_t storedExpire = DecodeExpireHeader(fileBuf);
+    EXPECT_GT(storedExpire, static_cast<int64_t>(time(nullptr)));
+    EXPECT_LE(storedExpire, expire + 5);
+    EXPECT_EQ(memcmp(fileBuf + sizeof(int64_t), expectDer, sizeof(expectDer) - 1), 0);
 }
 
 TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
 {
-    /* data files were created by this root process; give them back to the SA first */
+    /* the FORMAL store may hold root-created leftovers; give it back to the SA first */
     FixCmDataOwnershipForSa();
     /* HAP callers are allowed to save through the SDK as well */
     uint8_t keyBuf[] = "hapkey2";
@@ -609,23 +700,29 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    std::string formalFull = RegisterFormalArtifact(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(formalFull.empty());
     {
         MockHapToken mockHap;
         ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
     }
 
-    /* back to native: the shared service store must contain the HAP-written entry */
-    struct CmBlob out = { 0, nullptr };
-    int32_t ret = CMR_ERROR_NOT_EXIST;
-    for (int round = 0; round < 100 && ret != CM_SUCCESS; round++) {
-        ret = CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out);
-        if (ret != CM_SUCCESS) {
+    /* back to native: the FORMAL shared store must hold the HAP-written entry; poll
+       the raw file (the SDK read path is macro-isolated to the local test store) */
+    uint8_t fileBuf[64] = { 0 };
+    uint32_t fileLen = 0;
+    bool persisted = false;
+    for (int round = 0; round < 100 && !persisted; round++) {
+        persisted = ReadFormalCacheFile(formalFull, fileBuf, sizeof(fileBuf), &fileLen);
+        if (!persisted) {
             usleep(100 * 1000);
         }
     }
-    ASSERT_EQ(ret, CM_SUCCESS);
+    ASSERT_TRUE(persisted);
     const uint8_t expectDer[] = "HAP-DER";
-    ASSERT_EQ(out.size, sizeof(expectDer) - 1);
-    EXPECT_EQ(memcmp(out.data, expectDer, sizeof(expectDer) - 1), 0);
-    CmFreeRevocationCache(&out);
+    ASSERT_EQ(fileLen, sizeof(expectDer) - 1 + sizeof(int64_t));
+    int64_t storedExpire = DecodeExpireHeader(fileBuf);
+    EXPECT_GT(storedExpire, static_cast<int64_t>(time(nullptr)));
+    EXPECT_LE(storedExpire, expire + 5);
+    EXPECT_EQ(memcmp(fileBuf + sizeof(int64_t), expectDer, sizeof(expectDer) - 1), 0);
 }

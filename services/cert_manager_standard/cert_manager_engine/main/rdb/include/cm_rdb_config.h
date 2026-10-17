@@ -50,7 +50,12 @@ namespace Security {
 namespace CertManager {
 struct RdbConfig {
     int32_t version = RDB_VERSION_CURRENT;
+#ifdef CM_REVOCATION_TEST_RDB_PATH
+    /* test builds inject an isolated db dir so the test process never touches the SA store */
+    std::string dbPath = CM_REVOCATION_TEST_RDB_PATH;
+#else
     std::string dbPath = "/data/service/el1/public/cert_manager_service/rdb";
+#endif
     std::string dbName;
     std::string tableName;
     std::string createTableSql;

@@ -58,7 +58,11 @@ extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenTyp
     if (tokenType == static_cast<int32_t>(ATokenTypeEnum::TOKEN_HAP)) {
         base = REVOCATION_CACHE_SANDBOX_BASE;
     } else if (tokenType == static_cast<int32_t>(ATokenTypeEnum::TOKEN_NATIVE)) {
+#ifdef CM_REVOCATION_TEST_CACHE_DIR
+        base = CM_REVOCATION_TEST_CACHE_DIR; /* test builds read the isolated store */
+#else
         base = REVOCATION_CACHE_SERVICE_BASE;
+#endif
     } else {
         return CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID;  /* TOKEN_SHELL / unknown rejected */
     }

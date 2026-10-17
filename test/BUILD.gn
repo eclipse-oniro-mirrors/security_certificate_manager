@@ -95,11 +95,18 @@ ohos_unittest("cm_sdk_test") {
     "eventhandler:libeventhandler",
     "googletest:gtest",
     "openssl:libcrypto_shared",
+    "relational_store:native_rdb",
     "selinux_adapter:librestorecon",
   ]
   resource_config_file = "./resource/certificate_manager/ohos_test.xml"
 
-  defines = []
+  # isolate the revocation cache store (db + files) of the non-IPC test cases
+  # from the formal SA store; the two SA round-trip cases keep using the
+  # formal store and clean up their own artifacts
+  defines = [
+    "CM_REVOCATION_TEST_RDB_PATH=\"/data/local/tmp/cm_test_rdb\"",
+    "CM_REVOCATION_TEST_CACHE_DIR=\"/data/local/tmp/cm_test_cache/\"",
+  ]
   if (certificate_manager_deps_huks_enabled == "software") {
     defines += [ "DEPS_HKS_UNTRUSTED_RUNNING_ENV" ]
   }

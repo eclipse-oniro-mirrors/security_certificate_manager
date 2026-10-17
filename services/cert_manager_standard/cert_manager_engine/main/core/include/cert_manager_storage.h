@@ -143,7 +143,12 @@ int32_t CmGetCertBackupFilePath(const X509 *userCertX509, uint32_t userId, char 
 }
 #endif
 
+/* test builds inject an isolated cache dir so the test process never touches the SA store */
+#ifdef CM_REVOCATION_TEST_CACHE_DIR
+#define REVOCATION_CACHE_DIR               CM_REVOCATION_TEST_CACHE_DIR
+#else
 #define REVOCATION_CACHE_DIR               REVOCATION_CACHE_SERVICE_BASE
+#endif
 #define REVOCATION_CACHE_MAX_TOTAL_BYTES   (50 * 1024 * 1024)
 #define REVOCATION_CACHE_CLEAN_INTERVAL_SEC (24 * 3600)
 
