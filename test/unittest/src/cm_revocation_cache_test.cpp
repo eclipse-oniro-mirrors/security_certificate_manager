@@ -29,8 +29,12 @@ using namespace testing::ext;
 
 namespace {
 constexpr uint32_t INVALID_REVOCATION_TYPE = 99;
-constexpr uint32_t SHA256_HEX_LEN = 64; /* sha256 hex digest length */
-constexpr uint32_t HASH_PREFIX_LEN = 2;  /* sub dir prefix length */
+constexpr uint32_t SHA256_HEX_LEN = 64;    /* sha256 hex digest length */
+constexpr uint32_t HASH_PREFIX_LEN = 2;    /* sub dir prefix length */
+constexpr int64_t ONE_HOUR_SEC = 3600;     /* expire offset: one hour in the future */
+constexpr uint32_t PATH_BUF_SIZE = 300;    /* comfortably above any built base/rel path */
+constexpr uint32_t TOO_SMALL_BUF_SIZE = 8; /* deliberately smaller than any built path */
+constexpr uint32_t HEAP_BLOB_LEN = 8;      /* arbitrary small heap blob for the free test */
 }
 
 class CmRevocationCacheTest : public testing::Test {
@@ -39,8 +43,8 @@ class CmRevocationCacheTest : public testing::Test {
 TEST_F(CmRevocationCacheTest, BuildRelPathRejectsInvalidType)
 {
     uint8_t keyBuf[] = "abc";
-    struct CmBlob key = { 3, keyBuf };
-    char rel[300] = {0};
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    char rel[PATH_BUF_SIZE] = {0};
     EXPECT_EQ(CmRevocationCacheBuildRelPath(INVALID_REVOCATION_TYPE, &key, rel, sizeof(rel)),
         CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
     /* valid types must still build a path: guards against over-rejecting */
@@ -53,9 +57,9 @@ TEST_F(CmRevocationCacheTest, BuildRelPathRejectsInvalidType)
 TEST_F(CmRevocationCacheTest, BuildRelPathStableHashAndPrefix)
 {
     uint8_t keyBuf[] = "abc";
-    struct CmBlob key = { 3, keyBuf };
-    char rel1[300] = {0};
-    char rel2[300] = {0};
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    char rel1[PATH_BUF_SIZE] = {0};
+    char rel2[PATH_BUF_SIZE] = {0};
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel1, sizeof(rel1)), CM_SUCCESS);
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel2, sizeof(rel2)), CM_SUCCESS);
     EXPECT_STREQ(rel1, rel2);
@@ -68,7 +72,7 @@ TEST_F(CmRevocationCacheTest, BuildRelPathStableHashAndPrefix)
 
 TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
 {
-    char base[300] = {0};
+    char base[PATH_BUF_SIZE] = {0};
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, base, sizeof(base)), CM_SUCCESS);
     EXPECT_STREQ(base, REVOCATION_CACHE_SANDBOX_BASE);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, base, sizeof(base)), CM_SUCCESS);
@@ -78,7 +82,7 @@ TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
     EXPECT_EQ(CmRevocationCacheBuildBasePath(INVALID_REVOCATION_TYPE, base, sizeof(base)),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
 
-    char small[8] = {0};
+    char small[TOO_SMALL_BUF_SIZE] = {0};
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, small, sizeof(small)),
         CMR_ERROR_BUFFER_TOO_SMALL);
 }
@@ -90,7 +94,7 @@ TEST_F(CmRevocationCacheTest, FreeNullAndRepeatSafe)
     CmFreeRevocationCache(&empty); /* no buffer attached: must be a no-op */
 
     /* free a heap buffer: the blob must be reset so a repeated free stays safe */
-    struct CmBlob out = { 8, static_cast<uint8_t *>(CmMalloc(8)) };
+    struct CmBlob out = { HEAP_BLOB_LEN, static_cast<uint8_t *>(CmMalloc(HEAP_BLOB_LEN)) };
     ASSERT_NE(out.data, nullptr);
     CmFreeRevocationCache(&out);
     EXPECT_EQ(out.data, nullptr);
@@ -101,10 +105,10 @@ TEST_F(CmRevocationCacheTest, FreeNullAndRepeatSafe)
 TEST_F(CmRevocationCacheTest, SaveRejectsOversizedData)
 {
     uint8_t keyBuf[] = "abc";
-    struct CmBlob key = { 3, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     std::vector<uint8_t> big(CM_REVOCATION_CACHE_DATA_MAX_LEN + 1, 1);
     struct CmBlob data = { static_cast<uint32_t>(big.size()), big.data() };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
         CMR_ERROR_INVALID_ARGUMENT_CACHE_DATA);
 }
@@ -113,9 +117,9 @@ TEST_F(CmRevocationCacheTest, SaveRejectsBadArgs)
 {
     uint8_t keyBuf[] = "abc";
     uint8_t dataBuf[] = "d";
-    struct CmBlob key = { 3, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmSaveRevocationCache(key, static_cast<enum CmRevocationType>(INVALID_REVOCATION_TYPE), data,
         expire), CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
     EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data,
@@ -129,7 +133,7 @@ TEST_F(CmRevocationCacheTest, SaveRejectsOversizedKey)
     struct CmBlob key = { sizeof(keyBuf), keyBuf };
     uint8_t dataBuf[] = "d";
     struct CmBlob data = { 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
         CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
 }
@@ -137,7 +141,7 @@ TEST_F(CmRevocationCacheTest, SaveRejectsOversizedKey)
 TEST_F(CmRevocationCacheTest, GetRejectsBadArgs)
 {
     uint8_t keyBuf[] = "gk";
-    struct CmBlob key = { 2, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t keyBufBig[CM_REVOCATION_CACHE_KEY_MAX_LEN + 1] = { 0 };
     (void)memset_s(keyBufBig, sizeof(keyBufBig), 'g', sizeof(keyBufBig));
     struct CmBlob bigKey = { sizeof(keyBufBig), keyBufBig };
@@ -153,7 +157,7 @@ TEST_F(CmRevocationCacheTest, GetShellCallerRejected)
 {
     /* this suite never mocks the caller, so the process keeps its shell identity */
     uint8_t keyBuf[] = "shkey1";
-    struct CmBlob key = { 6, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
@@ -165,17 +169,17 @@ TEST_F(CmRevocationCacheTest, SaveShellCallerRejected)
 {
     /* caller validation rejects the shell identity before any IPC is attempted */
     uint8_t keyBuf[] = "shkey1";
-    struct CmBlob key = { 6, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
     struct CmBlob data = { 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
 }
 
 TEST_F(CmRevocationCacheTest, BuildRelPathRejectsBadKey)
 {
-    char rel[300] = { 0 };
+    char rel[PATH_BUF_SIZE] = { 0 };
     uint8_t keyBuf[CM_REVOCATION_CACHE_KEY_MAX_LEN + 1] = { 0 };
     (void)memset_s(keyBuf, sizeof(keyBuf), 'k', sizeof(keyBuf));
     struct CmBlob emptyKey = { 0, keyBuf };
@@ -193,7 +197,7 @@ TEST_F(CmRevocationCacheTest, BuildRelPathAcceptsMaxKey)
     uint8_t keyBuf[CM_REVOCATION_CACHE_KEY_MAX_LEN] = { 0 };
     (void)memset_s(keyBuf, sizeof(keyBuf), 'm', sizeof(keyBuf));
     struct CmBlob key = { sizeof(keyBuf), keyBuf };
-    char rel[300] = { 0 };
+    char rel[PATH_BUF_SIZE] = { 0 };
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_CRL, &key, rel, sizeof(rel)), CM_SUCCESS);
     EXPECT_EQ(strncmp(rel, "crl/", strlen("crl/")), 0); /* also covers the crl prefix branch */
 }
@@ -201,13 +205,13 @@ TEST_F(CmRevocationCacheTest, BuildRelPathAcceptsMaxKey)
 TEST_F(CmRevocationCacheTest, BuildRelPathRejectsBadBuffer)
 {
     uint8_t keyBuf[] = "abc";
-    struct CmBlob key = { 3, keyBuf };
-    char rel[300] = { 0 };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    char rel[PATH_BUF_SIZE] = { 0 };
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, nullptr, sizeof(rel)),
         CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel, 0),
         CMR_ERROR_INVALID_ARGUMENT);
-    char small[8] = { 0 };
+    char small[TOO_SMALL_BUF_SIZE] = { 0 };
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, small, sizeof(small)),
         CMR_ERROR_BUFFER_TOO_SMALL);
 }
@@ -226,13 +230,13 @@ TEST_F(CmRevocationCacheTest, Int64BeRoundTrip)
 
 TEST_F(CmRevocationCacheTest, BuildBasePathRejectsBadBuffer)
 {
-    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, nullptr, 300),
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, nullptr, PATH_BUF_SIZE),
         CMR_ERROR_INVALID_ARGUMENT);
-    char base[300] = { 0 };
+    char base[PATH_BUF_SIZE] = { 0 };
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, base, 0),
         CMR_ERROR_INVALID_ARGUMENT);
     /* the guard applies to every allowed token type */
-    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, nullptr, 300),
+    EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, nullptr, PATH_BUF_SIZE),
         CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, base, 0),
         CMR_ERROR_INVALID_ARGUMENT);
@@ -241,10 +245,10 @@ TEST_F(CmRevocationCacheTest, BuildBasePathRejectsBadBuffer)
 TEST_F(CmRevocationCacheTest, ValidateSaveParamsRejectsNullClampOut)
 {
     uint8_t keyBuf[] = "abc";
-    struct CmBlob key = { 3, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "d";
     struct CmBlob data = { 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmRevocationCacheValidateSaveParams(&key, CM_REVOCATION_TYPE_OCSP, &data, expire, nullptr),
         CMR_ERROR_INVALID_ARGUMENT);
     int64_t clamped = 0;

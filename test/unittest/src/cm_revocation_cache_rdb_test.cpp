@@ -25,6 +25,16 @@
 using namespace testing::ext;
 
 namespace {
+constexpr int64_t FIXED_EXPIRE_TIME_UTC = 2000000000LL; /* fixed future timestamp: the value is irrelevant */
+constexpr int64_t LATER_EXPIRE_TIME_UTC = 2000000500LL; /* strictly later than FIXED_EXPIRE_TIME_UTC */
+constexpr uint64_t RECORD_DATA_SIZE = 1234;             /* arbitrary data size of a fake record */
+constexpr uint64_t DUP_FIRST_DATA_SIZE = 100;           /* first write of the duplicate-path case */
+constexpr uint64_t DUP_SECOND_DATA_SIZE = 200;          /* replacement write: its values must win */
+constexpr int64_t META_VALUE_FIRST = 12345;             /* arbitrary meta value for the round trip */
+constexpr int64_t META_VALUE_BEFORE_DELETE = 424242;    /* meta value stored right before deleting */
+constexpr int64_t META_VALUE_REWRITE = 999;             /* proves the meta row is re-created */
+constexpr uint64_t NON_ZERO_SENTINEL_SIZE = 77;         /* must be reset to 0 by the query */
+
 /* remove all revocation cache records, files and meta left by this or previous test runs */
 void CleanupRevocationCacheState()
 {
@@ -61,11 +71,11 @@ public:
 TEST_F(CmRevocationCacheRdbTest, CreateInsertQueryDelete)
 {
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
-    struct RevocationCacheRecord r = { 2000000000LL, "ocsp/ab/abcd.cache", 1234 };
+    struct RevocationCacheRecord r = { FIXED_EXPIRE_TIME_UTC, "ocsp/ab/abcd.cache", RECORD_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
-    EXPECT_GE(total, 1234u);
+    EXPECT_GE(total, RECORD_DATA_SIZE);
     ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/ab/abcd.cache"), CM_SUCCESS);
 }
 
@@ -74,22 +84,22 @@ TEST_F(CmRevocationCacheRdbTest, MetaRoundTrip)
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
     int64_t v = 0;
     EXPECT_EQ(GetRevocationCacheMeta(&v), CMR_ERROR_NOT_FOUND);
-    ASSERT_EQ(SetRevocationCacheMeta(12345), CM_SUCCESS);
+    ASSERT_EQ(SetRevocationCacheMeta(META_VALUE_FIRST), CM_SUCCESS);
     ASSERT_EQ(GetRevocationCacheMeta(&v), CM_SUCCESS);
-    EXPECT_EQ(v, 12345);
+    EXPECT_EQ(v, META_VALUE_FIRST);
 }
 
 TEST_F(CmRevocationCacheRdbTest, MetaDeleteThenGetReturnsNotFound)
 {
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
-    ASSERT_EQ(SetRevocationCacheMeta(424242), CM_SUCCESS);
+    ASSERT_EQ(SetRevocationCacheMeta(META_VALUE_BEFORE_DELETE), CM_SUCCESS);
     ASSERT_EQ(DeleteRevocationCacheMeta(), CM_SUCCESS);
     int64_t v = 0;
     EXPECT_EQ(GetRevocationCacheMeta(&v), CMR_ERROR_NOT_FOUND);
     /* meta can be written again after deletion: the row is re-created */
-    ASSERT_EQ(SetRevocationCacheMeta(999), CM_SUCCESS);
+    ASSERT_EQ(SetRevocationCacheMeta(META_VALUE_REWRITE), CM_SUCCESS);
     ASSERT_EQ(GetRevocationCacheMeta(&v), CM_SUCCESS);
-    EXPECT_EQ(v, 999);
+    EXPECT_EQ(v, META_VALUE_REWRITE);
 }
 
 TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
@@ -99,11 +109,11 @@ TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
     EXPECT_EQ(DeleteRevocationCacheRecord("ocsp/zz/never-inserted.cache"), CM_SUCCESS);
 
     /* deleting an already deleted record stays successful and leaves nothing behind */
-    struct RevocationCacheRecord r = { 2000000000LL, "ocsp/zz/twice.cache", 8 };
+    struct RevocationCacheRecord r = { FIXED_EXPIRE_TIME_UTC, "ocsp/zz/twice.cache", RECORD_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
     ASSERT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
     EXPECT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
-    uint64_t total = 77; /* must be reset to 0: the table is empty again */
+    uint64_t total = NON_ZERO_SENTINEL_SIZE; /* must be reset to 0: the table is empty again */
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
     EXPECT_EQ(total, 0u);
 }
@@ -117,7 +127,7 @@ TEST_F(CmRevocationCacheRdbTest, QueryEmptyTableReturnsNoPaths)
     EXPECT_EQ(count, 0u);
     EXPECT_EQ(paths, nullptr);
     FreeRevocationCacheFilePaths(paths, count);
-    uint64_t total = 99; /* must be reset to 0 as well */
+    uint64_t total = NON_ZERO_SENTINEL_SIZE; /* must be reset to 0 as well */
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
     EXPECT_EQ(total, 0u);
 }
@@ -143,16 +153,16 @@ TEST_F(CmRevocationCacheRdbTest, QueryRejectsNullArgs)
 TEST_F(CmRevocationCacheRdbTest, InsertDuplicatePathReplaces)
 {
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
-    struct RevocationCacheRecord first = { 2000000000LL, "ocsp/dd/dup.cache", 100 };
+    struct RevocationCacheRecord first = { FIXED_EXPIRE_TIME_UTC, "ocsp/dd/dup.cache", DUP_FIRST_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&first), CM_SUCCESS);
     /* inserting the same path again must replace the row, not duplicate it */
-    struct RevocationCacheRecord second = { 2000000500LL, "ocsp/dd/dup.cache", 200 };
+    struct RevocationCacheRecord second = { LATER_EXPIRE_TIME_UTC, "ocsp/dd/dup.cache", DUP_SECOND_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&second), CM_SUCCESS);
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
-    EXPECT_EQ(total, 200u);
+    EXPECT_EQ(total, DUP_SECOND_DATA_SIZE);
     struct RevocationCacheRecord oldest = { 0 };
     ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&oldest), CM_SUCCESS);
-    EXPECT_EQ(oldest.dataSize, 200u); /* the newest values win */
+    EXPECT_EQ(oldest.dataSize, DUP_SECOND_DATA_SIZE); /* the newest values win */
     ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/dd/dup.cache"), CM_SUCCESS);
 }

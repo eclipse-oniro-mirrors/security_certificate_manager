@@ -44,6 +44,20 @@ using namespace CertmanagerTest;
 
 namespace {
 constexpr int64_t ALREADY_EXPIRED_SEC = 10; /* expire offset already in the past */
+constexpr int64_t ONE_HOUR_SEC = 3600;      /* expire offset: one hour in the future */
+constexpr int64_t FAR_FUTURE_SEC = 100LL * 24 * 3600; /* beyond the 30d cap: clamped, not rejected */
+constexpr int64_t OLDER_EXPIRE_SEC = 60;    /* expire earlier than the new entry, still in the future */
+constexpr int64_t EXPIRE_TOLERANCE_SEC = 5; /* slack between the requested and the stored expire */
+constexpr uint32_t REL_PATH_BUF_SIZE = 512; /* comfortably above any built rel path */
+constexpr uint32_t FILE_READ_BUF_SIZE = 64; /* 8-byte header + payload of a persisted file */
+constexpr uint32_t TINY_FILE_LEN = 4;       /* deliberately below the 8-byte expire header */
+constexpr uint32_t HASH_PREFIX_LEN = 2;     /* cache sub-directory prefix length */
+constexpr uint32_t SHA256_HEX_LEN = 64;     /* sha256 hex digest length */
+constexpr int NFTW_MAX_OPEN_FDS = 16;       /* max fds nftw may keep open while walking */
+constexpr int POLL_MAX_ROUNDS = 100;        /* bounded poll rounds for the async persistence */
+constexpr useconds_t POLL_INTERVAL_USEC = 100 * 1000; /* 100ms between two poll rounds */
+constexpr uint32_t ASYNC_KEY_BUF_LEN = 8;   /* room for the short async test keys */
+constexpr uint64_t EXPIRED_RECORD_DATA_SIZE = 100;    /* dataSize of the fake expired record */
 MockNativeToken *g_mockNative = nullptr;
 
 /* remove all revocation cache records, files and meta left by this or previous test runs */
@@ -80,7 +94,7 @@ static int WriteTestFile(const char *fullPath, const uint8_t *buf, uint32_t len)
 /* build the absolute cache file path of key so tests can craft raw cache files */
 static int BuildCacheFullPath(const struct CmBlob *key, uint32_t type, char *fullPath, uint32_t len)
 {
-    char relPath[512] = { 0 };
+    char relPath[REL_PATH_BUF_SIZE] = { 0 };
     if (CmRevocationCacheBuildRelPath(type, key, relPath, sizeof(relPath)) != CM_SUCCESS) {
         return -1;
     }
@@ -122,7 +136,7 @@ static int RemoveTreeEntry(const char *path, const struct stat *st, int type, st
  */
 static void RemoveRevocationCacheTree(void)
 {
-    (void)nftw(REVOCATION_CACHE_DIR, RemoveTreeEntry, 16, FTW_DEPTH | FTW_PHYS);
+    (void)nftw(REVOCATION_CACHE_DIR, RemoveTreeEntry, NFTW_MAX_OPEN_FDS, FTW_DEPTH | FTW_PHYS);
 }
 
 /*
@@ -140,7 +154,7 @@ static void FixCmDataOwnershipForSa(void)
     }
     g_saDataUid = sa->pw_uid;
     g_saDataGid = sa->pw_gid;
-    (void)nftw("/data/service/el1/public/cert_manager_service", ChownTreeToSa, 16, FTW_PHYS);
+    (void)nftw("/data/service/el1/public/cert_manager_service", ChownTreeToSa, NFTW_MAX_OPEN_FDS, FTW_PHYS);
 }
 
 /* ---------- helpers for verifying the SA-persisted formal store ---------- */
@@ -212,9 +226,9 @@ TEST_F(CmRevocationCacheEngineTest, SaveThenGetRoundTrip)
 {
     uint8_t keyBuf[] = "key1";
     uint8_t dataBuf[] = "DER";
-    struct CmBlob key = { 4, keyBuf };
-    struct CmBlob data = { 3, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
     ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
@@ -227,7 +241,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveThenGetRoundTrip)
 TEST_F(CmRevocationCacheEngineTest, GetMissingKeyReturnsNotExist)
 {
     uint8_t keyBuf[] = "nokey00";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_CRL, &out), CMR_ERROR_NOT_EXIST);
     EXPECT_EQ(out.data, nullptr); /* out params must stay clean on failure */
@@ -252,9 +266,9 @@ TEST_F(CmRevocationCacheEngineTest, ClampBeyondMaxValid)
 {
     uint8_t keyBuf[] = "k2";
     uint8_t dataBuf[] = "d2";
-    struct CmBlob key = { 2, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { 2, dataBuf };
-    int64_t far = static_cast<int64_t>(time(nullptr)) + 100LL * 24 * 3600; /* > 30d → clamp, not error */
+    int64_t far = static_cast<int64_t>(time(nullptr)) + FAR_FUTURE_SEC; /* > 30d cap: clamped, not an error */
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, far), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
     ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
@@ -266,10 +280,10 @@ TEST_F(CmRevocationCacheEngineTest, ResaveSameKeyLastWriteWins)
     uint8_t keyBuf[] = "k3";
     uint8_t d1Buf[] = "AAA";
     uint8_t d2Buf[] = "BBB";
-    struct CmBlob key = { 2, keyBuf };
-    struct CmBlob d1 = { 3, d1Buf };
-    struct CmBlob d2 = { 3, d2Buf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    struct CmBlob d1 = { sizeof(d1Buf) - 1, d1Buf };
+    struct CmBlob d2 = { sizeof(d2Buf) - 1, d2Buf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &d1, expire), CM_SUCCESS);
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &d2, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
@@ -286,7 +300,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveRejectsNullArgs)
     uint8_t dataBuf[] = "d";
     struct CmBlob key = { 1, keyBuf };
     struct CmBlob data = { 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmServiceSaveRevocationCache(nullptr, CM_REVOCATION_TYPE_OCSP, &data, expire),
         CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, nullptr, expire),
@@ -300,7 +314,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveRejectsOversizedKey)
     struct CmBlob key = { sizeof(keyBuf), keyBuf };
     uint8_t dataBuf[] = "d";
     struct CmBlob data = { 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire),
         CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
 }
@@ -312,7 +326,7 @@ TEST_F(CmRevocationCacheEngineTest, KeyMaxLenRoundTrip)
     struct CmBlob key = { sizeof(keyBuf), keyBuf };
     uint8_t dataBuf[] = "DER-MAXKEY";
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
     ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
@@ -325,7 +339,7 @@ TEST_F(CmRevocationCacheEngineTest, KeyMaxLenRoundTrip)
 TEST_F(CmRevocationCacheEngineTest, RejectExpireAtNow)
 {
     uint8_t keyBuf[] = "kn";
-    struct CmBlob key = { 2, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "d";
     struct CmBlob data = { 1, dataBuf };
     EXPECT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
@@ -335,17 +349,17 @@ TEST_F(CmRevocationCacheEngineTest, RejectExpireAtNow)
 TEST_F(CmRevocationCacheEngineTest, GetExpiredEntryReturnsNotExist)
 {
     uint8_t keyBuf[] = "expkey1";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "DER";
-    struct CmBlob data = { 3, dataBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     /* overwrite the header with an already expired timestamp */
     char full[PATH_MAX] = { 0 };
     ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
-    uint8_t payload[sizeof(int64_t) + 3] = { 0 };
-    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC, payload);
     const uint8_t der[] = "DER";
+    uint8_t payload[sizeof(int64_t) + sizeof(der) - 1] = { 0 };
+    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC, payload);
     (void)memcpy_s(payload + sizeof(int64_t), sizeof(payload) - sizeof(int64_t), der, sizeof(der) - 1);
     ASSERT_EQ(WriteTestFile(full, payload, sizeof(payload)), 0);
     struct CmBlob out = { 0, nullptr };
@@ -355,16 +369,16 @@ TEST_F(CmRevocationCacheEngineTest, GetExpiredEntryReturnsNotExist)
 TEST_F(CmRevocationCacheEngineTest, GetHeaderOnlyFileReturnsError)
 {
     uint8_t keyBuf[] = "hdrkey1";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "DER";
-    struct CmBlob data = { 3, dataBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     char full[PATH_MAX] = { 0 };
     ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
     /* only the 8-byte header: der length would be 0 and must be rejected */
     uint8_t headerOnly[sizeof(int64_t)] = { 0 };
-    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + 3600, headerOnly);
+    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, headerOnly);
     ASSERT_EQ(WriteTestFile(full, headerOnly, sizeof(headerOnly)), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
@@ -373,14 +387,14 @@ TEST_F(CmRevocationCacheEngineTest, GetHeaderOnlyFileReturnsError)
 TEST_F(CmRevocationCacheEngineTest, GetTinyFileReturnsNotExist)
 {
     uint8_t keyBuf[] = "tinyky1";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "DER";
-    struct CmBlob data = { 3, dataBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     char full[PATH_MAX] = { 0 };
     ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
-    uint8_t tiny[4] = { 1, 2, 3, 4 }; /* smaller than the 8-byte expire header */
+    uint8_t tiny[TINY_FILE_LEN] = { 0 }; /* smaller than the 8-byte expire header */
     ASSERT_EQ(WriteTestFile(full, tiny, sizeof(tiny)), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
@@ -389,16 +403,16 @@ TEST_F(CmRevocationCacheEngineTest, GetTinyFileReturnsNotExist)
 TEST_F(CmRevocationCacheEngineTest, GetOversizedFileReturnsError)
 {
     uint8_t keyBuf[] = "bigkey1";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "DER";
-    struct CmBlob data = { 3, dataBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     char full[PATH_MAX] = { 0 };
     ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
     /* header plus data larger than MAX_OUT_BLOB_SIZE must be rejected, not allocated */
     std::vector<uint8_t> big(sizeof(int64_t) + MAX_OUT_BLOB_SIZE + 1, 'x');
-    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + 3600, big.data());
+    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, big.data());
     ASSERT_EQ(WriteTestFile(full, big.data(), static_cast<uint32_t>(big.size())), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
@@ -438,11 +452,11 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
 TEST_F(CmRevocationCacheEngineTest, WriteAtomicPersistsContent)
 {
     uint8_t keyBuf[] = "wackey1";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
     struct CmBlob data = { 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     /* reuse the existing directory layout and write through the raw atomic API */
     char full[PATH_MAX] = { 0 };
     ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
@@ -451,7 +465,7 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicPersistsContent)
     ASSERT_EQ(CmRevocationCacheWriteAtomic(rel.c_str(), body, sizeof(body) - 1), CM_SUCCESS);
     FILE *fp = fopen(full, "rb");
     ASSERT_NE(fp, nullptr);
-    uint8_t readBack[32] = { 0 };
+    uint8_t readBack[sizeof(body) - 1] = { 0 }; /* exactly the body length: the read must fill it */
     size_t n = fread(readBack, 1, sizeof(readBack), fp);
     (void)fclose(fp);
     EXPECT_EQ(n, sizeof(body) - 1);
@@ -465,16 +479,16 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesExpiredRecord)
     expired.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC;
     const char *expiredRel = "ocsp/ee/expiredfake.cache";
     (void)strncpy_s(expired.filePath, sizeof(expired.filePath), expiredRel, strlen(expiredRel));
-    expired.dataSize = 100;
+    expired.dataSize = EXPIRED_RECORD_DATA_SIZE;
     ASSERT_EQ(InsertRevocationCacheRecord(&expired), CM_SUCCESS);
     /* last-clean=0 forces the next save to run the cleanup pass */
     ASSERT_EQ(SetRevocationCacheMeta(0), CM_SUCCESS);
     uint8_t keyBuf[] = "clnkey1";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
     struct CmBlob data = { 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     /* the expired record must be gone from the RDB */
     char **paths = nullptr;
     uint32_t count = 0;
@@ -493,20 +507,20 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
 {
     /* save a valid entry first so the type/prefix directories exist */
     uint8_t keyBuf[] = "orphkey";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
     struct CmBlob data = { 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
 
-    char relA[512] = { 0 };
+    char relA[REL_PATH_BUF_SIZE] = { 0 };
     ASSERT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, relA, sizeof(relA)), CM_SUCCESS);
     std::string rel(relA);
     std::string dir = rel.substr(0, rel.rfind('/') + 1);   /* ocsp/<xx>/ */
     std::string hash = rel.substr(dir.size());             /* <64hex>.cache */
     /* the orphan .cache keeps the two-char prefix so cleanup derives its real path */
-    std::string orphanFull = std::string(REVOCATION_CACHE_DIR) + dir + hash.substr(0, 2) +
-        std::string(62, 'f') + ".cache";
+    std::string orphanFull = std::string(REVOCATION_CACHE_DIR) + dir + hash.substr(0, HASH_PREFIX_LEN) +
+        std::string(SHA256_HEX_LEN - HASH_PREFIX_LEN, 'f') + ".cache";
     std::string tmpFull = std::string(REVOCATION_CACHE_DIR) + dir + "leftover.tmp";
     std::string txtFull = std::string(REVOCATION_CACHE_DIR) + dir + "note.txt";
     const uint8_t one[] = "x";
@@ -517,9 +531,9 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
     /* last-clean=0 forces the next save to run the cleanup pass */
     ASSERT_EQ(SetRevocationCacheMeta(0), CM_SUCCESS);
     uint8_t key2Buf[] = "orphk2y";
-    struct CmBlob key2 = { 7, key2Buf };
+    struct CmBlob key2 = { sizeof(key2Buf) - 1, key2Buf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key2, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
 
     /* orphan .cache and leftover .tmp are removed; unrelated files are kept */
     EXPECT_EQ(access(orphanFull.c_str(), F_OK), -1);
@@ -536,18 +550,18 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
 {
     /* a fake oldest record claiming 50MB pushes the total over the capacity limit */
     struct RevocationCacheRecord big = { 0 };
-    big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + 60; /* older than the new entry */
+    big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + OLDER_EXPIRE_SEC; /* older than the new entry */
     const char *bigRel = "ocsp/ee/bigfake00.cache";
     (void)strncpy_s(big.filePath, sizeof(big.filePath), bigRel, strlen(bigRel));
     big.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
     ASSERT_EQ(InsertRevocationCacheRecord(&big), CM_SUCCESS);
 
     uint8_t keyBuf[] = "evctkey";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
     struct CmBlob data = { 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
 
     /* the oldest oversized record must have been evicted */
     char **paths = nullptr;
@@ -567,11 +581,11 @@ TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
 {
     /* write an entry as native so the service-store file really exists */
     uint8_t keyBuf[] = "hapkey1";
-    struct CmBlob key = { 7, keyBuf };
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
     struct CmBlob data = { 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
-        static_cast<int64_t>(time(nullptr)) + 3600), CM_SUCCESS);
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
 
     /* HAP callers read from their sandbox base and must not see the native entry */
     MockHapToken mockHap;
@@ -584,16 +598,16 @@ TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
 TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
 {
     uint8_t dataBuf[] = "AD";
-    struct CmBlob data = { 2, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     EXPECT_EQ(CmRunSaveRevocationCacheAsync(nullptr, CM_REVOCATION_TYPE_OCSP, &data, expire),
         CMR_ERROR_INVALID_ARGUMENT);
 
     /* submit more keys than the worker limit; extra saves degrade to synchronous mode */
-    constexpr int ASYNC_KEY_COUNT = 8;
-    uint8_t keyBufs[ASYNC_KEY_COUNT][8] = { { 0 } };
-    struct CmBlob keys[ASYNC_KEY_COUNT] = { { 0, nullptr } };
-    for (int i = 0; i < ASYNC_KEY_COUNT; i++) {
+    constexpr int asyncKeyCount = 8;
+    uint8_t keyBufs[asyncKeyCount][ASYNC_KEY_BUF_LEN] = { { 0 } };
+    struct CmBlob keys[asyncKeyCount] = { { 0, nullptr } };
+    for (int i = 0; i < asyncKeyCount; i++) {
         (void)snprintf_s(reinterpret_cast<char *>(keyBufs[i]), sizeof(keyBufs[i]), sizeof(keyBufs[i]) - 1,
             "ak%d", i);
         keys[i].size = strlen(reinterpret_cast<char *>(keyBufs[i]));
@@ -604,9 +618,9 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
 
     /* every submission must land within the bounded wait (~10s) */
     bool allDone = false;
-    for (int round = 0; round < 100 && !allDone; round++) {
+    for (int round = 0; round < POLL_MAX_ROUNDS && !allDone; round++) {
         allDone = true;
-        for (int i = 0; i < ASYNC_KEY_COUNT; i++) {
+        for (int i = 0; i < asyncKeyCount; i++) {
             struct CmBlob out = { 0, nullptr };
             if (CmGetRevocationCache(keys[i], CM_REVOCATION_TYPE_OCSP, &out) != CM_SUCCESS) {
                 allDone = false;
@@ -614,11 +628,11 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
             CmFreeRevocationCache(&out);
         }
         if (!allDone) {
-            usleep(100 * 1000);
+            usleep(POLL_INTERVAL_USEC);
         }
     }
     ASSERT_TRUE(allDone);
-    for (int i = 0; i < ASYNC_KEY_COUNT; i++) {
+    for (int i = 0; i < asyncKeyCount; i++) {
         struct CmBlob out = { 0, nullptr };
         ASSERT_EQ(CmGetRevocationCache(keys[i], CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
         const uint8_t expectData[] = "AD";
@@ -638,20 +652,20 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     uint8_t dataBuf[] = "SDK-DER";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     char formalFull[PATH_MAX] = { 0 }; /* same store the SA writes: REVOCATION_CACHE_DIR */
     ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, formalFull, sizeof(formalFull)), 0);
     ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
 
     /* the SA persists asynchronously into the FORMAL store: verify the raw file
        itself, including the on-disk big-endian expiry header encoding */
-    uint8_t fileBuf[64] = { 0 };
+    uint8_t fileBuf[FILE_READ_BUF_SIZE] = { 0 };
     uint32_t fileLen = 0;
     bool persisted = false;
-    for (int round = 0; round < 100 && !persisted; round++) {
+    for (int round = 0; round < POLL_MAX_ROUNDS && !persisted; round++) {
         persisted = ReadFormalCacheFile(formalFull, fileBuf, sizeof(fileBuf), &fileLen);
         if (!persisted) {
-            usleep(100 * 1000);
+            usleep(POLL_INTERVAL_USEC);
         }
     }
     /*
@@ -667,8 +681,9 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
         EXPECT_EQ(fileLen, sizeof(expectDer) - 1 + sizeof(int64_t));
         /* 8-byte big-endian expiry header in front of the payload, still in the future */
         int64_t storedExpire = DecodeExpireHeader(fileBuf);
-        EXPECT_GT(storedExpire, static_cast<int64_t>(time(nullptr)));
-        EXPECT_LE(storedExpire, expire + 5);
+        int64_t nowSec = static_cast<int64_t>(time(nullptr));
+        EXPECT_GT(storedExpire, nowSec);
+        EXPECT_LE(storedExpire, expire + EXPIRE_TOLERANCE_SEC);
         EXPECT_EQ(memcmp(fileBuf + sizeof(int64_t), expectDer, sizeof(expectDer) - 1), 0);
     }
 }
@@ -684,7 +699,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
     uint8_t dataBuf[] = "HAP-DER";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     char formalFull[PATH_MAX] = { 0 }; /* same store the SA writes: REVOCATION_CACHE_DIR */
     ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, formalFull, sizeof(formalFull)), 0);
     {
@@ -693,13 +708,13 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
     }
 
     /* back to native: the FORMAL shared store must hold the HAP-written entry */
-    uint8_t fileBuf[64] = { 0 };
+    uint8_t fileBuf[FILE_READ_BUF_SIZE] = { 0 };
     uint32_t fileLen = 0;
     bool persisted = false;
-    for (int round = 0; round < 100 && !persisted; round++) {
+    for (int round = 0; round < POLL_MAX_ROUNDS && !persisted; round++) {
         persisted = ReadFormalCacheFile(formalFull, fileBuf, sizeof(fileBuf), &fileLen);
         if (!persisted) {
-            usleep(100 * 1000);
+            usleep(POLL_INTERVAL_USEC);
         }
     }
     /* same dual-state contract as SaveThroughSdkIpcRoundTrip: the accepted HAP
@@ -709,8 +724,9 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
         const uint8_t expectDer[] = "HAP-DER";
         EXPECT_EQ(fileLen, sizeof(expectDer) - 1 + sizeof(int64_t));
         int64_t storedExpire = DecodeExpireHeader(fileBuf);
-        EXPECT_GT(storedExpire, static_cast<int64_t>(time(nullptr)));
-        EXPECT_LE(storedExpire, expire + 5);
+        int64_t nowSec = static_cast<int64_t>(time(nullptr));
+        EXPECT_GT(storedExpire, nowSec);
+        EXPECT_LE(storedExpire, expire + EXPIRE_TOLERANCE_SEC);
         EXPECT_EQ(memcmp(fileBuf + sizeof(int64_t), expectDer, sizeof(expectDer) - 1), 0);
     }
 }
