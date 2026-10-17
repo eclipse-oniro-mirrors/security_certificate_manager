@@ -87,7 +87,7 @@ static int32_t CmReadRevocationCacheFile(const char *fullPath, struct CmBlob *da
         return CMR_ERROR_READ_FILE_ERROR;
     }
     int64_t expire = CmRevocationCacheDecodeInt64Be(buf8);
-    if (expire <= static_cast<int64_t>(time(NULL))) {
+    if (expire <= static_cast<int64_t>(time(nullptr))) {
         (void)close(fd);
         return CMR_ERROR_NOT_EXIST;
     }
