@@ -57,6 +57,8 @@
             </filefilter>
             <filefilter name="defaultPolicyFilter" desc="Filters for compatibility，license header policies">
                 <filteritem type="filepath" name="config/systemCertificates/.*" desc="system certificate files"/>
+                <filteritem type="filepath" name="test/fuzz_test/cmrevocationcache_fuzzer/project.xml"
+                    desc="fuzz project config, copyright holder name in the license header is flagged by brand check"/>
             </filefilter>
             <filefilter name="copyrightPolicyFilter" desc="Filters for copyright header policies">
                 <filteritem type="filepath" name="config/systemCertificates/.*" desc="system certificate files"/>
