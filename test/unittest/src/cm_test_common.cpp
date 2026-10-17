@@ -27,7 +27,6 @@
 #include "accesstoken_kit.h"
 #include "nativetoken_kit.h"
 #include "token_setproc.h"
-#include <sys/stat.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <thread>
@@ -119,21 +118,8 @@ MockHapToken::~MockHapToken()
 
 void CmTestCommon::SetTestEnvironment(uint64_t shellTokenId)
 {
-    EnsureRevocationTestStoreDir();
     std::lock_guard<std::mutex> lock(g_lockSetToken);
     g_shellTokenId = shellTokenId;
-}
-
-/*
- * The cm_sdk_test rdb variant (libcert_manager_rdb_static_cm_test) points the
- * dbPath default at an isolated dir. The rdb framework creates the db file but
- * relies on the parent dir already existing, so create it up front; running as
- * root this is idempotent. Keep in sync with CM_REVOCATION_TEST_RDB_PATH in
- * services/cert_manager_standard/cert_manager_engine/main/rdb/BUILD.gn.
- */
-void CmTestCommon::EnsureRevocationTestStoreDir()
-{
-    (void)mkdir("/data/local/tmp/cm_test_rdb", 0755);
 }
 
 void CmTestCommon::ResetTestEnvironment()

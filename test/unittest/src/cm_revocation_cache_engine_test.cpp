@@ -18,7 +18,6 @@
 #include <cstring>
 #include <ctime>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -34,8 +33,6 @@
 #include "cert_manager_revocation_cache.h"
 #include "cert_manager_storage.h"
 #include "cm_mem.h"
-#include "cm_rdb_config.h"
-#include "cm_rdb_data_manager.h"
 #include "cm_revocation_cache.h"
 #include "cm_revocation_cache_rdb.h"
 #include "cm_test_common.h"
@@ -119,33 +116,12 @@ static void FixCmDataOwnershipForSa(void)
     (void)nftw("/data/service/el1/public/cert_manager_service", ChownTreeToSa, 16, FTW_PHYS);
 }
 
-/* ---------- FORMAL store helpers (the test build only isolates the local rdb) ---------- */
-
-/* artifacts this run pushed into the FORMAL store through the real SA; flushed in TearDown */
-static std::vector<std::pair<std::string, std::string>> g_formalLeftovers;
-
-/*
- * Compute the FORMAL-store file path of key and register it for TearDown cleanup,
- * so the SA-written artifact is removed even when the case aborts midway.
- * Returns the absolute path (empty on failure).
- */
-static std::string RegisterFormalArtifact(const struct CmBlob *key, uint32_t type)
-{
-    char relPath[512] = { 0 };
-    char full[PATH_MAX] = { 0 };
-    if (CmRevocationCacheBuildRelPath(type, key, relPath, sizeof(relPath)) != CM_SUCCESS ||
-        snprintf_s(full, sizeof(full), sizeof(full) - 1, "%s%s", REVOCATION_CACHE_SERVICE_BASE,
-            relPath) < 0) {
-        return "";
-    }
-    g_formalLeftovers.push_back({ full, relPath });
-    return full;
-}
+/* ---------- helpers for verifying the SA-persisted formal store ---------- */
 
 /* read the whole cache file the SA persisted (8-byte big-endian expiry + payload) */
-static bool ReadFormalCacheFile(const std::string &fullPath, uint8_t *buf, uint32_t bufLen, uint32_t *outLen)
+static bool ReadFormalCacheFile(const char *fullPath, uint8_t *buf, uint32_t bufLen, uint32_t *outLen)
 {
-    FILE *fp = fopen(fullPath.c_str(), "rb");
+    FILE *fp = fopen(fullPath, "rb");
     if (fp == nullptr) {
         return false;
     }
@@ -166,35 +142,6 @@ static int64_t DecodeExpireHeader(const uint8_t *buf)
         expire = (expire << 8) | buf[i];
     }
     return expire;
-}
-
-/*
- * Drop the exact row the SA wrote into the FORMAL database for one artifact. Only
- * the case's own record is deleted; production rows in the shared table are never
- * touched. If the formal db does not exist the SA persisted nothing: nothing to do.
- */
-static void CleanupFormalRevocationRecord(const std::string &relPath)
-{
-    struct stat st;
-    if (stat("/data/service/el1/public/cert_manager_service/rdb/cert_manager.db", &st) != 0) {
-        return;
-    }
-    OHOS::Security::CertManager::RdbConfig cfg;
-    cfg.dbPath = "/data/service/el1/public/cert_manager_service/rdb";
-    cfg.dbName = CERT_MANAGER_RDB_NAME;
-    cfg.tableName = REVOCATION_CACHE_TABLE_NAME;
-    OHOS::Security::CertManager::CmRdbDataManager manager(cfg);
-    (void)manager.DeleteData(relPath, COLUMN_FILE_PATH);
-}
-
-/* unlink the FORMAL files and drop their db rows; safe to call repeatedly */
-static void FlushFormalLeftovers()
-{
-    for (const auto &item : g_formalLeftovers) {
-        (void)unlink(item.first.c_str());
-        CleanupFormalRevocationRecord(item.second);
-    }
-    g_formalLeftovers.clear();
 }
 
 class CmRevocationCacheEngineTest : public testing::Test {
@@ -220,15 +167,13 @@ void CmRevocationCacheEngineTest::TearDownTestCase()
 /* CmGetRevocationCache only serves HAP/native callers; mock self as a native process */
 void CmRevocationCacheEngineTest::SetUp()
 {
-    FlushFormalLeftovers(); /* belt and braces: formal artifacts a previous case left behind */
     CleanupRevocationCacheState(); /* clear leftovers from previous runs/cases */
     g_mockNative = new (std::nothrow) MockNativeToken("foundation");
 }
 
 void CmRevocationCacheEngineTest::TearDown()
 {
-    CleanupRevocationCacheState(); /* remove records/files/meta created by this case */
-    FlushFormalLeftovers(); /* remove FORMAL-store artifacts saved through the real SA */
+    CleanupRevocationCacheState(); /* remove records/files/meta created by this case (incl. SA-written rows) */
     if (g_mockNative != nullptr) {
         delete g_mockNative;
         g_mockNative = nullptr;
@@ -665,8 +610,8 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
-    std::string formalFull = RegisterFormalArtifact(&key, CM_REVOCATION_TYPE_OCSP);
-    ASSERT_FALSE(formalFull.empty()); /* registered: TearDown cleans even on abort */
+    char formalFull[PATH_MAX] = { 0 }; /* same store the SA writes: REVOCATION_CACHE_DIR */
+    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, formalFull, sizeof(formalFull)), 0);
     ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
 
     /* the SA persists asynchronously into the FORMAL store: verify the raw file
@@ -700,8 +645,8 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
-    std::string formalFull = RegisterFormalArtifact(&key, CM_REVOCATION_TYPE_OCSP);
-    ASSERT_FALSE(formalFull.empty());
+    char formalFull[PATH_MAX] = { 0 }; /* same store the SA writes: REVOCATION_CACHE_DIR */
+    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, formalFull, sizeof(formalFull)), 0);
     {
         MockHapToken mockHap;
         ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);

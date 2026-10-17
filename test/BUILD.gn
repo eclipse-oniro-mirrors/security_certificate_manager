@@ -71,11 +71,7 @@ ohos_unittest("cm_sdk_test") {
     "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main:cert_manager_sdk",
     "${cert_manager_root_dir}/interfaces/kits/c:ohcert_manager",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/core:cert_manager_engine_core_standard",
-    # test-only rdb variant: keeps every test-created db row inside
-    # /data/local/tmp/cm_test_rdb so the formal SA database is never touched
-    # by the root test process; the two SA round-trip cases still exercise
-    # the formal store and clean up their own artifacts
-    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/rdb:libcert_manager_rdb_static_cm_test",
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/rdb:libcert_manager_rdb_static",
   ]
 
   if (os_level == "standard") {
@@ -104,9 +100,13 @@ ohos_unittest("cm_sdk_test") {
   ]
   resource_config_file = "./resource/certificate_manager/ohos_test.xml"
 
-  # keep engine/SDK/test helpers on one identical cache-file base: the macros of
-  # the rdb test variant only isolate the database, not the cache files
-  defines = []
+  # isolate the revocation cache store (db + files) of the non-IPC test cases
+  # from the formal SA store; the two SA round-trip cases keep using the
+  # formal store and clean up their own artifacts
+  defines = [
+    "CM_REVOCATION_TEST_RDB_PATH=\"/data/local/tmp/cm_test_rdb\"",
+    "CM_REVOCATION_TEST_CACHE_DIR=\"/data/local/tmp/cm_test_cache/\"",
+  ]
   if (certificate_manager_deps_huks_enabled == "software") {
     defines += [ "DEPS_HKS_UNTRUSTED_RUNNING_ENV" ]
   }

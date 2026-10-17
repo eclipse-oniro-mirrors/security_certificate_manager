@@ -72,9 +72,6 @@ public:
     static void SetTestEnvironment(uint64_t shellTokenId);
     static void ResetTestEnvironment();
     static uint64_t GetShellTokenId();
-    /* make sure the isolated test rdb dir exists before the rdb framework opens
-       the database: the framework creates the db file itself, not the parent dir */
-    static void EnsureRevocationTestStoreDir();
     static void SetHapInfoAndPolicy(const std::string& bundle, const std::vector<std::string>& reqPerm,
         bool isSystemApp, HapInfoParams& hapInfo, HapPolicyParams& hapPolicy);
     static AccessTokenIDEx AllocTestHapToken(

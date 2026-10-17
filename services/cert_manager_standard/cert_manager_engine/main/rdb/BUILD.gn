@@ -18,20 +18,6 @@ config("cert_manager_config") {
   include_dirs = [ "include" ]
 }
 
-cm_rdb_sources = [
-  "src/cm_cert_property_rdb.cpp",
-  "src/cm_config_rdb.cpp",
-  "src/cm_rdb_data_manager.cpp",
-  "src/cm_rdb_open_callback.cpp",
-  "src/cm_revocation_cache_rdb.cpp",
-]
-
-cm_rdb_external_deps = [
-  "c_utils:utils",
-  "hilog:libhilog",
-  "relational_store:native_rdb",
-]
-
 ohos_static_library("libcert_manager_rdb_static") {
   subsystem_name = "security"
   part_name = "certificate_manager"
@@ -49,45 +35,20 @@ ohos_static_library("libcert_manager_rdb_static") {
 
   include_dirs = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include" ]
 
-  sources = cm_rdb_sources
-
-  deps = [ "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static" ]
-  external_deps = cm_rdb_external_deps
-
-  cflags_cc = [
-    "-Wall",
-    "-Werror",
+  sources = [
+    "src/cm_cert_property_rdb.cpp",
+    "src/cm_config_rdb.cpp",
+    "src/cm_rdb_data_manager.cpp",
+    "src/cm_rdb_open_callback.cpp",
+    "src/cm_revocation_cache_rdb.cpp",
   ]
-  cflags = cflags_cc
-  complete_static_lib = true
-}
-
-# test-only variant used by cm_sdk_test: same sources, but the rdb dbPath default
-# points to an isolated dir so the root test process never creates/opens the SA's
-# formal database (a root-owned formal db blocks the SA from starting). The
-# formal SA/service builds keep using libcert_manager_rdb_static.
-ohos_static_library("libcert_manager_rdb_static_cm_test") {
-  subsystem_name = "security"
-  part_name = "certificate_manager"
-  public_configs = [ ":cert_manager_config" ]
-  branch_protector_ret = "pac_ret"
-  sanitize = {
-    cfi = true
-    cfi_cross_dso = true
-    boundary_sanitize = true
-    debug = false
-    integer_overflow = true
-    ubsan = true
-    stack_protector_ret = true
-  }
-
-  include_dirs = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include" ]
-
-  sources = cm_rdb_sources
-  defines = [ "CM_REVOCATION_TEST_RDB_PATH=\"/data/local/tmp/cm_test_rdb\"" ]
 
   deps = [ "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static" ]
-  external_deps = cm_rdb_external_deps
+  external_deps = [
+    "c_utils:utils",
+    "hilog:libhilog",
+    "relational_store:native_rdb",
+  ]
 
   cflags_cc = [
     "-Wall",
