@@ -1767,7 +1767,9 @@ void CmIpcServiceSaveRevocationCache(const struct CmBlob *paramSetBlob, struct C
     int32_t ret;
     uint32_t type = 0;
     struct CmContext cmContext = { 0 };
-    struct CmBlob key = { 0, NULL }, data = { 0, NULL }, expire8 = { 0, NULL };
+    struct CmBlob key = { 0, NULL };
+    struct CmBlob data = { 0, NULL };
+    struct CmBlob expire8 = { 0, NULL };
     struct CmParamSet *paramSet = NULL;
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_BUFFER, .blob = &key },
