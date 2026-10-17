@@ -22,8 +22,8 @@
 
 #include <gtest/gtest.h>
 
+#include <climits>
 #include <ftw.h>
-#include <limits.h>
 #include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>

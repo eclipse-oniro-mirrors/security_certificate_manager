@@ -15,7 +15,7 @@
 
 #include <gtest/gtest.h>
 
-#include <limits.h>
+#include <climits>
 #include <unistd.h>
 
 #include "cert_manager_storage.h"
