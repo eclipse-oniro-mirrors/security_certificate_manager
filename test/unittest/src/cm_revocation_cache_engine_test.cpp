@@ -22,7 +22,9 @@
 
 #include <gtest/gtest.h>
 
+#include <ftw.h>
 #include <limits.h>
+#include <pwd.h>
 #include <unistd.h>
 
 #include "cert_manager_api.h"
@@ -82,6 +84,35 @@ static int BuildCacheFullPath(const struct CmBlob *key, uint32_t type, char *ful
         return -1;
     }
     return (snprintf_s(fullPath, len, len - 1, "%s%s", REVOCATION_CACHE_DIR, relPath) >= 0) ? 0 : -1;
+}
+
+static uid_t g_saDataUid = 0;
+static gid_t g_saDataGid = 0;
+
+static int ChownTreeToSa(const char *path, const struct stat *st, int type, struct FTW *ftw)
+{
+    (void)st;
+    (void)type;
+    (void)ftw;
+    (void)chown(path, g_saDataUid, g_saDataGid); /* best effort: keep walking the tree */
+    return 0;
+}
+
+/*
+ * On a TDD device the cert manager data tree is usually created first by this root
+ * test process, so the pulled-up SA (uid cert_manager_server) cannot open its own
+ * rdb database or write its cache directories. Hand the whole data root back to
+ * the SA before pulling it up; running as root this is idempotent.
+ */
+static void FixCmDataOwnershipForSa(void)
+{
+    struct passwd *sa = getpwnam("cert_manager_server");
+    if (sa == nullptr) {
+        return; /* no such account on this device: let the SA fail with a clear error */
+    }
+    g_saDataUid = sa->pw_uid;
+    g_saDataGid = sa->pw_gid;
+    (void)nftw("/data/service/el1/public/cert_manager_service", ChownTreeToSa, 16, FTW_PHYS);
 }
 
 class CmRevocationCacheEngineTest : public testing::Test {
@@ -542,6 +573,8 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
 
 TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
 {
+    /* data files were created by this root process; give them back to the SA first */
+    FixCmDataOwnershipForSa();
     /* full SDK save chain: param check -> native caller check -> IPC -> SA async save */
     uint8_t keyBuf[] = "sdkkey1";
     uint8_t dataBuf[] = "SDK-DER";
@@ -568,6 +601,8 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
 
 TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
 {
+    /* data files were created by this root process; give them back to the SA first */
+    FixCmDataOwnershipForSa();
     /* HAP callers are allowed to save through the SDK as well */
     uint8_t keyBuf[] = "hapkey2";
     uint8_t dataBuf[] = "HAP-DER";
