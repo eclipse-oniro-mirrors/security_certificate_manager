@@ -20,6 +20,7 @@
 
 #include "cert_manager_storage.h"
 #include "cm_revocation_cache_rdb.h"
+#include "cm_test_common.h"
 #include "securec.h"
 
 using namespace testing::ext;
@@ -49,6 +50,8 @@ class CmRevocationCacheRdbTest : public testing::Test {
 public:
     void SetUp() override
     {
+        /* the rdb framework opens the db file but does not create its parent dir */
+        CertmanagerTest::CmTestCommon::EnsureRevocationTestStoreDir();
         ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
         CleanupRevocationCacheState();
     }
