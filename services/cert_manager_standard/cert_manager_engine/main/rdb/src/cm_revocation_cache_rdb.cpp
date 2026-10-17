@@ -297,6 +297,31 @@ static int32_t AppendCurrentRowPath(NativeRdb::AbsSharedResultSet *resultSet, ch
     return CM_SUCCESS;
 }
 
+static int32_t CollectFilePaths(NativeRdb::AbsSharedResultSet *resultSet, uint32_t capacity,
+    char ***paths, uint32_t *count)
+{
+    char **pathArray = static_cast<char **>(CmMalloc(sizeof(char *) * capacity));
+    if (pathArray == nullptr) {
+        CM_LOG_E("malloc path array failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(pathArray, sizeof(char *) * capacity, 0, sizeof(char *) * capacity);
+
+    uint32_t validCount = 0;
+    int32_t ret = resultSet->GoToFirstRow();
+    while (ret == NativeRdb::E_OK && validCount < capacity) {
+        int32_t appendRet = AppendCurrentRowPath(resultSet, pathArray, &validCount);
+        if (appendRet != CM_SUCCESS) {
+            FreeRevocationCacheFilePaths(pathArray, validCount);
+            return appendRet;
+        }
+        ret = resultSet->GoToNextRow();
+    }
+    *paths = pathArray;
+    *count = validCount;
+    return CM_SUCCESS;
+}
+
 int32_t QueryAllRevocationCacheFilePaths(char ***paths, uint32_t *count)
 {
     CM_LOG_D("enter QueryAllRevocationCacheFilePaths");
@@ -318,42 +343,16 @@ int32_t QueryAllRevocationCacheFilePaths(char ***paths, uint32_t *count)
         return CMR_ERROR_QUERY_RDB_DATA_FAIL;
     }
 
+    int32_t ret = CM_SUCCESS;
     int32_t rowCount = 0;
     if (resultSet->GetRowCount(rowCount) != NativeRdb::E_OK) {
         CM_LOG_E("GetRowCount failed");
-        resultSet->Close();
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-    if (rowCount <= 0) {
-        resultSet->Close();
-        return CM_SUCCESS;
-    }
-
-    uint32_t capacity = static_cast<uint32_t>(rowCount);
-    char **pathArray = static_cast<char **>(CmMalloc(sizeof(char *) * capacity));
-    if (pathArray == nullptr) {
-        CM_LOG_E("malloc path array failed");
-        resultSet->Close();
-        return CMR_ERROR_MALLOC_FAIL;
-    }
-    (void)memset_s(pathArray, sizeof(char *) * capacity, 0, sizeof(char *) * capacity);
-
-    uint32_t validCount = 0;
-    int32_t ret = resultSet->GoToFirstRow();
-    while (ret == NativeRdb::E_OK && validCount < capacity) {
-        int32_t appendRet = AppendCurrentRowPath(resultSet.get(), pathArray, &validCount);
-        if (appendRet != CM_SUCCESS) {
-            FreeRevocationCacheFilePaths(pathArray, validCount);
-            resultSet->Close();
-            return appendRet;
-        }
-        ret = resultSet->GoToNextRow();
+        ret = CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    } else if (rowCount > 0) {
+        ret = CollectFilePaths(resultSet.get(), static_cast<uint32_t>(rowCount), paths, count);
     }
     resultSet->Close();
-
-    *paths = pathArray;
-    *count = validCount;
-    return CM_SUCCESS;
+    return ret;
 }
 
 void FreeRevocationCacheFilePaths(char **paths, uint32_t count)
@@ -415,8 +414,8 @@ int32_t GetRevocationCacheMeta(int64_t *value)
     }
     resultSet->Close();
 
-    constexpr int DECIMAL_BASE = 10;
-    *value = std::strtoll(strValue.c_str(), nullptr, DECIMAL_BASE);
+    constexpr int decimalBase = 10;
+    *value = std::strtoll(strValue.c_str(), nullptr, decimalBase);
     return CM_SUCCESS;
 }
 
