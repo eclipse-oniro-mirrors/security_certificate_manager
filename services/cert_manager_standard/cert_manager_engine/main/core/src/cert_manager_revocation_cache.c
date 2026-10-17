@@ -237,7 +237,9 @@ static int32_t EnsureCacheDirs(uint32_t type, const char *relPath)
     char hexName[PATH_MAX] = {0};
     const char *lastSlash = strrchr(relPath, '/');
     if (lastSlash != NULL) {
-        (void)strncpy_s(hexName, sizeof(hexName), lastSlash + 1, strlen(lastSlash + 1) - CACHE_SUFFIX_LEN);
+        if (strncpy_s(hexName, sizeof(hexName), lastSlash + 1, strlen(lastSlash + 1) - CACHE_SUFFIX_LEN) != EOK) {
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
     }
     if (hexName[0] != '\0' && hexName[1] != '\0') {
         char prefixDir[PATH_MAX] = {0};
@@ -320,8 +322,9 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
     (void)QueryRevocationCacheSumSize(&totalSize);
     EvictUntilCapacity((uint64_t)payloadLen, &totalSize);
 
-    if (EnsureCacheDirs(type, relPath) == CMR_ERROR_MAKE_DIR_FAIL) {
-        writeRet = CMR_ERROR_MAKE_DIR_FAIL;
+    int32_t ensureRet = EnsureCacheDirs(type, relPath);
+    if (ensureRet != CMR_OK) {
+        writeRet = ensureRet;
         goto cleanup;
     }
 

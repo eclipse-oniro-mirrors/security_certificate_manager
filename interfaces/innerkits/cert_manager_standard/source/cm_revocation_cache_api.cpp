@@ -76,36 +76,36 @@ static int32_t CmReadRevocationCacheFile(const char *fullPath, struct CmBlob *da
     }
 
     struct stat st;
-    if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(int64_t)) {
+    if (fstat(fd, &st) != 0 || st.st_size < static_cast<off_t>(sizeof(int64_t))) {
         (void)close(fd);
         return CMR_ERROR_NOT_EXIST;
     }
 
     uint8_t buf8[sizeof(int64_t)] = { 0 };
-    if (pread(fd, buf8, sizeof(buf8), 0) != (ssize_t)sizeof(buf8)) {
+    if (pread(fd, buf8, sizeof(buf8), 0) != static_cast<ssize_t>(sizeof(buf8))) {
         (void)close(fd);
         return CMR_ERROR_READ_FILE_ERROR;
     }
     int64_t expire = CmRevocationCacheDecodeInt64Be(buf8);
-    if (expire <= (int64_t)time(NULL)) {
+    if (expire <= static_cast<int64_t>(time(NULL))) {
         (void)close(fd);
         return CMR_ERROR_NOT_EXIST;
     }
 
-    int64_t derLen = (int64_t)st.st_size - (int64_t)sizeof(int64_t);
+    int64_t derLen = static_cast<int64_t>(st.st_size) - static_cast<int64_t>(sizeof(int64_t));
     if (derLen <= 0 || derLen > MAX_OUT_BLOB_SIZE) {
         (void)close(fd);
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
-    data->data = (uint8_t *)CmMalloc((size_t)derLen);
+    data->data = static_cast<uint8_t *>(CmMalloc(static_cast<size_t>(derLen)));
     if (data->data == nullptr) {
         (void)close(fd);
         return CMR_ERROR_MALLOC_FAIL;
     }
-    data->size = (uint32_t)derLen;
-    ssize_t rd = pread(fd, data->data, (size_t)derLen, (off_t)sizeof(int64_t));
+    data->size = static_cast<uint32_t>(derLen);
+    ssize_t rd = pread(fd, data->data, static_cast<size_t>(derLen), static_cast<off_t>(sizeof(int64_t)));
     (void)close(fd);
-    if (rd != (ssize_t)derLen) {
+    if (rd != static_cast<ssize_t>(derLen)) {
         (void)memset_s(data->data, data->size, 0, data->size);
         CmFree(data->data);
         data->data = nullptr;
@@ -132,7 +132,7 @@ extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, e
     }
 
     char relPath[CERT_MAX_PATH_LEN] = { 0 };
-    int32_t ret = CmRevocationCacheBuildRelPath((uint32_t)type, &key, relPath, sizeof(relPath));
+    int32_t ret = CmRevocationCacheBuildRelPath(static_cast<uint32_t>(type), &key, relPath, sizeof(relPath));
     if (ret != CM_SUCCESS) {
         return ret;
     }
