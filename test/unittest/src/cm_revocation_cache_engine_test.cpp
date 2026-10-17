@@ -539,3 +539,58 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
         CmFreeRevocationCache(&out);
     }
 }
+
+TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
+{
+    /* full SDK save chain: param check -> native caller check -> IPC -> SA async save */
+    uint8_t keyBuf[] = "sdkkey1";
+    uint8_t dataBuf[] = "SDK-DER";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
+
+    /* the SA persists asynchronously: poll until the entry is readable (bounded ~10s) */
+    struct CmBlob out = { 0, nullptr };
+    int32_t ret = CMR_ERROR_NOT_EXIST;
+    for (int round = 0; round < 100 && ret != CM_SUCCESS; round++) {
+        ret = CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out);
+        if (ret != CM_SUCCESS) {
+            usleep(100 * 1000);
+        }
+    }
+    ASSERT_EQ(ret, CM_SUCCESS);
+    const uint8_t expectDer[] = "SDK-DER";
+    ASSERT_EQ(out.size, sizeof(expectDer) - 1);
+    EXPECT_EQ(memcmp(out.data, expectDer, sizeof(expectDer) - 1), 0);
+    CmFreeRevocationCache(&out);
+}
+
+TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
+{
+    /* HAP callers are allowed to save through the SDK as well */
+    uint8_t keyBuf[] = "hapkey2";
+    uint8_t dataBuf[] = "HAP-DER";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + 3600;
+    {
+        MockHapToken mockHap;
+        ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
+    }
+
+    /* back to native: the shared service store must contain the HAP-written entry */
+    struct CmBlob out = { 0, nullptr };
+    int32_t ret = CMR_ERROR_NOT_EXIST;
+    for (int round = 0; round < 100 && ret != CM_SUCCESS; round++) {
+        ret = CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out);
+        if (ret != CM_SUCCESS) {
+            usleep(100 * 1000);
+        }
+    }
+    ASSERT_EQ(ret, CM_SUCCESS);
+    const uint8_t expectDer[] = "HAP-DER";
+    ASSERT_EQ(out.size, sizeof(expectDer) - 1);
+    EXPECT_EQ(memcmp(out.data, expectDer, sizeof(expectDer) - 1), 0);
+    CmFreeRevocationCache(&out);
+}
