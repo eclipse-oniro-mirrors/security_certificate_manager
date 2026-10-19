@@ -26,6 +26,17 @@
 
 #define CM_CERT_INFO_FIELD_NUM 6
 
+/* packed x509 display-field slots; keep in sync with the client-side unpack
+ * table in CmCertificateInfoUnpackFromService (cm_ipc_client_serialization.c) */
+enum CmCertInfoFieldSlot {
+    CM_CERT_FIELD_SUBJECT = 0,
+    CM_CERT_FIELD_ISSUER,
+    CM_CERT_FIELD_SERIAL,
+    CM_CERT_FIELD_NOT_BEFORE,
+    CM_CERT_FIELD_NOT_AFTER,
+    CM_CERT_FIELD_FINGERPRINT,
+};
+
 static int32_t CmGetCertListPack(const struct CertBlob *certBlob, uint32_t *status, uint32_t certCount,
     struct CmBlob *certificateList)
 {
@@ -115,6 +126,24 @@ static void FreeX509FieldBlobs(struct CmBlob *fields)
     }
 }
 
+/* fill the six x509 display field lengths; a negative length marks a parse failure */
+static void GetX509FieldLens(X509 *cert, const struct CmBlob *fields, const uint32_t *fieldMaxLen,
+    int32_t *fieldLen)
+{
+    fieldLen[CM_CERT_FIELD_SUBJECT] = GetX509SubjectNameLongFormat(cert,
+        (char *)fields[CM_CERT_FIELD_SUBJECT].data, fieldMaxLen[CM_CERT_FIELD_SUBJECT]);
+    fieldLen[CM_CERT_FIELD_ISSUER] = GetX509IssueNameLongFormat(cert,
+        (char *)fields[CM_CERT_FIELD_ISSUER].data, fieldMaxLen[CM_CERT_FIELD_ISSUER]);
+    fieldLen[CM_CERT_FIELD_SERIAL] = GetX509SerialNumber(cert,
+        (char *)fields[CM_CERT_FIELD_SERIAL].data, fieldMaxLen[CM_CERT_FIELD_SERIAL]);
+    fieldLen[CM_CERT_FIELD_NOT_BEFORE] = GetX509NotBefore(cert,
+        (char *)fields[CM_CERT_FIELD_NOT_BEFORE].data, fieldMaxLen[CM_CERT_FIELD_NOT_BEFORE]);
+    fieldLen[CM_CERT_FIELD_NOT_AFTER] = GetX509NotAfter(cert,
+        (char *)fields[CM_CERT_FIELD_NOT_AFTER].data, fieldMaxLen[CM_CERT_FIELD_NOT_AFTER]);
+    fieldLen[CM_CERT_FIELD_FINGERPRINT] = GetX509Fingerprint(cert,
+        (char *)fields[CM_CERT_FIELD_FINGERPRINT].data, fieldMaxLen[CM_CERT_FIELD_FINGERPRINT]);
+}
+
 /*
  * Parse the certificate on the service side and append the six display
  * fields (subjectName, issuerName, serial, notBefore, notAfter,
@@ -149,12 +178,7 @@ static int32_t CopyX509InfoToBuffer(const struct CmBlob *certificateData, struct
     }
 
     int32_t fieldLen[CM_CERT_INFO_FIELD_NUM];
-    fieldLen[0] = GetX509SubjectNameLongFormat(cert, (char *)fields[0].data, fieldMaxLen[0]);
-    fieldLen[1] = GetX509IssueNameLongFormat(cert, (char *)fields[1].data, fieldMaxLen[1]);
-    fieldLen[2] = GetX509SerialNumber(cert, (char *)fields[2].data, fieldMaxLen[2]);
-    fieldLen[3] = GetX509NotBefore(cert, (char *)fields[3].data, fieldMaxLen[3]);
-    fieldLen[4] = GetX509NotAfter(cert, (char *)fields[4].data, fieldMaxLen[4]);
-    fieldLen[5] = GetX509Fingerprint(cert, (char *)fields[5].data, fieldMaxLen[5]);
+    GetX509FieldLens(cert, fields, fieldMaxLen, fieldLen);
 
     int32_t ret = CM_SUCCESS;
     for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {

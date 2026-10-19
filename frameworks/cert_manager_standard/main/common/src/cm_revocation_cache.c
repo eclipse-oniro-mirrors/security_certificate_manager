@@ -50,24 +50,32 @@ static int32_t CmRevocationCacheBase64UrlEncode(const uint8_t *data, uint32_t si
 
     static const char b64UrlChars[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    /* same MSB-first slicing as CmBase64Encode in cm_ukey_dialog_common.cpp, but
+     * with the URL-safe alphabet and no padding: the result is a file name */
     uint32_t o = 0;
-    for (uint32_t i = 0; i < fullGroups; ++i) {
-        const uint8_t *g = &data[i * CM_REVOCATION_B64_INPUT_GROUP_BYTES];
-        uint32_t v = ((uint32_t)g[0] << (CM_BITS_PER_BYTE * 2)) |
-            ((uint32_t)g[1] << CM_BITS_PER_BYTE) | (uint32_t)g[2];
-        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 3)) & CM_REVOCATION_B64_CHAR_MASK];
-        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 2)) & CM_REVOCATION_B64_CHAR_MASK];
-        out[o++] = b64UrlChars[(v >> CM_REVOCATION_B64_BITS_PER_CHAR) & CM_REVOCATION_B64_CHAR_MASK];
-        out[o++] = b64UrlChars[v & CM_REVOCATION_B64_CHAR_MASK];
+    uint32_t i = 0;
+    for (; i + CM_REVOCATION_B64_INPUT_GROUP_BYTES <= size; i += CM_REVOCATION_B64_INPUT_GROUP_BYTES) {
+        uint32_t v = 0;
+        for (uint32_t b = 0; b < CM_REVOCATION_B64_INPUT_GROUP_BYTES; b++) {
+            v = (v << CM_BITS_PER_BYTE) | data[i + b];
+        }
+        for (uint32_t c = CM_REVOCATION_B64_OUTPUT_GROUP_CHARS; c > 0; c--) {
+            out[o++] = b64UrlChars[(v >> ((c - 1) * CM_REVOCATION_B64_BITS_PER_CHAR)) &
+                CM_REVOCATION_B64_CHAR_MASK];
+        }
     }
     if (tail != 0) {
-        const uint8_t *g = &data[fullGroups * CM_REVOCATION_B64_INPUT_GROUP_BYTES];
-        uint32_t v = ((uint32_t)g[0] << (CM_BITS_PER_BYTE * 2)) |
-            ((tail == 2) ? ((uint32_t)g[1] << CM_BITS_PER_BYTE) : 0);
-        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 3)) & CM_REVOCATION_B64_CHAR_MASK];
-        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 2)) & CM_REVOCATION_B64_CHAR_MASK];
-        if (tail == 2) {
-            out[o++] = b64UrlChars[(v >> CM_REVOCATION_B64_BITS_PER_CHAR) & CM_REVOCATION_B64_CHAR_MASK];
+        uint32_t v = 0;
+        for (uint32_t b = 0; b < tail; b++) {
+            v = (v << CM_BITS_PER_BYTE) | data[i + b];
+        }
+        /* left-align the tail group so it slices exactly like a full group */
+        v <<= (CM_REVOCATION_B64_INPUT_GROUP_BYTES - tail) * CM_BITS_PER_BYTE;
+        uint32_t tailChars = tail + 1; /* 1 byte -> 2 chars, 2 bytes -> 3 chars */
+        for (uint32_t c = CM_REVOCATION_B64_OUTPUT_GROUP_CHARS;
+            c > CM_REVOCATION_B64_OUTPUT_GROUP_CHARS - tailChars; c--) {
+            out[o++] = b64UrlChars[(v >> ((c - 1) * CM_REVOCATION_B64_BITS_PER_CHAR)) &
+                CM_REVOCATION_B64_CHAR_MASK];
         }
     }
     out[o] = '\0';
