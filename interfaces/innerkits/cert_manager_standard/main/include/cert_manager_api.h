@@ -139,11 +139,21 @@ CM_API_EXPORT int32_t CmGetCertManagerConfig(const struct CmBlob *keysBlob, stru
 
 CM_API_EXPORT void CmFreeCertManagerConfig(struct CertManagerConfig *config);
 
+/*
+ * Save revocation data (for example an OCSP response or a CRL) into the cache
+ * shared across applications. expireTimeUTC is a UNIX timestamp and is clamped
+ * to at most 30 days ahead.
+ * key: at most CM_REVOCATION_CACHE_KEY_MAX_LEN (64) bytes. The key is only
+ * base64-encoded to derive the storage file name, no digest is applied here,
+ * so callers are advised to hash long or raw key material (for example with
+ * SHA-256) before passing it in.
+ */
 CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, enum CmRevocationType type,
     const struct CmBlob data, int64_t expireTimeUTC);
 
 /*
- * Get cached revocation data for the given key and type.
+ * Get cached revocation data for the given key and type. The key follows the
+ * same rule as CmSaveRevocationCache: at most 64 bytes, base64-encoded only.
  * The cache is shared across applications and its content is not authenticated
  * by this component, so the caller MUST cryptographically verify the returned
  * data (for example an OCSP/CRL signature) before trusting it.

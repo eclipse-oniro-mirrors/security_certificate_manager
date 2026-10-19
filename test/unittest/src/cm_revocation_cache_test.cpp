@@ -29,7 +29,6 @@ using namespace testing::ext;
 
 namespace {
 constexpr uint32_t INVALID_REVOCATION_TYPE = 99;
-constexpr uint32_t SHA256_HEX_LEN = 64;    /* sha256 hex digest length */
 constexpr uint32_t HASH_PREFIX_LEN = 2;    /* sub dir prefix length */
 constexpr int64_t ONE_HOUR_SEC = 3600;     /* expire offset: one hour in the future */
 constexpr uint32_t PATH_BUF_SIZE = 300;    /* comfortably above any built base/rel path */
@@ -54,7 +53,7 @@ TEST_F(CmRevocationCacheTest, BuildRelPathRejectsInvalidType)
     EXPECT_EQ(strncmp(rel, "crl/", strlen("crl/")), 0);
 }
 
-TEST_F(CmRevocationCacheTest, BuildRelPathStableHashAndPrefix)
+TEST_F(CmRevocationCacheTest, BuildRelPathStableEncodingAndPrefix)
 {
     uint8_t keyBuf[] = "abc";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
@@ -64,10 +63,38 @@ TEST_F(CmRevocationCacheTest, BuildRelPathStableHashAndPrefix)
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel2, sizeof(rel2)), CM_SUCCESS);
     EXPECT_STREQ(rel1, rel2);
     EXPECT_EQ(strncmp(rel1, "ocsp/", strlen("ocsp/")), 0);
-    EXPECT_EQ(strlen(rel1), strlen("ocsp/") + HASH_PREFIX_LEN + 1 + SHA256_HEX_LEN + strlen(".cache"));
-    /* sub dir prefix equals the first 2 hex chars of the key hash */
+    /* sub dir prefix equals the first 2 chars of the encoded name */
     const uint32_t prefixOff = strlen("ocsp/");
     EXPECT_EQ(strncmp(rel1 + prefixOff, rel1 + prefixOff + 1 + HASH_PREFIX_LEN, HASH_PREFIX_LEN), 0);
+}
+
+TEST_F(CmRevocationCacheTest, BuildRelPathBase64UrlKnownVectors)
+{
+    char rel[PATH_BUF_SIZE] = {0};
+
+    /* full group: "abc" -> "YWJj"; the key itself is encoded, no digest applied */
+    uint8_t key3Buf[] = "abc";
+    struct CmBlob key3 = { sizeof(key3Buf) - 1, key3Buf };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key3, rel, sizeof(rel)), CM_SUCCESS);
+    EXPECT_STREQ(rel, "ocsp/YW/YWJj.cache");
+
+    /* 2-byte tail: "ab" -> "YWI" */
+    uint8_t key2Buf[] = "ab";
+    struct CmBlob key2 = { sizeof(key2Buf) - 1, key2Buf };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_CRL, &key2, rel, sizeof(rel)), CM_SUCCESS);
+    EXPECT_STREQ(rel, "crl/YW/YWI.cache");
+
+    /* 1-byte tail: "a" -> "YQ" */
+    uint8_t key1Buf[] = "a";
+    struct CmBlob key1 = { sizeof(key1Buf) - 1, key1Buf };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key1, rel, sizeof(rel)), CM_SUCCESS);
+    EXPECT_STREQ(rel, "ocsp/YQ/YQ.cache");
+
+    /* url-safe alphabet: 0xFF 0xEF 0xFF would be "/+//" in standard base64 */
+    uint8_t keyRaw[] = { 0xFF, 0xEF, 0xFF };
+    struct CmBlob keyRawBlob = { sizeof(keyRaw), keyRaw };
+    EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &keyRawBlob, rel, sizeof(rel)), CM_SUCCESS);
+    EXPECT_STREQ(rel, "ocsp/_-/_-__.cache");
 }
 
 TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)

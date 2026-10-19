@@ -74,12 +74,12 @@ static bool IsFileNameTmp(const char *name)
     return strcmp(name + len - TMP_SUFFIX_LEN, ".tmp") == 0;
 }
 
-static int32_t BuildRelPathFromFileName(const char *prefix, const char *hexName, char *relPath, uint32_t relPathLen)
+static int32_t BuildRelPathFromFileName(const char *prefix, const char *encodedName, char *relPath, uint32_t relPathLen)
 {
-    if (prefix == NULL || hexName == NULL || relPath == NULL || relPathLen == 0) {
+    if (prefix == NULL || encodedName == NULL || relPath == NULL || relPathLen == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s", prefix, hexName[0], hexName[1], hexName);
+    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s", prefix, encodedName[0], encodedName[1], encodedName);
     if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
@@ -234,17 +234,17 @@ static int32_t EnsureCacheDirs(uint32_t type, const char *relPath)
         (void)EnsureDirWithMode(typeDir, &mode0701);
     }
 
-    char hexName[PATH_MAX] = {0};
+    char encodedName[PATH_MAX] = {0};
     const char *lastSlash = strrchr(relPath, '/');
     if (lastSlash != NULL) {
-        if (strncpy_s(hexName, sizeof(hexName), lastSlash + 1, strlen(lastSlash + 1) - CACHE_SUFFIX_LEN) != EOK) {
+        if (strncpy_s(encodedName, sizeof(encodedName), lastSlash + 1, strlen(lastSlash + 1) - CACHE_SUFFIX_LEN) != EOK) {
             return CMR_ERROR_MEM_OPERATION_COPY;
         }
     }
-    if (hexName[0] != '\0' && hexName[1] != '\0') {
+    if (encodedName[0] != '\0' && encodedName[1] != '\0') {
         char prefixDir[PATH_MAX] = {0};
         if (snprintf_s(prefixDir, sizeof(prefixDir), sizeof(prefixDir) - 1, "%s%s/%c%c/", REVOCATION_CACHE_DIR,
-            prefixType, hexName[0], hexName[1]) >= 0) {
+            prefixType, encodedName[0], encodedName[1]) >= 0) {
             (void)EnsureDirWithMode(prefixDir, &mode0701);
         }
     }

@@ -18,19 +18,60 @@
 #include <stdio.h>
 #include <time.h>
 
-#include "cm_sha256.h"
-
 #include "cm_log.h"
 #include "cm_type.h"
 #include "securec.h"
 
-#define CM_REVOCATION_HEX_CHARS_PER_BYTE 2
-#define CM_REVOCATION_NIBBLE_BITS 4 /* hex half-byte bits */
-#define CM_REVOCATION_HEX_LEN (CM_SHA256_HASH_LEN * CM_REVOCATION_HEX_CHARS_PER_BYTE)
+#define CM_REVOCATION_B64_INPUT_GROUP_BYTES 3
+#define CM_REVOCATION_B64_OUTPUT_GROUP_CHARS 4
+#define CM_REVOCATION_B64_BITS_PER_CHAR 6
+#define CM_REVOCATION_B64_CHAR_MASK ((1U << CM_REVOCATION_B64_BITS_PER_CHAR) - 1)
+/* worst case unpadded output length for a CM_REVOCATION_CACHE_KEY_MAX_LEN byte key */
+#define CM_REVOCATION_B64_MAX_LEN \
+    (((CM_REVOCATION_CACHE_KEY_MAX_LEN + CM_REVOCATION_B64_INPUT_GROUP_BYTES - 1) / \
+    CM_REVOCATION_B64_INPUT_GROUP_BYTES) * CM_REVOCATION_B64_OUTPUT_GROUP_CHARS)
 
 static bool CmRevocationCacheIsTypeValid(uint32_t type)
 {
     return (type == CM_REVOCATION_TYPE_OCSP) || (type == CM_REVOCATION_TYPE_CRL);
+}
+
+/* RFC 4648 section 5 base64url without padding: the encoded key becomes the
+ * storage file name, so the URL-safe alphabet keeps '/' out of derived paths. */
+static int32_t CmRevocationCacheBase64UrlEncode(const uint8_t *data, uint32_t size,
+    char *out, uint32_t outLen)
+{
+    uint32_t fullGroups = size / CM_REVOCATION_B64_INPUT_GROUP_BYTES;
+    uint32_t tail = size % CM_REVOCATION_B64_INPUT_GROUP_BYTES;
+    uint32_t need = fullGroups * CM_REVOCATION_B64_OUTPUT_GROUP_CHARS + ((tail == 0) ? 0 : (tail + 1));
+    if (outLen < need + 1) { /* room for the terminator */
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+
+    static const char b64UrlChars[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    uint32_t o = 0;
+    for (uint32_t i = 0; i < fullGroups; ++i) {
+        const uint8_t *g = &data[i * CM_REVOCATION_B64_INPUT_GROUP_BYTES];
+        uint32_t v = ((uint32_t)g[0] << (CM_BITS_PER_BYTE * 2)) |
+            ((uint32_t)g[1] << CM_BITS_PER_BYTE) | (uint32_t)g[2];
+        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 3)) & CM_REVOCATION_B64_CHAR_MASK];
+        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 2)) & CM_REVOCATION_B64_CHAR_MASK];
+        out[o++] = b64UrlChars[(v >> CM_REVOCATION_B64_BITS_PER_CHAR) & CM_REVOCATION_B64_CHAR_MASK];
+        out[o++] = b64UrlChars[v & CM_REVOCATION_B64_CHAR_MASK];
+    }
+    if (tail != 0) {
+        const uint8_t *g = &data[fullGroups * CM_REVOCATION_B64_INPUT_GROUP_BYTES];
+        uint32_t v = ((uint32_t)g[0] << (CM_BITS_PER_BYTE * 2)) |
+            ((tail == 2) ? ((uint32_t)g[1] << CM_BITS_PER_BYTE) : 0);
+        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 3)) & CM_REVOCATION_B64_CHAR_MASK];
+        out[o++] = b64UrlChars[(v >> (CM_REVOCATION_B64_BITS_PER_CHAR * 2)) & CM_REVOCATION_B64_CHAR_MASK];
+        if (tail == 2) {
+            out[o++] = b64UrlChars[(v >> CM_REVOCATION_B64_BITS_PER_CHAR) & CM_REVOCATION_B64_CHAR_MASK];
+        }
+    }
+    out[o] = '\0';
+    return CM_SUCCESS;
 }
 
 int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
@@ -48,22 +89,17 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
-    uint8_t md[CM_SHA256_HASH_LEN] = { 0 };
-    if (CmSha256(key->data, key->size, md) != CM_SUCCESS) {
-        CM_LOG_E("failed to digest revocation cache key");
-        /* legacy error code kept for compatibility; no OpenSSL involved anymore */
-        return CMR_ERROR_OPENSSL_FAIL;
-    }
-
-    static const char hexDigits[] = "0123456789abcdef";
-    char hex[CM_REVOCATION_HEX_LEN + 1] = { 0 };
-    for (uint32_t i = 0; i < CM_SHA256_HASH_LEN; ++i) {
-        hex[i * CM_REVOCATION_HEX_CHARS_PER_BYTE] = hexDigits[(md[i] >> CM_REVOCATION_NIBBLE_BITS) & 0x0F];
-        hex[i * CM_REVOCATION_HEX_CHARS_PER_BYTE + 1] = hexDigits[md[i] & 0x0F];
+    /* spec: the key itself is only base64-encoded to build the file name; hashing
+     * long or raw key material is the caller's job, see the CmSaveRevocationCache comment */
+    char encoded[CM_REVOCATION_B64_MAX_LEN + 1] = { 0 };
+    if (CmRevocationCacheBase64UrlEncode(key->data, key->size, encoded, sizeof(encoded)) != CM_SUCCESS) {
+        CM_LOG_E("revocation cache key encode buffer too small");
+        return CMR_ERROR_BUFFER_TOO_SMALL;
     }
 
     const char *prefix = (type == CM_REVOCATION_TYPE_OCSP) ? "ocsp" : "crl";
-    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s.cache", prefix, hex[0], hex[1], hex);
+    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s.cache", prefix,
+        encoded[0], encoded[1], encoded);
     if (ret < 0) {
         CM_LOG_E("revocation cache rel path buffer too small");
         return CMR_ERROR_BUFFER_TOO_SMALL;

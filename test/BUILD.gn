@@ -47,7 +47,6 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_revocation_cache_test.cpp",
     "unittest/src/cm_revocation_cache_rdb_test.cpp",
     "unittest/src/cm_revocation_cache_engine_test.cpp",
-    "unittest/src/cm_sha256_test.cpp",
   ]
 
   include_dirs = [

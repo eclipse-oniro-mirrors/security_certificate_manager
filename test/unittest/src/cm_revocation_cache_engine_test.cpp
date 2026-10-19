@@ -51,8 +51,6 @@ constexpr int64_t EXPIRE_TOLERANCE_SEC = 5; /* slack between the requested and t
 constexpr uint32_t REL_PATH_BUF_SIZE = 512; /* comfortably above any built rel path */
 constexpr uint32_t FILE_READ_BUF_SIZE = 64; /* 8-byte header + payload of a persisted file */
 constexpr uint32_t TINY_FILE_LEN = 4;       /* deliberately below the 8-byte expire header */
-constexpr uint32_t HASH_PREFIX_LEN = 2;     /* cache sub-directory prefix length */
-constexpr uint32_t SHA256_HEX_LEN = 64;     /* sha256 hex digest length */
 constexpr int NFTW_MAX_OPEN_FDS = 16;       /* max fds nftw may keep open while walking */
 constexpr int POLL_MAX_ROUNDS = 100;        /* bounded poll rounds for the async persistence */
 constexpr useconds_t POLL_INTERVAL_USEC = 100 * 1000; /* 100ms between two poll rounds */
@@ -517,11 +515,12 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
     char relA[REL_PATH_BUF_SIZE] = { 0 };
     ASSERT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, relA, sizeof(relA)), CM_SUCCESS);
     std::string rel(relA);
-    std::string dir = rel.substr(0, rel.rfind('/') + 1);   /* ocsp/<xx>/ */
-    std::string hash = rel.substr(dir.size());             /* <64hex>.cache */
-    /* the orphan .cache keeps the two-char prefix so cleanup derives its real path */
-    std::string orphanFull = std::string(REVOCATION_CACHE_DIR) + dir + hash.substr(0, HASH_PREFIX_LEN) +
-        std::string(SHA256_HEX_LEN - HASH_PREFIX_LEN, 'f') + ".cache";
+    std::string dir = rel.substr(0, rel.rfind('/') + 1);    /* ocsp/<xx>/ */
+    std::string name = rel.substr(dir.size());              /* <base64url>.cache */
+    /* the orphan .cache keeps the same prefix dir but a different encoded name */
+    std::string orphanName = name;
+    orphanName[0] = (orphanName[0] == 'A') ? 'B' : 'A';
+    std::string orphanFull = std::string(REVOCATION_CACHE_DIR) + dir + orphanName;
     std::string tmpFull = std::string(REVOCATION_CACHE_DIR) + dir + "leftover.tmp";
     std::string txtFull = std::string(REVOCATION_CACHE_DIR) + dir + "note.txt";
     const uint8_t one[] = "x";
