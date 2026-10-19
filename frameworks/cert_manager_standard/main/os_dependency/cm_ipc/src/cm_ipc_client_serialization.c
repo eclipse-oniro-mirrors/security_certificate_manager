@@ -19,7 +19,6 @@
 #include "cm_mem.h"
 
 #include "cm_param.h"
-#include "cm_x509.h"
 
 int32_t GetUint32FromBuffer(uint32_t *value, const struct CmBlob *srcBlob, uint32_t *srcOffset)
 {
@@ -129,64 +128,7 @@ int32_t CmCertificateListUnpackFromService(const struct CmBlob *outData, struct 
     return CM_SUCCESS;
 }
 
-static int32_t GetInfoFromX509Cert(X509 *x509cert, struct CertInfo *cInfo)
-{
-    int32_t subjectNameLen = GetX509SubjectNameLongFormat(x509cert, cInfo->subjectName, MAX_LEN_SUBJECT_NAME);
-    if (subjectNameLen <= 0) {
-        CM_LOG_E("get cert subjectName failed");
-        return CM_FAILURE;
-    }
-
-    int32_t issuerNameLen = GetX509IssueNameLongFormat(x509cert, cInfo->issuerName, MAX_LEN_ISSUER_NAME);
-    if (issuerNameLen <= 0) {
-        CM_LOG_E("get cert issuerName failed");
-        return CM_FAILURE;
-    }
-
-    int32_t serialLen = GetX509SerialNumber(x509cert, cInfo->serial, MAX_LEN_SERIAL);
-    if (serialLen <= 0) {
-        CM_LOG_E("get cert serial failed");
-        return CM_FAILURE;
-    }
-
-    int32_t notBeforeLen = GetX509NotBefore(x509cert, cInfo->notBefore, MAX_LEN_NOT_BEFORE);
-    if (notBeforeLen <= 0) {
-        CM_LOG_E("get cert notBefore failed");
-        return CM_FAILURE;
-    }
-
-    int32_t notAfterLen = GetX509NotAfter(x509cert, cInfo->notAfter, MAX_LEN_NOT_AFTER);
-    if (notAfterLen <= 0) {
-        CM_LOG_E("get cert notAfter failed");
-        return CM_FAILURE;
-    }
-
-    int32_t fingerprintLen = GetX509Fingerprint(x509cert, cInfo->fingerprintSha256, MAX_LEN_FINGER_PRINT_SHA256);
-    if (fingerprintLen <= 0) {
-        CM_LOG_E("get cert fingerprintSha256 failed");
-        return CM_FAILURE;
-    }
-    return CM_SUCCESS;
-}
-
-static int32_t GetInfoFromCertData(struct CertInfo *cInfo)
-{
-    X509 *cert = InitCertContext(cInfo->certInfo.data, cInfo->certInfo.size);
-    if (cert == NULL) {
-        CM_LOG_E("Parse X509 cert fail");
-        return CMR_ERROR_INVALID_CERT_FORMAT;
-    }
-
-    int32_t ret = GetInfoFromX509Cert(cert, cInfo);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("failed get cert info from x509 cert");
-        FreeCertContext(cert);
-        return ret;
-    }
-
-    FreeCertContext(cert);
-    return CM_SUCCESS;
-}
+#define CM_CERT_INFO_FIELD_NUM 6
 
 int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const struct CmBlob *certUri,
     struct CertInfo *cInfo)
@@ -208,11 +150,6 @@ int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const s
     }
     cInfo->certInfo.size = bufBlob.size;
 
-    ret = GetInfoFromCertData(cInfo);
-    if (ret != CM_SUCCESS) {
-        return ret;
-    }
-
     uint32_t status = 0;
     ret = GetUint32FromBuffer(&(status), outData, &offset);
     if (ret != CM_SUCCESS) {
@@ -230,6 +167,33 @@ int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const s
     if (memcpy_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, bufBlob.data, bufBlob.size) != EOK) {
         CM_LOG_E("copy alias failed");
         return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+
+    /* the six display fields are parsed from the certificate on the service
+     * side and carried as NUL-terminated blobs; field order matches
+     * CopyX509InfoToBuffer in cm_ipc_service_cert_pack.c */
+    struct {
+        char *dest;
+        uint32_t maxLen;
+    } fieldTable[CM_CERT_INFO_FIELD_NUM] = {
+        { cInfo->subjectName, MAX_LEN_SUBJECT_NAME },
+        { cInfo->issuerName, MAX_LEN_ISSUER_NAME },
+        { cInfo->serial, MAX_LEN_SERIAL },
+        { cInfo->notBefore, MAX_LEN_NOT_BEFORE },
+        { cInfo->notAfter, MAX_LEN_NOT_AFTER },
+        { cInfo->fingerprintSha256, MAX_LEN_FINGER_PRINT_SHA256 },
+    };
+    for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {
+        ret = CmGetBlobFromBuffer(&bufBlob, outData, &offset);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("get cert info field %u failed", i);
+            return ret;
+        }
+        (void)memset_s(fieldTable[i].dest, fieldTable[i].maxLen, 0, fieldTable[i].maxLen);
+        if (memcpy_s(fieldTable[i].dest, fieldTable[i].maxLen, bufBlob.data, bufBlob.size) != EOK) {
+            CM_LOG_E("copy cert info field %u failed", i);
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
     }
 
     (void)memset_s(cInfo->uri, MAX_LEN_URI, 0, MAX_LEN_URI); /* uri */

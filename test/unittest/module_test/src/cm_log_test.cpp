@@ -15,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include "cm_log.h"
 
 #include "securec.h"
@@ -644,10 +646,12 @@ HWTEST_F(CmLogTest, CmIpcClientTest026, TestSize.Level0)
     struct CmBlob certUri = { sizeof(certUriData), certUriData };
 
     uint8_t outDataBuf[DEFAULT_SIZE] = {0};
-    struct CmBlob outData = { sizeof(outDataBuf), outDataBuf }; /* invalid certInfo */
+    struct CmBlob outData = { sizeof(outDataBuf), outDataBuf }; /* all blobs empty but structurally valid */
 
     int32_t ret = CmCertificateInfoUnpackFromService(&outData, &certUri, &certInfoStr);
-    EXPECT_NE(ret, CM_SUCCESS);
+    /* x509 validation moved to the service side; an all-empty reply is
+     * structurally valid for the client */
+    EXPECT_EQ(ret, CM_SUCCESS);
 }
 
 /**
@@ -1324,6 +1328,110 @@ HWTEST_F(CmLogTest, CmIpcClientTest053, TestSize.Level0)
     EXPECT_EQ(ret, CMR_ERROR_PARAM_NOT_EXIST);
 
     CmFreeParamSet(&paramSet);
+}
+
+static const char *TEST_INFO_SUBJECT_NAME = "CN=CmTestSubject,OU=CmTestUnit,O=CmTestOrg";
+static const char *TEST_INFO_ISSUER_NAME = "CN=CmTestIssuer,OU=CmTestUnit,O=CmTestOrg";
+static const char *TEST_INFO_SERIAL = "00A1B2C3D4";
+static const char *TEST_INFO_NOT_BEFORE = "2026-01-01";
+static const char *TEST_INFO_NOT_AFTER = "2036-01-01";
+static const char *TEST_INFO_FINGERPRINT = "AA:BB:CC:DD:EE:FF";
+
+/* append one wire-format string blob: [u32 size][data padded to ALIGN_SIZE] */
+static int32_t AppendStrBlob(struct CmBlob *outBlob, uint32_t *offset, const char *str)
+{
+    uint32_t len = strlen(str) + 1; /* blob carries the NUL terminator */
+    if (memcpy_s(outBlob->data + *offset, outBlob->size - *offset, &len, sizeof(len)) != EOK) {
+        return CM_FAILURE;
+    }
+    *offset += sizeof(len);
+    if (memcpy_s(outBlob->data + *offset, outBlob->size - *offset, str, len) != EOK) {
+        return CM_FAILURE;
+    }
+    *offset += ALIGN_SIZE(len);
+    return CM_SUCCESS;
+}
+
+/**
+* @tc.name: CmIpcClientTest054
+* @tc.desc: TestIpcClient: CmCertificateInfoUnpackFromService with the six service-parsed fields
+* @tc.type: FUNC
+* @tc.require: AR000H0MIA /SR000H09NA
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest054, TestSize.Level0)
+{
+    struct CertInfo certInfoStr;
+    (void)memset_s(&certInfoStr, sizeof(certInfoStr), 0, sizeof(certInfoStr));
+
+    uint8_t certInfoData[DEFAULT_SIZE] = {0};
+    certInfoStr.certInfo.size = sizeof(certInfoData);
+    certInfoStr.certInfo.data = certInfoData;
+
+    uint8_t certUriData[] = "oh:t=ak;o=Test054;a=100;u=100";
+    struct CmBlob certUri = { sizeof(certUriData), certUriData };
+
+    uint8_t outDataBuf[DEFAULT_SIZE] = {0};
+    struct CmBlob outData = { sizeof(outDataBuf), outDataBuf };
+
+    /* legacy layout: certData + status(1) + alias, then the six new fields */
+    struct CertInfoLen infoLen = { false, 0, false, 0, true, 1, false, 0, true, 8 };
+    int32_t ret = ConstructCertBuf(&infoLen, &outData);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    uint32_t offset = outData.size;
+    ret = AppendStrBlob(&outData, &offset, TEST_INFO_SUBJECT_NAME);
+    ASSERT_EQ(ret, CM_SUCCESS);
+    ret = AppendStrBlob(&outData, &offset, TEST_INFO_ISSUER_NAME);
+    ASSERT_EQ(ret, CM_SUCCESS);
+    ret = AppendStrBlob(&outData, &offset, TEST_INFO_SERIAL);
+    ASSERT_EQ(ret, CM_SUCCESS);
+    ret = AppendStrBlob(&outData, &offset, TEST_INFO_NOT_BEFORE);
+    ASSERT_EQ(ret, CM_SUCCESS);
+    ret = AppendStrBlob(&outData, &offset, TEST_INFO_NOT_AFTER);
+    ASSERT_EQ(ret, CM_SUCCESS);
+    ret = AppendStrBlob(&outData, &offset, TEST_INFO_FINGERPRINT);
+    ASSERT_EQ(ret, CM_SUCCESS);
+    outData.size = offset;
+
+    ret = CmCertificateInfoUnpackFromService(&outData, &certUri, &certInfoStr);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_STREQ(certInfoStr.subjectName, TEST_INFO_SUBJECT_NAME);
+    EXPECT_STREQ(certInfoStr.issuerName, TEST_INFO_ISSUER_NAME);
+    EXPECT_STREQ(certInfoStr.serial, TEST_INFO_SERIAL);
+    EXPECT_STREQ(certInfoStr.notBefore, TEST_INFO_NOT_BEFORE);
+    EXPECT_STREQ(certInfoStr.notAfter, TEST_INFO_NOT_AFTER);
+    EXPECT_STREQ(certInfoStr.fingerprintSha256, TEST_INFO_FINGERPRINT);
+    EXPECT_FALSE(certInfoStr.status); /* status 1 means the cert is disabled */
+}
+
+/**
+* @tc.name: CmIpcClientTest055
+* @tc.desc: TestIpcClient: CmCertificateInfoUnpackFromService without the six new fields
+* @tc.type: FUNC
+* @tc.require: AR000H0MIA /SR000H09NA
+*/
+HWTEST_F(CmLogTest, CmIpcClientTest055, TestSize.Level0)
+{
+    struct CertInfo certInfoStr;
+    (void)memset_s(&certInfoStr, sizeof(certInfoStr), 0, sizeof(certInfoStr));
+
+    uint8_t certInfoData[DEFAULT_SIZE] = {0};
+    certInfoStr.certInfo.size = sizeof(certInfoData);
+    certInfoStr.certInfo.data = certInfoData;
+
+    uint8_t certUriData[] = "oh:t=ak;o=Test055;a=100;u=100";
+    struct CmBlob certUri = { sizeof(certUriData), certUriData };
+
+    uint8_t outDataBuf[DEFAULT_SIZE] = {0};
+    struct CmBlob outData = { sizeof(outDataBuf), outDataBuf };
+
+    /* legacy 3-field layout only: the subjectName read runs out of buffer */
+    struct CertInfoLen infoLen = { false, 0, false, 0, true, 0, false, 0, true, 4 };
+    int32_t ret = ConstructCertBuf(&infoLen, &outData);
+    ASSERT_EQ(ret, CM_SUCCESS);
+
+    ret = CmCertificateInfoUnpackFromService(&outData, &certUri, &certInfoStr);
+    EXPECT_NE(ret, CM_SUCCESS);
 }
 }
 // end of namespace

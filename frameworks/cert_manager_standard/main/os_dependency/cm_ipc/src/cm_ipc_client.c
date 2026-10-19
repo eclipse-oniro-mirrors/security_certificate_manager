@@ -17,7 +17,6 @@
 #include "cm_ipc_client_serialization.h"
 #include "cm_log.h"
 #include "cm_mem.h"
-#include "cm_x509.h"
 #include "cm_param.h"
 #include "cm_request.h"
 #include "cm_revocation_cache.h"
@@ -109,9 +108,16 @@ int32_t CmClientGetCertList(const uint32_t store, struct CertList *certificateLi
 
 static int32_t GetCertInfoInitOutData(struct CmBlob *outInfoBlob)
 {
-    /* buff struct: certDataBlob + status + aliasBlob */
+    /* buff struct: certDataBlob + status + aliasBlob + subjectName + issuerName + serial +
+     * notBefore + notAfter + fingerprint; must mirror CmServiceGetCertInfoPack */
     uint32_t buffSize = sizeof(uint32_t) + MAX_LEN_CERTIFICATE + sizeof(uint32_t) +
-        MAX_LEN_CERT_ALIAS + sizeof(uint32_t);
+        MAX_LEN_CERT_ALIAS + sizeof(uint32_t) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_SUBJECT_NAME) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_ISSUER_NAME) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_SERIAL) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_NOT_BEFORE) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_NOT_AFTER) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_FINGER_PRINT_SHA256);
 
     outInfoBlob->data = (uint8_t *)CmMalloc(buffSize);
     if (outInfoBlob->data == NULL) {
