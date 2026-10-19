@@ -51,6 +51,7 @@ ohos_static_library("libcert_manager_common_standard_static") {
     "src/cm_param.c",
     "src/cm_pfx.c",
     "src/cm_revocation_cache.c",
+    "src/cm_sha256.c",
     "src/cm_util.c",
     "src/cm_x509.c",
     "src/cm_type_free.c",
