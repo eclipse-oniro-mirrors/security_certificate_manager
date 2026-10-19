@@ -149,6 +149,12 @@ int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const s
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
     cInfo->certInfo.size = bufBlob.size;
+    if (bufBlob.size == 0) {
+        /* the service skips packing when the cert file is empty; keep
+         * returning the error the local X509 parse used to produce */
+        CM_LOG_E("Parse X509 cert fail");
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
 
     uint32_t status = 0;
     ret = GetUint32FromBuffer(&(status), outData, &offset);

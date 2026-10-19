@@ -125,7 +125,7 @@ static void FreeX509FieldBlobs(struct CmBlob *fields)
 static int32_t CopyX509InfoToBuffer(const struct CmBlob *certificateData, struct CmBlob *certificateInfo,
     uint32_t *offset)
 {
-    static uint32_t fieldMaxLen[CM_CERT_INFO_FIELD_NUM] = {
+    static const uint32_t fieldMaxLen[CM_CERT_INFO_FIELD_NUM] = {
         MAX_LEN_SUBJECT_NAME, MAX_LEN_ISSUER_NAME, MAX_LEN_SERIAL,
         MAX_LEN_NOT_BEFORE, MAX_LEN_NOT_AFTER, MAX_LEN_FINGER_PRINT_SHA256,
     };

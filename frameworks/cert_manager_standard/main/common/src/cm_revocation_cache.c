@@ -51,6 +51,7 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
     uint8_t md[CM_SHA256_HASH_LEN] = { 0 };
     if (CmSha256(key->data, key->size, md) != CM_SUCCESS) {
         CM_LOG_E("failed to digest revocation cache key");
+        /* legacy error code kept for compatibility; no OpenSSL involved anymore */
         return CMR_ERROR_OPENSSL_FAIL;
     }
 

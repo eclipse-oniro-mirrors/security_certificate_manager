@@ -646,12 +646,12 @@ HWTEST_F(CmLogTest, CmIpcClientTest026, TestSize.Level0)
     struct CmBlob certUri = { sizeof(certUriData), certUriData };
 
     uint8_t outDataBuf[DEFAULT_SIZE] = {0};
-    struct CmBlob outData = { sizeof(outDataBuf), outDataBuf }; /* all blobs empty but structurally valid */
+    struct CmBlob outData = { sizeof(outDataBuf), outDataBuf }; /* cert file empty */
 
     int32_t ret = CmCertificateInfoUnpackFromService(&outData, &certUri, &certInfoStr);
-    /* x509 validation moved to the service side; an all-empty reply is
-     * structurally valid for the client */
-    EXPECT_EQ(ret, CM_SUCCESS);
+    /* a zero-size certData blob means the service found an empty cert file;
+     * the client keeps rejecting it like the old local X509 parse did */
+    EXPECT_NE(ret, CM_SUCCESS);
 }
 
 /**
@@ -1379,6 +1379,7 @@ HWTEST_F(CmLogTest, CmIpcClientTest054, TestSize.Level0)
     ASSERT_EQ(ret, CM_SUCCESS);
 
     uint32_t offset = outData.size;
+    outData.size = sizeof(outDataBuf); /* restore capacity: ConstructCertBuf shrank it */
     ret = AppendStrBlob(&outData, &offset, TEST_INFO_SUBJECT_NAME);
     ASSERT_EQ(ret, CM_SUCCESS);
     ret = AppendStrBlob(&outData, &offset, TEST_INFO_ISSUER_NAME);
