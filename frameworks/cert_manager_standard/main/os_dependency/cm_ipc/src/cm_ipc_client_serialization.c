@@ -130,26 +130,21 @@ int32_t CmCertificateListUnpackFromService(const struct CmBlob *outData, struct 
 
 #define CM_CERT_INFO_FIELD_NUM 6
 
-int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const struct CmBlob *certUri,
-    struct CertInfo *cInfo)
+/* cert data, status and alias come first in the packed buffer */
+static int32_t UnpackCertHeadFromService(const struct CmBlob *outData, uint32_t *offset,
+    struct CertInfo *cInfo, struct CmBlob *bufBlob)
 {
-    if (CmCheckBlob(&(cInfo->certInfo))) {
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-
-    struct CmBlob bufBlob = { 0, NULL };
-    uint32_t offset = 0;
-    int32_t ret = CmGetBlobFromBuffer(&bufBlob, outData, &offset);
+    int32_t ret = CmGetBlobFromBuffer(bufBlob, outData, offset);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("get cert data faild");
         return ret;
     }
-    if (memcpy_s(cInfo->certInfo.data, cInfo->certInfo.size, bufBlob.data, bufBlob.size) != EOK) {
+    if (memcpy_s(cInfo->certInfo.data, cInfo->certInfo.size, bufBlob->data, bufBlob->size) != EOK) {
         CM_LOG_E("copy cert data failed");
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
-    cInfo->certInfo.size = bufBlob.size;
-    if (bufBlob.size == 0) {
+    cInfo->certInfo.size = bufBlob->size;
+    if (bufBlob->size == 0) {
         /* the service skips packing when the cert file is empty; keep
          * returning the error the local X509 parse used to produce */
         CM_LOG_E("Parse X509 cert fail");
@@ -157,27 +152,30 @@ int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const s
     }
 
     uint32_t status = 0;
-    ret = GetUint32FromBuffer(&(status), outData, &offset);
+    ret = GetUint32FromBuffer(&(status), outData, offset);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("copy status failed");
         return ret;
     }
     cInfo->status = (status >= 1) ? false : true;
 
-    ret = CmGetBlobFromBuffer(&bufBlob, outData, &offset);
+    ret = CmGetBlobFromBuffer(bufBlob, outData, offset);
     if (ret != CM_SUCCESS) {
         return ret;
     }
-
     (void)memset_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, 0, MAX_LEN_CERT_ALIAS);
-    if (memcpy_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, bufBlob.data, bufBlob.size) != EOK) {
+    if (memcpy_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, bufBlob->data, bufBlob->size) != EOK) {
         CM_LOG_E("copy alias failed");
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
+    return CM_SUCCESS;
+}
 
-    /* the six display fields are parsed from the certificate on the service
-     * side and carried as NUL-terminated blobs; field order matches
-     * CopyX509InfoToBuffer in cm_ipc_service_cert_pack.c */
+/* the six display fields are NUL-terminated blobs packed by the service-side
+ * CopyX509InfoToBuffer; field order must match that packer */
+static int32_t UnpackCertDisplayFieldsFromService(const struct CmBlob *outData, uint32_t *offset,
+    struct CertInfo *cInfo, struct CmBlob *bufBlob)
+{
     struct {
         char *dest;
         uint32_t maxLen;
@@ -189,17 +187,38 @@ int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const s
         { cInfo->notAfter, MAX_LEN_NOT_AFTER },
         { cInfo->fingerprintSha256, MAX_LEN_FINGER_PRINT_SHA256 },
     };
+    int32_t ret = CM_SUCCESS;
     for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {
-        ret = CmGetBlobFromBuffer(&bufBlob, outData, &offset);
+        ret = CmGetBlobFromBuffer(bufBlob, outData, offset);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("get cert info field %u failed", i);
             return ret;
         }
         (void)memset_s(fieldTable[i].dest, fieldTable[i].maxLen, 0, fieldTable[i].maxLen);
-        if (memcpy_s(fieldTable[i].dest, fieldTable[i].maxLen, bufBlob.data, bufBlob.size) != EOK) {
+        if (memcpy_s(fieldTable[i].dest, fieldTable[i].maxLen, bufBlob->data, bufBlob->size) != EOK) {
             CM_LOG_E("copy cert info field %u failed", i);
             return CMR_ERROR_MEM_OPERATION_COPY;
         }
+    }
+    return CM_SUCCESS;
+}
+
+int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const struct CmBlob *certUri,
+    struct CertInfo *cInfo)
+{
+    if (CmCheckBlob(&(cInfo->certInfo))) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    struct CmBlob bufBlob = { 0, NULL };
+    uint32_t offset = 0;
+    int32_t ret = UnpackCertHeadFromService(outData, &offset, cInfo, &bufBlob);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    ret = UnpackCertDisplayFieldsFromService(outData, &offset, cInfo, &bufBlob);
+    if (ret != CM_SUCCESS) {
+        return ret;
     }
 
     (void)memset_s(cInfo->uri, MAX_LEN_URI, 0, MAX_LEN_URI); /* uri */

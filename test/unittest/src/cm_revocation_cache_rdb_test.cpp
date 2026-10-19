@@ -16,7 +16,10 @@
 #include <gtest/gtest.h>
 
 #include <climits>
+#include <optional>
+#include <string>
 #include <unistd.h>
+#include <vector>
 
 #include "cert_manager_storage.h"
 #include "cm_revocation_cache_rdb.h"
@@ -35,21 +38,32 @@ constexpr int64_t META_VALUE_BEFORE_DELETE = 424242;    /* meta value stored rig
 constexpr int64_t META_VALUE_REWRITE = 999;             /* proves the meta row is re-created */
 constexpr uint64_t NON_ZERO_SENTINEL_SIZE = 77;         /* must be reset to 0 by the query */
 
+/* snapshot of all cache rel-paths recorded in the RDB; nullopt when the query itself fails */
+std::optional<std::vector<std::string>> QueryCacheFilePaths()
+{
+    /* the array is owned by the C query API until FreeRevocationCacheFilePaths */
+    char **paths = nullptr;
+    uint32_t count = 0;
+    if (QueryAllRevocationCacheFilePaths(&paths, &count) != CM_SUCCESS) {
+        return std::nullopt;
+    }
+    std::vector<std::string> result;
+    for (uint32_t i = 0; i < count; i++) {
+        result.emplace_back(paths[i]);
+    }
+    FreeRevocationCacheFilePaths(paths, count);
+    return result;
+}
+
 /* remove all revocation cache records, files and meta left by this or previous test runs */
 void CleanupRevocationCacheState()
 {
-    char **paths = nullptr;
-    uint32_t count = 0;
-    if (QueryAllRevocationCacheFilePaths(&paths, &count) == CM_SUCCESS) {
-        for (uint32_t i = 0; i < count; i++) {
-            char full[PATH_MAX] = { 0 };
-            if (snprintf_s(full, sizeof(full), sizeof(full) - 1, "%s%s", REVOCATION_CACHE_DIR,
-                paths[i]) >= 0) {
-                (void)unlink(full);
-            }
-            (void)DeleteRevocationCacheRecord(paths[i]);
+    const auto paths = QueryCacheFilePaths();
+    if (paths.has_value()) {
+        for (const auto &rel : *paths) {
+            (void)unlink((std::string(REVOCATION_CACHE_DIR) + rel).c_str());
+            (void)DeleteRevocationCacheRecord(rel.c_str());
         }
-        FreeRevocationCacheFilePaths(paths, count);
     }
     (void)DeleteRevocationCacheMeta();
 }
