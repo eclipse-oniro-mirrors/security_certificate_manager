@@ -80,7 +80,6 @@ ohos_static_library("libcert_manager_ipc_client_static") {
     "eventhandler:libeventhandler",
     "hilog:libhilog",
     "ipc:ipc_single",
-    "openssl:libcrypto_shared",
     "samgr:samgr_proxy",
     "bounds_checking_function:libsec_shared",
   ]
