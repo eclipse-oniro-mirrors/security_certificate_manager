@@ -23,7 +23,7 @@
 #include <unistd.h>
 
 #include "access_token.h"
-#include "accesstoken_kit.h"
+#include "accesstoken_compat_kit.h"
 #include "ipc_skeleton.h"
 #include "securec.h"
 
@@ -43,7 +43,7 @@ static_assert(static_cast<int32_t>(ATokenTypeEnum::TOKEN_SHELL) == CM_REVOCATION
 
 static bool CmRevocationCacheIsCallerAllowed(void)
 {
-    auto tokenType = AccessTokenKit::GetTokenType(
+    auto tokenType = AccessTokenCompatKit::GetTokenTypeFlag(
         static_cast<AccessTokenID>(OHOS::IPCSkeleton::GetSelfTokenID()));
     return (tokenType == ATokenTypeEnum::TOKEN_HAP) || (tokenType == ATokenTypeEnum::TOKEN_NATIVE);
 }
@@ -137,7 +137,7 @@ extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, e
         return ret;
     }
 
-    auto tokenType = AccessTokenKit::GetTokenType(
+    auto tokenType = AccessTokenCompatKit::GetTokenTypeFlag(
         static_cast<AccessTokenID>(OHOS::IPCSkeleton::GetSelfTokenID()));
     char basePath[CERT_MAX_PATH_LEN] = { 0 };
     ret = CmRevocationCacheBuildBasePath(static_cast<int32_t>(tokenType), basePath, sizeof(basePath));
