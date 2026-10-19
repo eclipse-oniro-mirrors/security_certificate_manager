@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <time.h>
 
-#include <openssl/evp.h>
+#include "cm_sha256.h"
 
 #include "cm_log.h"
 #include "cm_type.h"
@@ -26,7 +26,7 @@
 
 #define CM_REVOCATION_HEX_CHARS_PER_BYTE 2
 #define CM_REVOCATION_NIBBLE_BITS 4 /* hex half-byte bits */
-#define CM_REVOCATION_HEX_LEN (EVP_MAX_MD_SIZE * CM_REVOCATION_HEX_CHARS_PER_BYTE)
+#define CM_REVOCATION_HEX_LEN (CM_SHA256_HASH_LEN * CM_REVOCATION_HEX_CHARS_PER_BYTE)
 
 static bool CmRevocationCacheIsTypeValid(uint32_t type)
 {
@@ -48,16 +48,15 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
-    uint8_t md[EVP_MAX_MD_SIZE] = { 0 };
-    unsigned int mdLen = 0;
-    if (EVP_Digest(key->data, key->size, md, &mdLen, EVP_sha256(), NULL) != 1) {
+    uint8_t md[CM_SHA256_HASH_LEN] = { 0 };
+    if (CmSha256(key->data, key->size, md) != CM_SUCCESS) {
         CM_LOG_E("failed to digest revocation cache key");
         return CMR_ERROR_OPENSSL_FAIL;
     }
 
     static const char hexDigits[] = "0123456789abcdef";
     char hex[CM_REVOCATION_HEX_LEN + 1] = { 0 };
-    for (unsigned int i = 0; i < mdLen; ++i) {
+    for (uint32_t i = 0; i < CM_SHA256_HASH_LEN; ++i) {
         hex[i * CM_REVOCATION_HEX_CHARS_PER_BYTE] = hexDigits[(md[i] >> CM_REVOCATION_NIBBLE_BITS) & 0x0F];
         hex[i * CM_REVOCATION_HEX_CHARS_PER_BYTE + 1] = hexDigits[md[i] & 0x0F];
     }
