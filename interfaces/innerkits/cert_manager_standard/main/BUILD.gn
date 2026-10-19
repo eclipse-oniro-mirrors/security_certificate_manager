@@ -62,7 +62,7 @@ if (os_level == "standard") {
       "init:libbegetutil",
       "bounds_checking_function:libsec_shared",
       "hilog:libhilog",
-      "access_token:libaccesstoken_sdk",
+      "access_token:libaccesstoken_compat_sdk",
       "ipc:ipc_single",
       "openssl:libcrypto_shared",
     ]
