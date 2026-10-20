@@ -42,7 +42,7 @@ using namespace OHOS;
 using namespace OHOS::Security::CertManager;
 
 static const char *REVOCATION_CACHE_SELECT_COLUMNS =
-    "SELECT EXPIRE_TIME_UTC, FILE_PATH, DATA_SIZE FROM ";
+    "SELECT KEY, TYPE, EXPIRE_TIME_UTC, FILE_PATH, DATA_SIZE FROM ";
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,7 +55,7 @@ int32_t CreateRevocationCacheRdb(void)
     cacheConfig.dbName = CERT_MANAGER_RDB_NAME;
     cacheConfig.tableName = REVOCATION_CACHE_TABLE_NAME;
     cacheConfig.createTableSql = std::string("CREATE TABLE IF NOT EXISTS " + REVOCATION_CACHE_TABLE_NAME +
-        "(EXPIRE_TIME_UTC INTEGER NOT NULL, WRITE_TIME_UTC INTEGER NOT NULL, " +
+        "(KEY TEXT NOT NULL, TYPE TEXT NOT NULL, EXPIRE_TIME_UTC INTEGER NOT NULL, WRITE_TIME_UTC INTEGER NOT NULL, " +
         "FILE_PATH TEXT PRIMARY KEY, DATA_SIZE INTEGER NOT NULL)");
     revocationCacheRdbDataManager = std::make_shared<CmRdbDataManager>(cacheConfig);
     if (!revocationCacheRdbDataManager->CreateTable()) {
@@ -91,6 +91,8 @@ int32_t InsertRevocationCacheRecord(const struct RevocationCacheRecord *record)
     }
 
     NativeRdb::ValuesBucket valuesBucket;
+    valuesBucket.PutString(COLUMN_KEY, std::string(record->key));
+    valuesBucket.PutString(COLUMN_TYPE, std::string(record->type));
     valuesBucket.PutLong(COLUMN_EXPIRE_TIME_UTC, record->expireTimeUtc);
     valuesBucket.PutLong(COLUMN_WRITE_TIME_UTC, static_cast<int64_t>(std::time(nullptr)));
     valuesBucket.PutString(COLUMN_FILE_PATH, std::string(record->filePath));
@@ -167,44 +169,72 @@ int32_t QueryRevocationCacheSumSize(uint64_t *totalSize)
     return CM_SUCCESS;
 }
 
+/* fetch one TEXT column into value; logs the column name on failure */
+static int32_t ReadStringColumn(const std::shared_ptr<NativeRdb::AbsSharedResultSet> &resultSet,
+    const std::string &column, std::string &value)
+{
+    int index = 0;
+    if (resultSet->GetColumnIndex(column, index) != NativeRdb::E_OK) {
+        CM_LOG_E("GetColumnIndex for %s failed", column.c_str());
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    if (resultSet->GetString(index, value) != NativeRdb::E_OK) {
+        CM_LOG_E("GetString for %s failed", column.c_str());
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    return CM_SUCCESS;
+}
+
+/* fetch one INTEGER column into value; logs the column name on failure */
+static int32_t ReadLongColumn(const std::shared_ptr<NativeRdb::AbsSharedResultSet> &resultSet,
+    const std::string &column, int64_t &value)
+{
+    int index = 0;
+    if (resultSet->GetColumnIndex(column, index) != NativeRdb::E_OK) {
+        CM_LOG_E("GetColumnIndex for %s failed", column.c_str());
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    if (resultSet->GetLong(index, value) != NativeRdb::E_OK) {
+        CM_LOG_E("GetLong for %s failed", column.c_str());
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    return CM_SUCCESS;
+}
+
 static int32_t ReadRecordFromResultSet(
     const std::shared_ptr<NativeRdb::AbsSharedResultSet> &resultSet, struct RevocationCacheRecord *record)
 {
-    int expireIndex = 0;
-    if (resultSet->GetColumnIndex(COLUMN_EXPIRE_TIME_UTC, expireIndex) != NativeRdb::E_OK) {
-        CM_LOG_E("GetColumnIndex for expire failed");
+    std::string key;
+    if (ReadStringColumn(resultSet, COLUMN_KEY, key) != CM_SUCCESS) {
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    std::string type;
+    if (ReadStringColumn(resultSet, COLUMN_TYPE, type) != CM_SUCCESS) {
         return CMR_ERROR_QUERY_RDB_DATA_FAIL;
     }
     int64_t expire = 0;
-    if (resultSet->GetLong(expireIndex, expire) != NativeRdb::E_OK) {
-        CM_LOG_E("GetLong for expire failed");
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-
-    int pathIndex = 0;
-    if (resultSet->GetColumnIndex(COLUMN_FILE_PATH, pathIndex) != NativeRdb::E_OK) {
-        CM_LOG_E("GetColumnIndex for path failed");
+    if (ReadLongColumn(resultSet, COLUMN_EXPIRE_TIME_UTC, expire) != CM_SUCCESS) {
         return CMR_ERROR_QUERY_RDB_DATA_FAIL;
     }
     std::string path;
-    if (resultSet->GetString(pathIndex, path) != NativeRdb::E_OK) {
-        CM_LOG_E("GetString for path failed");
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-
-    int sizeIndex = 0;
-    if (resultSet->GetColumnIndex(COLUMN_DATA_SIZE, sizeIndex) != NativeRdb::E_OK) {
-        CM_LOG_E("GetColumnIndex for size failed");
+    if (ReadStringColumn(resultSet, COLUMN_FILE_PATH, path) != CM_SUCCESS) {
         return CMR_ERROR_QUERY_RDB_DATA_FAIL;
     }
     int64_t size = 0;
-    if (resultSet->GetLong(sizeIndex, size) != NativeRdb::E_OK) {
-        CM_LOG_E("GetLong for size failed");
+    if (ReadLongColumn(resultSet, COLUMN_DATA_SIZE, size) != CM_SUCCESS) {
         return CMR_ERROR_QUERY_RDB_DATA_FAIL;
     }
 
     record->expireTimeUtc = expire;
     record->dataSize = size < 0 ? 0 : static_cast<uint64_t>(size);
+    if (memcpy_s(record->key, sizeof(record->key), key.c_str(), key.size() + 1) != EOK) {
+        CM_LOG_E("memcpy_s key failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    if (memcpy_s(record->type, sizeof(record->type), type.c_str(), type.size() + 1) != EOK) {
+        CM_LOG_E("memcpy_s type failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
     if (memcpy_s(record->filePath, sizeof(record->filePath), path.c_str(), path.size() + 1) != EOK) {
         CM_LOG_E("memcpy_s filePath failed");
         return CMR_ERROR_MEM_OPERATION_COPY;

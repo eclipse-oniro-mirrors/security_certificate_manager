@@ -1791,7 +1791,7 @@ void CmIpcServiceSaveRevocationCache(const struct CmBlob *paramSetBlob, struct C
         /* The shared revocation cache accepts writes from any HAP/native caller by design;
          * record the caller for auditing even though no permission gate is applied here. */
         CM_LOG_I("SaveRevocationCache from uid=%u userId=%u", cmContext.uid, cmContext.userId);
-        int64_t expireIn = CmRevocationCacheDecodeInt64Be(expire8.data);
+        int64_t expireIn = CmRevocationCacheDecodeInt64Be(&expire8);
         int64_t expire = 0;
         ret = CmRevocationCacheValidateSaveParams(&key, type, &data, expireIn, &expire);
         if (ret != CM_SUCCESS) {

@@ -15,70 +15,40 @@
 
 #include "cm_revocation_cache.h"
 
+#include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include "cm_log.h"
 #include "cm_type.h"
 #include "securec.h"
 
-#define CM_REVOCATION_B64_INPUT_GROUP_BYTES 3
-#define CM_REVOCATION_B64_OUTPUT_GROUP_CHARS 4
-#define CM_REVOCATION_B64_BITS_PER_CHAR 6
-#define CM_REVOCATION_B64_CHAR_MASK ((1U << CM_REVOCATION_B64_BITS_PER_CHAR) - 1)
-/* worst case unpadded output length for a CM_REVOCATION_CACHE_KEY_MAX_LEN byte key */
-#define CM_REVOCATION_B64_MAX_LEN \
-    (((CM_REVOCATION_CACHE_KEY_MAX_LEN + CM_REVOCATION_B64_INPUT_GROUP_BYTES - 1) / \
-    CM_REVOCATION_B64_INPUT_GROUP_BYTES) * CM_REVOCATION_B64_OUTPUT_GROUP_CHARS)
+#define CM_REVOCATION_HEX_CHARS_PER_BYTE 2
+#define CM_REVOCATION_HEX_BITS_PER_NIBBLE 4
+#define CM_REVOCATION_HEX_NIBBLE_MASK 0x0F
+#define CM_REVOCATION_PREFIX_DIR_CHARS 2 /* fanout dir: first two encoded-name chars */
 
 static bool CmRevocationCacheIsTypeValid(uint32_t type)
 {
     return (type == CM_REVOCATION_TYPE_OCSP) || (type == CM_REVOCATION_TYPE_CRL);
 }
 
-/* RFC 4648 section 5 base64url without padding: the encoded key becomes the
- * storage file name, so the URL-safe alphabet keeps '/' out of derived paths. */
-static int32_t CmRevocationCacheBase64UrlEncode(const uint8_t *data, uint32_t size,
-    char *out, uint32_t outLen)
+/* lowercase hex: the encoded key becomes the storage file name, and the hex
+ * alphabet can never introduce '/' into derived paths */
+static int32_t CmRevocationCacheHexEncode(const uint8_t *data, uint32_t size, char *out, uint32_t outLen)
 {
-    uint32_t fullGroups = size / CM_REVOCATION_B64_INPUT_GROUP_BYTES;
-    uint32_t tail = size % CM_REVOCATION_B64_INPUT_GROUP_BYTES;
-    uint32_t need = fullGroups * CM_REVOCATION_B64_OUTPUT_GROUP_CHARS + ((tail == 0) ? 0 : (tail + 1));
+    uint32_t need = size * CM_REVOCATION_HEX_CHARS_PER_BYTE;
     if (outLen < need + 1) { /* room for the terminator */
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
 
-    static const char b64UrlChars[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    /* same MSB-first slicing as CmBase64Encode in cm_ukey_dialog_common.cpp, but
-     * with the URL-safe alphabet and no padding: the result is a file name */
-    uint32_t o = 0;
-    uint32_t i = 0;
-    for (; i + CM_REVOCATION_B64_INPUT_GROUP_BYTES <= size; i += CM_REVOCATION_B64_INPUT_GROUP_BYTES) {
-        uint32_t v = 0;
-        for (uint32_t b = 0; b < CM_REVOCATION_B64_INPUT_GROUP_BYTES; b++) {
-            v = (v << CM_BITS_PER_BYTE) | data[i + b];
-        }
-        for (uint32_t c = CM_REVOCATION_B64_OUTPUT_GROUP_CHARS; c > 0; c--) {
-            out[o++] = b64UrlChars[(v >> ((c - 1) * CM_REVOCATION_B64_BITS_PER_CHAR)) &
-                CM_REVOCATION_B64_CHAR_MASK];
-        }
+    static const char hexChars[] = "0123456789abcdef";
+    for (uint32_t i = 0; i < size; i++) {
+        out[i * CM_REVOCATION_HEX_CHARS_PER_BYTE] = hexChars[data[i] >> CM_REVOCATION_HEX_BITS_PER_NIBBLE];
+        out[i * CM_REVOCATION_HEX_CHARS_PER_BYTE + 1] = hexChars[data[i] & CM_REVOCATION_HEX_NIBBLE_MASK];
     }
-    if (tail != 0) {
-        uint32_t v = 0;
-        for (uint32_t b = 0; b < tail; b++) {
-            v = (v << CM_BITS_PER_BYTE) | data[i + b];
-        }
-        /* left-align the tail group so it slices exactly like a full group */
-        v <<= (CM_REVOCATION_B64_INPUT_GROUP_BYTES - tail) * CM_BITS_PER_BYTE;
-        uint32_t tailChars = tail + 1; /* 1 byte -> 2 chars, 2 bytes -> 3 chars */
-        for (uint32_t c = CM_REVOCATION_B64_OUTPUT_GROUP_CHARS;
-            c > CM_REVOCATION_B64_OUTPUT_GROUP_CHARS - tailChars; c--) {
-            out[o++] = b64UrlChars[(v >> ((c - 1) * CM_REVOCATION_B64_BITS_PER_CHAR)) &
-                CM_REVOCATION_B64_CHAR_MASK];
-        }
-    }
-    out[o] = '\0';
+    out[need] = '\0';
     return CM_SUCCESS;
 }
 
@@ -97,10 +67,10 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
-    /* spec: the key itself is only base64-encoded to build the file name; hashing
+    /* spec: the key itself is only hex-encoded to build the file name; hashing
      * long or raw key material is the caller's job, see the CmSaveRevocationCache comment */
-    char encoded[CM_REVOCATION_B64_MAX_LEN + 1] = { 0 };
-    if (CmRevocationCacheBase64UrlEncode(key->data, key->size, encoded, sizeof(encoded)) != CM_SUCCESS) {
+    char encoded[CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN + 1] = { 0 };
+    if (CmRevocationCacheHexEncode(key->data, key->size, encoded, sizeof(encoded)) != CM_SUCCESS) {
         CM_LOG_E("revocation cache key encode buffer too small");
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
@@ -115,25 +85,86 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
     return CM_SUCCESS;
 }
 
-void CmRevocationCacheEncodeInt64Be(int64_t v, uint8_t *out8)
+static bool CmRevocationCacheIsHexChar(char c)
 {
-    if (out8 == NULL) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+}
+
+int32_t CmRevocationCacheValidateRelPath(const char *relPath)
+{
+    if ((relPath == NULL) || (relPath[0] == '\0')) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    /* "ocsp" or "crl", then a two-char hex prefix dir, then the encoded name */
+    const char *name = NULL;
+    if (strncmp(relPath, "ocsp/", strlen("ocsp/")) == 0) {
+        name = relPath + strlen("ocsp/");
+    } else if (strncmp(relPath, "crl/", strlen("crl/")) == 0) {
+        name = relPath + strlen("crl/");
+    } else {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (!CmRevocationCacheIsHexChar(name[0]) || !CmRevocationCacheIsHexChar(name[1]) ||
+        (name[CM_REVOCATION_PREFIX_DIR_CHARS] != '/')) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    name += CM_REVOCATION_PREFIX_DIR_CHARS + 1; /* skip the two-char dir and its slash */
+    size_t nameLen = strlen(name);
+    const size_t suffixLen = sizeof(".cache") - 1;
+    if ((nameLen <= suffixLen) || (nameLen > (size_t)CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN + suffixLen)) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (strcmp(name + nameLen - suffixLen, ".cache") != 0) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    for (size_t i = 0; i < nameLen - suffixLen; ++i) {
+        if (!CmRevocationCacheIsHexChar(name[i])) {
+            return CMR_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    return CM_SUCCESS;
+}
+
+int32_t CmRevocationCacheCheckPathUnderRoot(const char *rootDir, const char *path)
+{
+    if ((rootDir == NULL) || (path == NULL)) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    char realRoot[PATH_MAX] = {0};
+    if (realpath(rootDir, realRoot) == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    char realPath[PATH_MAX] = {0};
+    if (realpath(path, realPath) == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    size_t rootLen = strlen(realRoot);
+    if ((strncmp(realPath, realRoot, rootLen) != 0) ||
+        ((realPath[rootLen] != '/') && (realPath[rootLen] != '\0'))) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    return CM_SUCCESS;
+}
+
+void CmRevocationCacheEncodeInt64Be(int64_t v, const struct CmBlob *out8)
+{
+    if ((out8 == NULL) || (out8->data == NULL) || (out8->size < sizeof(int64_t))) {
         return;
     }
     uint64_t u = (uint64_t)v;
     for (uint32_t i = 0; i < sizeof(int64_t); ++i) {
-        out8[i] = (uint8_t)((u >> ((sizeof(int64_t) - 1 - i) * CM_BITS_PER_BYTE)) & 0xFF);
+        out8->data[i] = (uint8_t)((u >> ((sizeof(int64_t) - 1 - i) * CM_BITS_PER_BYTE)) & 0xFF);
     }
 }
 
-int64_t CmRevocationCacheDecodeInt64Be(const uint8_t *in8)
+int64_t CmRevocationCacheDecodeInt64Be(const struct CmBlob *in8)
 {
-    if (in8 == NULL) {
+    if ((in8 == NULL) || (in8->data == NULL) || (in8->size < sizeof(int64_t))) {
         return 0;
     }
     uint64_t u = 0;
     for (uint32_t i = 0; i < sizeof(int64_t); ++i) {
-        u = (u << CM_BITS_PER_BYTE) | in8[i];
+        u = (u << CM_BITS_PER_BYTE) | in8->data[i];
     }
     return (int64_t)u;
 }

@@ -107,10 +107,13 @@ static int32_t RemoveExpiredRecords(int64_t now)
 {
     struct RevocationCacheRecord rec = { 0 };
     while (QueryExpiredRevocationCacheRecord(now, &rec) == CM_SUCCESS) {
-        char fullFile[PATH_MAX] = {0};
-        if (snprintf_s(fullFile, sizeof(fullFile), sizeof(fullFile) - 1, "%s%s", REVOCATION_CACHE_DIR,
-            rec.filePath) >= 0) {
-            (void)unlink(fullFile);
+        /* a corrupted row must never turn unlink into an arbitrary delete */
+        if (CmRevocationCacheValidateRelPath(rec.filePath) == CM_SUCCESS) {
+            char fullFile[PATH_MAX] = {0};
+            if (snprintf_s(fullFile, sizeof(fullFile), sizeof(fullFile) - 1, "%s%s", REVOCATION_CACHE_DIR,
+                rec.filePath) >= 0) {
+                (void)unlink(fullFile);
+            }
         }
         if (DeleteRevocationCacheRecord(rec.filePath) != CM_SUCCESS) {
             CM_LOG_W("delete expired revocation cache record failed");
@@ -137,6 +140,10 @@ static void RemoveOrphanFileIfNeed(const char *subDir, const char *typePrefix,
     }
     char relCand[512] = {0};
     if (BuildRelPathFromFileName(typePrefix, file->fileName, relCand, sizeof(relCand)) != CM_SUCCESS) {
+        return;
+    }
+    /* only well-formed cache sub-paths take part in orphan cleanup */
+    if (CmRevocationCacheValidateRelPath(relCand) != CM_SUCCESS) {
         return;
     }
     if (IsPathInValidSet(paths, pathCount, relCand)) {
@@ -209,10 +216,13 @@ static void EvictUntilCapacity(uint64_t payloadLen, uint64_t *totalSize)
         if (QueryRevocationCacheRecordByExpireAsc(&oldest) != CM_SUCCESS) {
             break;
         }
-        char oldestFull[PATH_MAX] = {0};
-        if (snprintf_s(oldestFull, sizeof(oldestFull), sizeof(oldestFull) - 1, "%s%s", REVOCATION_CACHE_DIR,
-            oldest.filePath) >= 0) {
-            (void)unlink(oldestFull);
+        /* only a strict cache sub-path may be unlinked, never an arbitrary one */
+        if (CmRevocationCacheValidateRelPath(oldest.filePath) == CM_SUCCESS) {
+            char oldestFull[PATH_MAX] = {0};
+            if (snprintf_s(oldestFull, sizeof(oldestFull), sizeof(oldestFull) - 1, "%s%s", REVOCATION_CACHE_DIR,
+                oldest.filePath) >= 0) {
+                (void)unlink(oldestFull);
+            }
         }
         if (DeleteRevocationCacheRecord(oldest.filePath) != CM_SUCCESS) {
             CM_LOG_W("delete revocation cache record for capacity failed");
@@ -261,7 +271,8 @@ static int32_t BuildRevocationCachePayload(int64_t clampedExpire, const struct C
     if (payload == NULL) {
         return CMR_ERROR_MALLOC_FAIL;
     }
-    CmRevocationCacheEncodeInt64Be(clampedExpire, payload);
+    struct CmBlob expireBlob = { sizeof(int64_t), payload };
+    CmRevocationCacheEncodeInt64Be(clampedExpire, &expireBlob);
     if (memcpy_s(payload + sizeof(int64_t), payloadLen - sizeof(int64_t), data->data, data->size) != EOK) {
         CMFree(payload);
         return CMR_ERROR_MEM_OPERATION_COPY;
@@ -271,7 +282,8 @@ static int32_t BuildRevocationCachePayload(int64_t clampedExpire, const struct C
     return CM_SUCCESS;
 }
 
-static int32_t SaveRevocationCacheRecord(const char *relPath, int64_t clampedExpire, uint64_t dataSize)
+static int32_t SaveRevocationCacheRecord(uint32_t type, const char *relPath, int64_t clampedExpire,
+    uint64_t dataSize)
 {
     struct RevocationCacheRecord recWrite = { 0 };
     recWrite.expireTimeUtc = clampedExpire;
@@ -279,6 +291,24 @@ static int32_t SaveRevocationCacheRecord(const char *relPath, int64_t clampedExp
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
     recWrite.dataSize = dataSize;
+    /* the row keeps the hex-encoded key (the file name minus the .cache suffix)
+     * and the type string, both derived from the same rel path as the file */
+    const char *lastSlash = strrchr(relPath, '/');
+    if (lastSlash == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    const char *encodedName = lastSlash + 1;
+    size_t nameLen = strlen(encodedName);
+    if (nameLen <= CACHE_SUFFIX_LEN || (nameLen - CACHE_SUFFIX_LEN) > sizeof(recWrite.key) - 1) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (strncpy_s(recWrite.key, sizeof(recWrite.key), encodedName, nameLen - CACHE_SUFFIX_LEN) != EOK) {
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    const char *typeStr = (type == CM_REVOCATION_TYPE_OCSP) ? "ocsp" : "crl";
+    if (strncpy_s(recWrite.type, sizeof(recWrite.type), typeStr, strlen(typeStr)) != EOK) {
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
     if (InsertRevocationCacheRecord(&recWrite) != CM_SUCCESS) {
         return CMR_ERROR_WRITE_FILE_FAIL;
     }
@@ -335,7 +365,7 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
         goto cleanup;
     }
 
-    writeRet = SaveRevocationCacheRecord(relPath, clampedExpire,
+    writeRet = SaveRevocationCacheRecord(type, relPath, clampedExpire,
         (uint64_t)sizeof(int64_t) + (uint64_t)data->size);
 
 cleanup:

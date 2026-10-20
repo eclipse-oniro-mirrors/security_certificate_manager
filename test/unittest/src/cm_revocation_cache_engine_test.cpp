@@ -51,6 +51,7 @@ constexpr int64_t FAR_FUTURE_SEC = 100LL * 24 * 3600; /* beyond the 30d cap: cla
 constexpr int64_t OLDER_EXPIRE_SEC = 60;    /* expire earlier than the new entry, still in the future */
 constexpr int64_t EXPIRE_TOLERANCE_SEC = 5; /* slack between the requested and the stored expire */
 constexpr uint32_t REL_PATH_BUF_SIZE = 512; /* comfortably above any built rel path */
+constexpr uint32_t ENCODED_NAME_PREFIX_LEN = 2; /* fanout dir name = first two encoded-name chars */
 constexpr uint32_t FILE_READ_BUF_SIZE = 64; /* 8-byte header + payload of a persisted file */
 constexpr uint32_t TINY_FILE_LEN = 4;       /* deliberately below the 8-byte expire header */
 constexpr int NFTW_MAX_OPEN_FDS = 16;       /* max fds nftw may keep open while walking */
@@ -249,6 +250,35 @@ TEST_F(CmRevocationCacheEngineTest, SaveThenGetRoundTrip)
     CmFreeRevocationCache(&out);
 }
 
+TEST_F(CmRevocationCacheEngineTest, SaveRecordsKeyAndTypeColumns)
+{
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    /* earlier expire for the ocsp entry: the expire-ascending query is deterministic */
+    uint8_t keyBuf[] = "key1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + OLDER_EXPIRE_SEC), CM_SUCCESS);
+    uint8_t crlKeyBuf[] = "ck";
+    struct CmBlob crlKey = { sizeof(crlKeyBuf) - 1, crlKeyBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&crlKey, CM_REVOCATION_TYPE_CRL, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    /* the RDB row must carry the hex-encoded key (hex("key1") = 6b657931) and the type string */
+    struct RevocationCacheRecord rec = { 0 };
+    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&rec), CM_SUCCESS);
+    EXPECT_STREQ(rec.key, "6b657931");
+    EXPECT_STREQ(rec.type, "ocsp");
+    EXPECT_STREQ(rec.filePath, "ocsp/6b/6b657931.cache");
+    ASSERT_EQ(DeleteRevocationCacheRecord(rec.filePath), CM_SUCCESS);
+
+    /* the crl row follows: hex("ck") = 636b */
+    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&rec), CM_SUCCESS);
+    EXPECT_STREQ(rec.key, "636b");
+    EXPECT_STREQ(rec.type, "crl");
+    EXPECT_STREQ(rec.filePath, "crl/63/636b.cache");
+}
+
 TEST_F(CmRevocationCacheEngineTest, GetMissingKeyReturnsNotExist)
 {
     uint8_t keyBuf[] = "nokey00";
@@ -371,7 +401,8 @@ TEST_F(CmRevocationCacheEngineTest, GetExpiredEntryReturnsNotExist)
     ASSERT_FALSE(full.empty());
     const uint8_t der[] = "DER";
     uint8_t payload[sizeof(int64_t) + sizeof(der) - 1] = { 0 };
-    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC, payload);
+    struct CmBlob expireBlob = { sizeof(int64_t), payload };
+    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC, &expireBlob);
     (void)memcpy_s(payload + sizeof(int64_t), sizeof(payload) - sizeof(int64_t), der, sizeof(der) - 1);
     ASSERT_EQ(WriteTestFile(full.c_str(), payload, sizeof(payload)), 0);
     struct CmBlob out = { 0, nullptr };
@@ -390,7 +421,8 @@ TEST_F(CmRevocationCacheEngineTest, GetHeaderOnlyFileReturnsError)
     ASSERT_FALSE(full.empty());
     /* only the 8-byte header: der length would be 0 and must be rejected */
     uint8_t headerOnly[sizeof(int64_t)] = { 0 };
-    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, headerOnly);
+    struct CmBlob expireBlob = { sizeof(headerOnly), headerOnly };
+    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, &expireBlob);
     ASSERT_EQ(WriteTestFile(full.c_str(), headerOnly, sizeof(headerOnly)), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
@@ -424,10 +456,58 @@ TEST_F(CmRevocationCacheEngineTest, GetOversizedFileReturnsError)
     ASSERT_FALSE(full.empty());
     /* header plus data larger than MAX_OUT_BLOB_SIZE must be rejected, not allocated */
     std::vector<uint8_t> big(sizeof(int64_t) + MAX_OUT_BLOB_SIZE + 1, 'x');
-    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, big.data());
+    struct CmBlob expireBlob = { sizeof(int64_t), big.data() };
+    CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, &expireBlob);
     ASSERT_EQ(WriteTestFile(full.c_str(), big.data(), static_cast<uint32_t>(big.size())), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
+}
+
+TEST_F(CmRevocationCacheEngineTest, GetSymlinkedEntryReturnsNotExist)
+{
+    uint8_t keyBuf[] = "symget1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "DER";
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+    const std::string full = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(full.empty());
+    ASSERT_EQ(unlink(full.c_str()), 0);
+    /* a symlink planted at the entry path must not be followed, even though
+     * its target exists: the normalized path escapes the cache root */
+    ASSERT_EQ(symlink("/etc/passwd", full.c_str()), 0);
+    struct CmBlob out = { 0, nullptr };
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    (void)unlink(full.c_str()); /* remove the planted symlink; the row is cleaned by teardown */
+}
+
+TEST_F(CmRevocationCacheEngineTest, WriteAtomicDoesNotFollowTmpSymlink)
+{
+    uint8_t keyBuf[] = "symtmp1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "DER";
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+    const std::string full = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(full.empty());
+    const std::string tmp = full + ".tmp";
+    /* plant a symlink where the tmp file is written: the write must replace
+     * it, never write through it */
+    struct stat passwdBefore;
+    ASSERT_EQ(stat("/etc/passwd", &passwdBefore), 0);
+    ASSERT_EQ(symlink("/etc/passwd", tmp.c_str()), 0);
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+    struct stat passwdAfter;
+    ASSERT_EQ(stat("/etc/passwd", &passwdAfter), 0);
+    EXPECT_EQ(passwdAfter.st_size, passwdBefore.st_size); /* the target must stay untouched */
+    struct stat tmpSt;
+    EXPECT_EQ(lstat(tmp.c_str(), &tmpSt), -1); /* no tmp leftover */
+    struct stat fullSt;
+    ASSERT_EQ(lstat(full.c_str(), &fullSt), 0);
+    EXPECT_TRUE(S_ISREG(fullSt.st_mode)); /* the entry itself is a regular file */
 }
 
 TEST_F(CmRevocationCacheEngineTest, WriteAtomicRejectsBadRelPath)
@@ -440,13 +520,21 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicRejectsBadRelPath)
         CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/../../escape.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_INVALID_ARGUMENT);
+    /* the strict rel-path whitelist also rejects non-hex and uppercase names */
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/zz/616263.cache", buf, sizeof(buf) - 1),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/61626G.cache", buf, sizeof(buf) - 1),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/ABCD.cache", buf, sizeof(buf) - 1),
+        CMR_ERROR_INVALID_ARGUMENT);
 }
 
 TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
 {
     uint8_t buf[] = "x";
-    /* the prefix directory does not exist, opening the tmp file must fail */
-    const char *missingOcsp = "ocsp/zz/never-created.cache";
+    /* the prefix directory does not exist: the hex-shaped name passes the
+     * whitelist, and opening the tmp file must still fail */
+    const char *missingOcsp = "ocsp/99/badbad.cache";
     EXPECT_EQ(CmRevocationCacheWriteAtomic(missingOcsp, buf, sizeof(buf) - 1), CMR_ERROR_OPEN_FILE_FAIL);
     /* the failed write must not leave a partial tmp or cache file behind */
     char leftover[PATH_MAX] = { 0 };
@@ -457,7 +545,7 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
         missingOcsp), 0);
     EXPECT_EQ(access(leftover, F_OK), -1);
     /* the crl store fails the same way when its directory is missing */
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("crl/zz/never-created.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("crl/99/badbad.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_OPEN_FILE_FAIL);
 }
 
@@ -489,7 +577,9 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesExpiredRecord)
     /* an RDB record whose expire is in the past, with no file on disk */
     struct RevocationCacheRecord expired = { 0 };
     expired.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC;
-    const char *expiredRel = "ocsp/ee/expiredfake.cache";
+    const char *expiredRel = "ocsp/ee/ee998877.cache";
+    (void)strncpy_s(expired.key, sizeof(expired.key), "ee998877", strlen("ee998877"));
+    (void)strncpy_s(expired.type, sizeof(expired.type), "ocsp", strlen("ocsp"));
     (void)strncpy_s(expired.filePath, sizeof(expired.filePath), expiredRel, strlen(expiredRel));
     expired.dataSize = EXPIRED_RECORD_DATA_SIZE;
     ASSERT_EQ(InsertRevocationCacheRecord(&expired), CM_SUCCESS);
@@ -521,10 +611,14 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
     ASSERT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, relA, sizeof(relA)), CM_SUCCESS);
     std::string rel(relA);
     std::string dir = rel.substr(0, rel.rfind('/') + 1);    /* ocsp/<xx>/ */
-    std::string name = rel.substr(dir.size());              /* <base64url>.cache */
-    /* the orphan .cache keeps the same prefix dir but a different encoded name */
+    std::string name = rel.substr(dir.size());              /* <hex>.cache */
+    /* the orphan .cache keeps the two-char name prefix: the cleanup derives the
+     * real path from the file name, so only a char beyond the prefix may differ */
+    ASSERT_GT(name.size(), ENCODED_NAME_PREFIX_LEN + strlen(".cache"));
     std::string orphanName = name;
-    orphanName[0] = (orphanName[0] == 'A') ? 'B' : 'A';
+    /* stay inside the hex alphabet so the crafted name is a well-formed orphan */
+    orphanName[ENCODED_NAME_PREFIX_LEN] =
+        (orphanName[ENCODED_NAME_PREFIX_LEN] == 'a') ? 'b' : 'a';
     std::string orphanFull = std::string(REVOCATION_CACHE_DIR) + dir + orphanName;
     std::string tmpFull = std::string(REVOCATION_CACHE_DIR) + dir + "leftover.tmp";
     std::string txtFull = std::string(REVOCATION_CACHE_DIR) + dir + "note.txt";
@@ -556,7 +650,9 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
     /* a fake oldest record claiming 50MB pushes the total over the capacity limit */
     struct RevocationCacheRecord big = { 0 };
     big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + OLDER_EXPIRE_SEC; /* older than the new entry */
-    const char *bigRel = "ocsp/ee/bigfake00.cache";
+    const char *bigRel = "ocsp/ca/cafe0000.cache";
+    (void)strncpy_s(big.key, sizeof(big.key), "cafe0000", strlen("cafe0000"));
+    (void)strncpy_s(big.type, sizeof(big.type), "ocsp", strlen("ocsp"));
     (void)strncpy_s(big.filePath, sizeof(big.filePath), bigRel, strlen(bigRel));
     big.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
     ASSERT_EQ(InsertRevocationCacheRecord(&big), CM_SUCCESS);
