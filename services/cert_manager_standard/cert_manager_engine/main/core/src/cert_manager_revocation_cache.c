@@ -79,7 +79,8 @@ static int32_t BuildRelPathFromFileName(const char *prefix, const char *encodedN
     if (prefix == NULL || encodedName == NULL || relPath == NULL || relPathLen == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s", prefix, encodedName[0], encodedName[1], encodedName);
+    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s",
+        prefix, encodedName[0], encodedName[1], encodedName);
     if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
@@ -237,7 +238,8 @@ static int32_t EnsureCacheDirs(uint32_t type, const char *relPath)
     char encodedName[PATH_MAX] = {0};
     const char *lastSlash = strrchr(relPath, '/');
     if (lastSlash != NULL) {
-        if (strncpy_s(encodedName, sizeof(encodedName), lastSlash + 1, strlen(lastSlash + 1) - CACHE_SUFFIX_LEN) != EOK) {
+        if (strncpy_s(encodedName, sizeof(encodedName), lastSlash + 1,
+            strlen(lastSlash + 1) - CACHE_SUFFIX_LEN) != EOK) {
             return CMR_ERROR_MEM_OPERATION_COPY;
         }
     }
