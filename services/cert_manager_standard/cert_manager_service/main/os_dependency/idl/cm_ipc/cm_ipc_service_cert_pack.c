@@ -19,9 +19,23 @@
 #include "cm_mem.h"
 #include "cm_param.h"
 #include "cm_ipc_service_serialization.h"
+#include "cm_x509.h"
 
 #include "cert_manager_check.h"
 #include "cert_manager_query.h"
+
+#define CM_CERT_INFO_FIELD_NUM 6
+
+/* packed x509 display-field slots; keep in sync with the client-side unpack
+ * table in CmCertificateInfoUnpackFromService (cm_ipc_client_serialization.c) */
+enum CmCertInfoFieldSlot {
+    CM_CERT_FIELD_SUBJECT = 0,
+    CM_CERT_FIELD_ISSUER,
+    CM_CERT_FIELD_SERIAL,
+    CM_CERT_FIELD_NOT_BEFORE,
+    CM_CERT_FIELD_NOT_AFTER,
+    CM_CERT_FIELD_FINGERPRINT,
+};
 
 static int32_t CmGetCertListPack(const struct CertBlob *certBlob, uint32_t *status, uint32_t certCount,
     struct CmBlob *certificateList)
@@ -104,6 +118,133 @@ int32_t CmServiceGetCertListPack(const struct CmContext *context, uint32_t store
     return ret;
 }
 
+static void FreeX509FieldBlobs(struct CmBlob *fields)
+{
+    for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {
+        CM_FREE_PTR(fields[i].data);
+        fields[i].size = 0;
+    }
+}
+
+/* fill the six x509 display field lengths; a negative length marks a parse failure */
+static void GetX509FieldLens(X509 *cert, const struct CmBlob *fields, const uint32_t *fieldMaxLen,
+    int32_t *fieldLen)
+{
+    fieldLen[CM_CERT_FIELD_SUBJECT] = GetX509SubjectNameLongFormat(cert,
+        (char *)fields[CM_CERT_FIELD_SUBJECT].data, fieldMaxLen[CM_CERT_FIELD_SUBJECT]);
+    fieldLen[CM_CERT_FIELD_ISSUER] = GetX509IssueNameLongFormat(cert,
+        (char *)fields[CM_CERT_FIELD_ISSUER].data, fieldMaxLen[CM_CERT_FIELD_ISSUER]);
+    fieldLen[CM_CERT_FIELD_SERIAL] = GetX509SerialNumber(cert,
+        (char *)fields[CM_CERT_FIELD_SERIAL].data, fieldMaxLen[CM_CERT_FIELD_SERIAL]);
+    fieldLen[CM_CERT_FIELD_NOT_BEFORE] = GetX509NotBefore(cert,
+        (char *)fields[CM_CERT_FIELD_NOT_BEFORE].data, fieldMaxLen[CM_CERT_FIELD_NOT_BEFORE]);
+    fieldLen[CM_CERT_FIELD_NOT_AFTER] = GetX509NotAfter(cert,
+        (char *)fields[CM_CERT_FIELD_NOT_AFTER].data, fieldMaxLen[CM_CERT_FIELD_NOT_AFTER]);
+    fieldLen[CM_CERT_FIELD_FINGERPRINT] = GetX509Fingerprint(cert,
+        (char *)fields[CM_CERT_FIELD_FINGERPRINT].data, fieldMaxLen[CM_CERT_FIELD_FINGERPRINT]);
+}
+
+/*
+ * Parse the certificate on the service side and append the six display
+ * fields (subjectName, issuerName, serial, notBefore, notAfter,
+ * fingerprintSha256) after certAlias, so the client no longer needs
+ * OpenSSL to fill struct CertInfo. Field order matches the client-side
+ * unpack table in CmCertificateInfoUnpackFromService.
+ */
+static int32_t CopyX509InfoToBuffer(const struct CmBlob *certificateData, struct CmBlob *certificateInfo,
+    uint32_t *offset)
+{
+    static const uint32_t fieldMaxLen[CM_CERT_INFO_FIELD_NUM] = {
+        MAX_LEN_SUBJECT_NAME, MAX_LEN_ISSUER_NAME, MAX_LEN_SERIAL,
+        MAX_LEN_NOT_BEFORE, MAX_LEN_NOT_AFTER, MAX_LEN_FINGER_PRINT_SHA256,
+    };
+
+    X509 *cert = InitCertContext(certificateData->data, certificateData->size);
+    if (cert == NULL) {
+        CM_LOG_E("Parse X509 cert fail");
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+
+    struct CmBlob fields[CM_CERT_INFO_FIELD_NUM] = {{0, NULL}};
+    for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {
+        fields[i].size = fieldMaxLen[i];
+        fields[i].data = (uint8_t *)CmMalloc(fieldMaxLen[i]);
+        if (fields[i].data == NULL) {
+            FreeX509FieldBlobs(fields);
+            FreeCertContext(cert);
+            return CMR_ERROR_MALLOC_FAIL;
+        }
+        (void)memset_s(fields[i].data, fieldMaxLen[i], 0, fieldMaxLen[i]);
+    }
+
+    int32_t fieldLen[CM_CERT_INFO_FIELD_NUM];
+    GetX509FieldLens(cert, fields, fieldMaxLen, fieldLen);
+
+    int32_t ret = CM_SUCCESS;
+    for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {
+        if (fieldLen[i] <= 0) {
+            CM_LOG_E("get cert info field %u failed, ret = %d", i, fieldLen[i]);
+            ret = CM_FAILURE;
+            break;
+        }
+        fields[i].size = (uint32_t)fieldLen[i] + 1; /* wire format carries the NUL terminator */
+    }
+
+    for (uint32_t i = 0; ret == CM_SUCCESS && i < CM_CERT_INFO_FIELD_NUM; ++i) {
+        ret = CopyBlobToBuffer(&fields[i], certificateInfo, offset);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("copy cert info field %u failed", i);
+        }
+    }
+
+    FreeX509FieldBlobs(fields);
+    FreeCertContext(cert);
+    return ret;
+}
+
+/* packed size of the certificate info buffer; must mirror GetCertInfoInitOutData
+ * on the client side */
+static uint32_t GetCertInfoPackBuffSize(void)
+{
+    return sizeof(uint32_t) + MAX_LEN_CERTIFICATE + sizeof(uint32_t) +
+        MAX_LEN_CERT_ALIAS + sizeof(uint32_t) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_SUBJECT_NAME) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_ISSUER_NAME) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_SERIAL) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_NOT_BEFORE) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_NOT_AFTER) +
+        sizeof(uint32_t) + ALIGN_SIZE(MAX_LEN_FINGER_PRINT_SHA256);
+}
+
+/* derive the alias from the uri on the service side and pack it after the status */
+static int32_t CopyCertAliasToBuffer(const uint32_t store, const struct CmBlob *certUri,
+    const struct CmBlob *certificateData, struct CmBlob *certificateInfo, uint32_t *offset)
+{
+    struct CmBlob certAlias;
+    certAlias.size = MAX_LEN_CERT_ALIAS;
+    certAlias.data = (uint8_t *)CmMalloc(MAX_LEN_CERT_ALIAS);
+    if (certAlias.data == NULL) {
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(certAlias.data, MAX_LEN_CERT_ALIAS, 0, MAX_LEN_CERT_ALIAS);
+
+    int32_t ret = CmGetCertAlias(store, (char *)certUri->data, certificateData, &(certAlias));
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("Failed to get cert certAlias");
+        CM_FREE_BLOB(certAlias);
+        return ret;
+    }
+
+    ret = CopyBlobToBuffer(&certAlias, certificateInfo, offset); /* certAlias */
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("copy cert data failed");
+        CM_FREE_BLOB(certAlias);
+        return ret;
+    }
+    CM_FREE_BLOB(certAlias);
+    return CM_SUCCESS;
+}
+
 int32_t CmServiceGetCertInfoPack(const uint32_t store, const struct CmBlob *certificateData,
     uint32_t status, const struct CmBlob *certUri, struct CmBlob *certificateInfo)
 {
@@ -116,8 +257,7 @@ int32_t CmServiceGetCertInfoPack(const uint32_t store, const struct CmBlob *cert
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
-    uint32_t buffSize = sizeof(uint32_t) + MAX_LEN_CERTIFICATE + sizeof(uint32_t) +
-        MAX_LEN_CERT_ALIAS + sizeof(uint32_t);
+    uint32_t buffSize = GetCertInfoPackBuffSize();
     if (certificateInfo->size < buffSize) {
         CM_LOG_E("outdata size too small");
         return CMR_ERROR_BUFFER_TOO_SMALL;
@@ -137,27 +277,15 @@ int32_t CmServiceGetCertInfoPack(const uint32_t store, const struct CmBlob *cert
         return ret;
     }
 
-    struct CmBlob certAlias;
-    certAlias.size = MAX_LEN_CERT_ALIAS;
-    certAlias.data = (uint8_t *)CmMalloc(MAX_LEN_CERT_ALIAS);
-    if (certAlias.data == NULL) {
-        return CMR_ERROR_MALLOC_FAIL;
-    }
-    (void)memset_s(certAlias.data, MAX_LEN_CERT_ALIAS, 0, MAX_LEN_CERT_ALIAS);
-
-    ret = CmGetCertAlias(store, (char *)certUri->data, certificateData, &(certAlias));
+    ret = CopyCertAliasToBuffer(store, certUri, certificateData, certificateInfo, &offset);
     if (ret != CM_SUCCESS) {
-        CM_LOG_E("Failed to get cert certAlias");
-        CM_FREE_BLOB(certAlias);
         return ret;
     }
 
-    ret = CopyBlobToBuffer(&certAlias, certificateInfo, &offset); /* certAlias */
+    ret = CopyX509InfoToBuffer(certificateData, certificateInfo, &offset);
     if (ret != CM_SUCCESS) {
-        CM_LOG_E("copy cert data failed");
-        CM_FREE_BLOB(certAlias);
+        CM_LOG_E("copy cert x509 info failed");
         return ret;
     }
-    CM_FREE_BLOB(certAlias);
     return ret;
 }

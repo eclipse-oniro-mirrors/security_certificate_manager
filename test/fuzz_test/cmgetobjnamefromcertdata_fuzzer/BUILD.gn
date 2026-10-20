@@ -31,6 +31,7 @@ ohos_fuzztest("CmGetObjNameFromCertDataFuzzTest") {
   sources = [ "cmgetobjnamefromcertdata_fuzzer.cpp" ]
   deps = [
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_openssl_static",
     "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main:cert_manager_sdk",
     "${cert_manager_root_dir}/test/fuzz_test/fuzz_test_common:libcert_manager_fuzz_test_common_static",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/core:cert_manager_engine_core_standard",

@@ -27,6 +27,45 @@ config("cert_manager_config") {
   }
 }
 
+# OpenSSL-backed certificate parsing helpers (cm_pfx.c + cm_x509.c). Kept
+# separate from libcert_manager_common_standard_static so SDK-side targets
+# (libcert_manager_sdk.z.so and the kits linking it) can use the common
+# library without a runtime dependency on libcrypto_shared; only
+# service-side targets and parser tests depend on this library.
+ohos_static_library("libcert_manager_openssl_static") {
+  subsystem_name = "security"
+  part_name = "certificate_manager"
+  branch_protector_ret = "pac_ret"
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    boundary_sanitize = true
+    debug = false
+    integer_overflow = true
+    ubsan = true
+    stack_protector_ret = true
+  }
+
+  public_configs =
+      [ ":cert_manager_config" ]  # Share include files for other gn when deps.
+
+  include_dirs = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include" ]
+  sources = [
+    "src/cm_pfx.c",
+    "src/cm_x509.c",
+  ]
+
+  external_deps = [
+    "openssl:libcrypto_shared",
+    "bounds_checking_function:libsec_shared",
+  ]
+  cflags = [
+    "-Wall",
+    "-Werror",
+  ]
+  complete_static_lib = true
+}
+
 ohos_static_library("libcert_manager_common_standard_static") {
   subsystem_name = "security"
   part_name = "certificate_manager"
@@ -49,10 +88,8 @@ ohos_static_library("libcert_manager_common_standard_static") {
     "src/cm_advsecmode_check.c",
     "src/cm_ukey_dialog_common.cpp",
     "src/cm_param.c",
-    "src/cm_pfx.c",
     "src/cm_revocation_cache.c",
     "src/cm_util.c",
-    "src/cm_x509.c",
     "src/cm_type_free.c",
     "src/cm_ipc_response_type.cpp",
     "src/cm_data_parcel_processor.cpp",
@@ -62,7 +99,6 @@ ohos_static_library("libcert_manager_common_standard_static") {
   external_deps = [
     "c_utils:utils",
     "init:libbegetutil",
-    "openssl:libcrypto_shared",
     "bounds_checking_function:libsec_shared",
     "ipc:ipc_single",
   ]

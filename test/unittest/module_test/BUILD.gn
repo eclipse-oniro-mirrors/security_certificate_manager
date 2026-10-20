@@ -52,6 +52,7 @@ ohos_unittest("cm_module_test") {
   if (os_level == "standard") {
     deps += [
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
+      "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_openssl_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_ipc_client_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_log_mem_static",
     ]

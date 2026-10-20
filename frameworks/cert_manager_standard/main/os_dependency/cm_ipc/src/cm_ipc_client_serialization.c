@@ -19,7 +19,6 @@
 #include "cm_mem.h"
 
 #include "cm_param.h"
-#include "cm_x509.h"
 
 int32_t GetUint32FromBuffer(uint32_t *value, const struct CmBlob *srcBlob, uint32_t *srcOffset)
 {
@@ -129,62 +128,78 @@ int32_t CmCertificateListUnpackFromService(const struct CmBlob *outData, struct 
     return CM_SUCCESS;
 }
 
-static int32_t GetInfoFromX509Cert(X509 *x509cert, struct CertInfo *cInfo)
+#define CM_CERT_INFO_FIELD_NUM 6
+
+/* cert data, status and alias come first in the packed buffer */
+static int32_t UnpackCertHeadFromService(const struct CmBlob *outData, uint32_t *offset,
+    struct CertInfo *cInfo, struct CmBlob *bufBlob)
 {
-    int32_t subjectNameLen = GetX509SubjectNameLongFormat(x509cert, cInfo->subjectName, MAX_LEN_SUBJECT_NAME);
-    if (subjectNameLen <= 0) {
-        CM_LOG_E("get cert subjectName failed");
-        return CM_FAILURE;
+    int32_t ret = CmGetBlobFromBuffer(bufBlob, outData, offset);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("get cert data faild");
+        return ret;
     }
-
-    int32_t issuerNameLen = GetX509IssueNameLongFormat(x509cert, cInfo->issuerName, MAX_LEN_ISSUER_NAME);
-    if (issuerNameLen <= 0) {
-        CM_LOG_E("get cert issuerName failed");
-        return CM_FAILURE;
+    if (memcpy_s(cInfo->certInfo.data, cInfo->certInfo.size, bufBlob->data, bufBlob->size) != EOK) {
+        CM_LOG_E("copy cert data failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
     }
-
-    int32_t serialLen = GetX509SerialNumber(x509cert, cInfo->serial, MAX_LEN_SERIAL);
-    if (serialLen <= 0) {
-        CM_LOG_E("get cert serial failed");
-        return CM_FAILURE;
-    }
-
-    int32_t notBeforeLen = GetX509NotBefore(x509cert, cInfo->notBefore, MAX_LEN_NOT_BEFORE);
-    if (notBeforeLen <= 0) {
-        CM_LOG_E("get cert notBefore failed");
-        return CM_FAILURE;
-    }
-
-    int32_t notAfterLen = GetX509NotAfter(x509cert, cInfo->notAfter, MAX_LEN_NOT_AFTER);
-    if (notAfterLen <= 0) {
-        CM_LOG_E("get cert notAfter failed");
-        return CM_FAILURE;
-    }
-
-    int32_t fingerprintLen = GetX509Fingerprint(x509cert, cInfo->fingerprintSha256, MAX_LEN_FINGER_PRINT_SHA256);
-    if (fingerprintLen <= 0) {
-        CM_LOG_E("get cert fingerprintSha256 failed");
-        return CM_FAILURE;
-    }
-    return CM_SUCCESS;
-}
-
-static int32_t GetInfoFromCertData(struct CertInfo *cInfo)
-{
-    X509 *cert = InitCertContext(cInfo->certInfo.data, cInfo->certInfo.size);
-    if (cert == NULL) {
+    cInfo->certInfo.size = bufBlob->size;
+    if (bufBlob->size == 0) {
+        /* the service skips packing when the cert file is empty; keep
+         * returning the error the local X509 parse used to produce */
         CM_LOG_E("Parse X509 cert fail");
         return CMR_ERROR_INVALID_CERT_FORMAT;
     }
 
-    int32_t ret = GetInfoFromX509Cert(cert, cInfo);
+    uint32_t status = 0;
+    ret = GetUint32FromBuffer(&(status), outData, offset);
     if (ret != CM_SUCCESS) {
-        CM_LOG_E("failed get cert info from x509 cert");
-        FreeCertContext(cert);
+        CM_LOG_E("copy status failed");
         return ret;
     }
+    cInfo->status = (status >= 1) ? false : true;
 
-    FreeCertContext(cert);
+    ret = CmGetBlobFromBuffer(bufBlob, outData, offset);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    (void)memset_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, 0, MAX_LEN_CERT_ALIAS);
+    if (memcpy_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, bufBlob->data, bufBlob->size) != EOK) {
+        CM_LOG_E("copy alias failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    return CM_SUCCESS;
+}
+
+/* the six display fields are NUL-terminated blobs packed by the service-side
+ * CopyX509InfoToBuffer; field order must match that packer */
+static int32_t UnpackCertDisplayFieldsFromService(const struct CmBlob *outData, uint32_t *offset,
+    struct CertInfo *cInfo, struct CmBlob *bufBlob)
+{
+    struct {
+        char *dest;
+        uint32_t maxLen;
+    } fieldTable[CM_CERT_INFO_FIELD_NUM] = {
+        { cInfo->subjectName, MAX_LEN_SUBJECT_NAME },
+        { cInfo->issuerName, MAX_LEN_ISSUER_NAME },
+        { cInfo->serial, MAX_LEN_SERIAL },
+        { cInfo->notBefore, MAX_LEN_NOT_BEFORE },
+        { cInfo->notAfter, MAX_LEN_NOT_AFTER },
+        { cInfo->fingerprintSha256, MAX_LEN_FINGER_PRINT_SHA256 },
+    };
+    int32_t ret = CM_SUCCESS;
+    for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {
+        ret = CmGetBlobFromBuffer(bufBlob, outData, offset);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("get cert info field %u failed", i);
+            return ret;
+        }
+        (void)memset_s(fieldTable[i].dest, fieldTable[i].maxLen, 0, fieldTable[i].maxLen);
+        if (memcpy_s(fieldTable[i].dest, fieldTable[i].maxLen, bufBlob->data, bufBlob->size) != EOK) {
+            CM_LOG_E("copy cert info field %u failed", i);
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+    }
     return CM_SUCCESS;
 }
 
@@ -197,39 +212,13 @@ int32_t CmCertificateInfoUnpackFromService(const struct CmBlob *outData, const s
 
     struct CmBlob bufBlob = { 0, NULL };
     uint32_t offset = 0;
-    int32_t ret = CmGetBlobFromBuffer(&bufBlob, outData, &offset);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("get cert data faild");
-        return ret;
-    }
-    if (memcpy_s(cInfo->certInfo.data, cInfo->certInfo.size, bufBlob.data, bufBlob.size) != EOK) {
-        CM_LOG_E("copy cert data failed");
-        return CMR_ERROR_MEM_OPERATION_COPY;
-    }
-    cInfo->certInfo.size = bufBlob.size;
-
-    ret = GetInfoFromCertData(cInfo);
+    int32_t ret = UnpackCertHeadFromService(outData, &offset, cInfo, &bufBlob);
     if (ret != CM_SUCCESS) {
         return ret;
     }
-
-    uint32_t status = 0;
-    ret = GetUint32FromBuffer(&(status), outData, &offset);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("copy status failed");
-        return ret;
-    }
-    cInfo->status = (status >= 1) ? false : true;
-
-    ret = CmGetBlobFromBuffer(&bufBlob, outData, &offset);
+    ret = UnpackCertDisplayFieldsFromService(outData, &offset, cInfo, &bufBlob);
     if (ret != CM_SUCCESS) {
         return ret;
-    }
-
-    (void)memset_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, 0, MAX_LEN_CERT_ALIAS);
-    if (memcpy_s(cInfo->certAlias, MAX_LEN_CERT_ALIAS, bufBlob.data, bufBlob.size) != EOK) {
-        CM_LOG_E("copy alias failed");
-        return CMR_ERROR_MEM_OPERATION_COPY;
     }
 
     (void)memset_s(cInfo->uri, MAX_LEN_URI, 0, MAX_LEN_URI); /* uri */

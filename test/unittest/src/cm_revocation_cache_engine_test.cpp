@@ -13,10 +13,12 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -51,8 +53,6 @@ constexpr int64_t EXPIRE_TOLERANCE_SEC = 5; /* slack between the requested and t
 constexpr uint32_t REL_PATH_BUF_SIZE = 512; /* comfortably above any built rel path */
 constexpr uint32_t FILE_READ_BUF_SIZE = 64; /* 8-byte header + payload of a persisted file */
 constexpr uint32_t TINY_FILE_LEN = 4;       /* deliberately below the 8-byte expire header */
-constexpr uint32_t HASH_PREFIX_LEN = 2;     /* cache sub-directory prefix length */
-constexpr uint32_t SHA256_HEX_LEN = 64;     /* sha256 hex digest length */
 constexpr int NFTW_MAX_OPEN_FDS = 16;       /* max fds nftw may keep open while walking */
 constexpr int POLL_MAX_ROUNDS = 100;        /* bounded poll rounds for the async persistence */
 constexpr useconds_t POLL_INTERVAL_USEC = 100 * 1000; /* 100ms between two poll rounds */
@@ -60,21 +60,32 @@ constexpr uint32_t ASYNC_KEY_BUF_LEN = 8;   /* room for the short async test key
 constexpr uint64_t EXPIRED_RECORD_DATA_SIZE = 100;    /* dataSize of the fake expired record */
 MockNativeToken *g_mockNative = nullptr;
 
+/* snapshot of all cache rel-paths recorded in the RDB; nullopt when the query itself fails */
+static std::optional<std::vector<std::string>> QueryCacheFilePaths()
+{
+    /* the array is owned by the C query API until FreeRevocationCacheFilePaths */
+    char **paths = nullptr;
+    uint32_t count = 0;
+    if (QueryAllRevocationCacheFilePaths(&paths, &count) != CM_SUCCESS) {
+        return std::nullopt;
+    }
+    std::vector<std::string> result;
+    for (uint32_t i = 0; i < count; i++) {
+        result.emplace_back(paths[i]);
+    }
+    FreeRevocationCacheFilePaths(paths, count);
+    return result;
+}
+
 /* remove all revocation cache records, files and meta left by this or previous test runs */
 void CleanupRevocationCacheState()
 {
-    char **paths = nullptr;
-    uint32_t count = 0;
-    if (QueryAllRevocationCacheFilePaths(&paths, &count) == CM_SUCCESS) {
-        for (uint32_t i = 0; i < count; i++) {
-            char full[PATH_MAX] = { 0 };
-            if (snprintf_s(full, sizeof(full), sizeof(full) - 1, "%s%s", REVOCATION_CACHE_DIR,
-                paths[i]) >= 0) {
-                (void)unlink(full);
-            }
-            (void)DeleteRevocationCacheRecord(paths[i]);
+    const auto paths = QueryCacheFilePaths();
+    if (paths.has_value()) {
+        for (const auto &rel : *paths) {
+            (void)unlink((std::string(REVOCATION_CACHE_DIR) + rel).c_str());
+            (void)DeleteRevocationCacheRecord(rel.c_str());
         }
-        FreeRevocationCacheFilePaths(paths, count);
     }
     (void)DeleteRevocationCacheMeta();
 }
@@ -92,13 +103,13 @@ static int WriteTestFile(const char *fullPath, const uint8_t *buf, uint32_t len)
 }
 
 /* build the absolute cache file path of key so tests can craft raw cache files */
-static int BuildCacheFullPath(const struct CmBlob *key, uint32_t type, char *fullPath, uint32_t len)
+static std::string BuildCacheFullPath(const struct CmBlob *key, uint32_t type)
 {
     char relPath[REL_PATH_BUF_SIZE] = { 0 };
     if (CmRevocationCacheBuildRelPath(type, key, relPath, sizeof(relPath)) != CM_SUCCESS) {
-        return -1;
+        return "";
     }
-    return (snprintf_s(fullPath, len, len - 1, "%s%s", REVOCATION_CACHE_DIR, relPath) >= 0) ? 0 : -1;
+    return std::string(REVOCATION_CACHE_DIR) + relPath;
 }
 
 static uid_t g_saDataUid = 0;
@@ -356,13 +367,13 @@ TEST_F(CmRevocationCacheEngineTest, GetExpiredEntryReturnsNotExist)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     /* overwrite the header with an already expired timestamp */
-    char full[PATH_MAX] = { 0 };
-    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
+    const std::string full = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(full.empty());
     const uint8_t der[] = "DER";
     uint8_t payload[sizeof(int64_t) + sizeof(der) - 1] = { 0 };
     CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC, payload);
     (void)memcpy_s(payload + sizeof(int64_t), sizeof(payload) - sizeof(int64_t), der, sizeof(der) - 1);
-    ASSERT_EQ(WriteTestFile(full, payload, sizeof(payload)), 0);
+    ASSERT_EQ(WriteTestFile(full.c_str(), payload, sizeof(payload)), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
 }
@@ -375,12 +386,12 @@ TEST_F(CmRevocationCacheEngineTest, GetHeaderOnlyFileReturnsError)
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
-    char full[PATH_MAX] = { 0 };
-    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
+    const std::string full = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(full.empty());
     /* only the 8-byte header: der length would be 0 and must be rejected */
     uint8_t headerOnly[sizeof(int64_t)] = { 0 };
     CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, headerOnly);
-    ASSERT_EQ(WriteTestFile(full, headerOnly, sizeof(headerOnly)), 0);
+    ASSERT_EQ(WriteTestFile(full.c_str(), headerOnly, sizeof(headerOnly)), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
 }
@@ -393,10 +404,10 @@ TEST_F(CmRevocationCacheEngineTest, GetTinyFileReturnsNotExist)
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
-    char full[PATH_MAX] = { 0 };
-    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
+    const std::string full = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(full.empty());
     uint8_t tiny[TINY_FILE_LEN] = { 0 }; /* smaller than the 8-byte expire header */
-    ASSERT_EQ(WriteTestFile(full, tiny, sizeof(tiny)), 0);
+    ASSERT_EQ(WriteTestFile(full.c_str(), tiny, sizeof(tiny)), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
 }
@@ -409,12 +420,12 @@ TEST_F(CmRevocationCacheEngineTest, GetOversizedFileReturnsError)
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
-    char full[PATH_MAX] = { 0 };
-    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
+    const std::string full = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(full.empty());
     /* header plus data larger than MAX_OUT_BLOB_SIZE must be rejected, not allocated */
     std::vector<uint8_t> big(sizeof(int64_t) + MAX_OUT_BLOB_SIZE + 1, 'x');
     CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, big.data());
-    ASSERT_EQ(WriteTestFile(full, big.data(), static_cast<uint32_t>(big.size())), 0);
+    ASSERT_EQ(WriteTestFile(full.c_str(), big.data(), static_cast<uint32_t>(big.size())), 0);
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
 }
@@ -459,12 +470,12 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicPersistsContent)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     /* reuse the existing directory layout and write through the raw atomic API */
-    char full[PATH_MAX] = { 0 };
-    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, full, sizeof(full)), 0);
-    std::string rel(full + strlen(REVOCATION_CACHE_DIR));
+    const std::string full = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(full.empty());
+    std::string rel = full.substr(strlen(REVOCATION_CACHE_DIR));
     const uint8_t body[] = "RAWBODY";
     ASSERT_EQ(CmRevocationCacheWriteAtomic(rel.c_str(), body, sizeof(body) - 1), CM_SUCCESS);
-    FILE *fp = fopen(full, "rb");
+    FILE *fp = fopen(full.c_str(), "rb");
     ASSERT_NE(fp, nullptr);
     uint8_t readBack[sizeof(body) - 1] = { 0 }; /* exactly the body length: the read must fill it */
     size_t n = fread(readBack, 1, sizeof(readBack), fp);
@@ -491,17 +502,9 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesExpiredRecord)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     /* the expired record must be gone from the RDB */
-    char **paths = nullptr;
-    uint32_t count = 0;
-    ASSERT_EQ(QueryAllRevocationCacheFilePaths(&paths, &count), CM_SUCCESS);
-    bool found = false;
-    for (uint32_t i = 0; i < count; i++) {
-        if (strcmp(paths[i], expiredRel) == 0) {
-            found = true;
-        }
-    }
-    FreeRevocationCacheFilePaths(paths, count);
-    EXPECT_FALSE(found);
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_EQ(std::find(paths->begin(), paths->end(), expiredRel), paths->end());
 }
 
 TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
@@ -517,11 +520,12 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
     char relA[REL_PATH_BUF_SIZE] = { 0 };
     ASSERT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, relA, sizeof(relA)), CM_SUCCESS);
     std::string rel(relA);
-    std::string dir = rel.substr(0, rel.rfind('/') + 1);   /* ocsp/<xx>/ */
-    std::string hash = rel.substr(dir.size());             /* <64hex>.cache */
-    /* the orphan .cache keeps the two-char prefix so cleanup derives its real path */
-    std::string orphanFull = std::string(REVOCATION_CACHE_DIR) + dir + hash.substr(0, HASH_PREFIX_LEN) +
-        std::string(SHA256_HEX_LEN - HASH_PREFIX_LEN, 'f') + ".cache";
+    std::string dir = rel.substr(0, rel.rfind('/') + 1);    /* ocsp/<xx>/ */
+    std::string name = rel.substr(dir.size());              /* <base64url>.cache */
+    /* the orphan .cache keeps the same prefix dir but a different encoded name */
+    std::string orphanName = name;
+    orphanName[0] = (orphanName[0] == 'A') ? 'B' : 'A';
+    std::string orphanFull = std::string(REVOCATION_CACHE_DIR) + dir + orphanName;
     std::string tmpFull = std::string(REVOCATION_CACHE_DIR) + dir + "leftover.tmp";
     std::string txtFull = std::string(REVOCATION_CACHE_DIR) + dir + "note.txt";
     const uint8_t one[] = "x";
@@ -565,17 +569,9 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
 
     /* the oldest oversized record must have been evicted */
-    char **paths = nullptr;
-    uint32_t count = 0;
-    ASSERT_EQ(QueryAllRevocationCacheFilePaths(&paths, &count), CM_SUCCESS);
-    bool found = false;
-    for (uint32_t i = 0; i < count; i++) {
-        if (strcmp(paths[i], bigRel) == 0) {
-            found = true;
-        }
-    }
-    FreeRevocationCacheFilePaths(paths, count);
-    EXPECT_FALSE(found);
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_EQ(std::find(paths->begin(), paths->end(), bigRel), paths->end());
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
@@ -609,9 +605,9 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
     uint8_t keyBufs[asyncKeyCount][ASYNC_KEY_BUF_LEN] = { { 0 } };
     struct CmBlob keys[asyncKeyCount] = { { 0, nullptr } };
     for (int i = 0; i < asyncKeyCount; i++) {
-        (void)snprintf_s(reinterpret_cast<char *>(keyBufs[i]), sizeof(keyBufs[i]), sizeof(keyBufs[i]) - 1,
-            "ak%d", i);
-        keys[i].size = strlen(reinterpret_cast<char *>(keyBufs[i]));
+        const std::string keyText = "ak" + std::to_string(i);
+        ASSERT_EQ(memcpy_s(keyBufs[i], sizeof(keyBufs[i]), keyText.c_str(), keyText.size() + 1), EOK);
+        keys[i].size = keyText.size();
         keys[i].data = keyBufs[i];
         ASSERT_EQ(CmRunSaveRevocationCacheAsync(&keys[i], CM_REVOCATION_TYPE_OCSP, &data, expire),
             CM_SUCCESS);
@@ -654,8 +650,9 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
-    char formalFull[PATH_MAX] = { 0 }; /* same store the SA writes: REVOCATION_CACHE_DIR */
-    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, formalFull, sizeof(formalFull)), 0);
+    /* same store the SA writes: REVOCATION_CACHE_DIR */
+    const std::string formalFull = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(formalFull.empty());
     ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
 
     /* the SA persists asynchronously into the FORMAL store: verify the raw file
@@ -664,7 +661,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     uint32_t fileLen = 0;
     bool persisted = false;
     for (int round = 0; round < POLL_MAX_ROUNDS && !persisted; round++) {
-        persisted = ReadFormalCacheFile(formalFull, fileBuf, sizeof(fileBuf), &fileLen);
+        persisted = ReadFormalCacheFile(formalFull.c_str(), fileBuf, sizeof(fileBuf), &fileLen);
         if (!persisted) {
             usleep(POLL_INTERVAL_USEC);
         }
@@ -701,8 +698,9 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
-    char formalFull[PATH_MAX] = { 0 }; /* same store the SA writes: REVOCATION_CACHE_DIR */
-    ASSERT_EQ(BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP, formalFull, sizeof(formalFull)), 0);
+    /* same store the SA writes: REVOCATION_CACHE_DIR */
+    const std::string formalFull = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
+    ASSERT_FALSE(formalFull.empty());
     {
         MockHapToken mockHap;
         ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
@@ -713,7 +711,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
     uint32_t fileLen = 0;
     bool persisted = false;
     for (int round = 0; round < POLL_MAX_ROUNDS && !persisted; round++) {
-        persisted = ReadFormalCacheFile(formalFull, fileBuf, sizeof(fileBuf), &fileLen);
+        persisted = ReadFormalCacheFile(formalFull.c_str(), fileBuf, sizeof(fileBuf), &fileLen);
         if (!persisted) {
             usleep(POLL_INTERVAL_USEC);
         }

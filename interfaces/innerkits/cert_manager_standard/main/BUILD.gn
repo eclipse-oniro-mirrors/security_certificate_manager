@@ -64,7 +64,6 @@ if (os_level == "standard") {
       "hilog:libhilog",
       "access_token:libaccesstoken_compat_sdk",
       "ipc:ipc_single",
-      "openssl:libcrypto_shared",
     ]
   }
 }
