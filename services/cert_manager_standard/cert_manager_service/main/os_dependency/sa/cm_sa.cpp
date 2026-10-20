@@ -106,6 +106,7 @@ static struct CmIpcPoint g_cmIpcHandler[] = {
 
     { CM_MSG_SET_CERT_MANAGER_CONFIG, CmIpcServiceSetCertManagerConfig },
     { CM_MSG_GET_CERT_MANAGER_CONFIG, CmIpcServiceGetCertManagerConfig },
+    { CM_MSG_SAVE_REVOCATION_CACHE, CmIpcServiceSaveRevocationCache },
 };
 
 static void SubscribEvent()

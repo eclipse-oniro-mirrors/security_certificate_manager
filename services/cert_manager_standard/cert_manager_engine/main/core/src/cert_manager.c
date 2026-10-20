@@ -31,6 +31,7 @@
 #include "cert_manager_ukey_operation.h"
 #include "cm_cert_property_rdb.h"
 #include "cm_config_rdb.h"
+#include "cm_revocation_cache_rdb.h"
 #include "cert_manager_crypto_operation.h"
 #include "cm_log.h"
 #include "cm_type.h"
@@ -76,6 +77,10 @@ int32_t CertManagerInitialize(void)
     if (ret != CM_SUCCESS) {
         return ret;
     }
+
+    mode_t mode0701 = S_IRWXU | S_IXOTH;
+    (void)CmUserBakupMakeDir(REVOCATION_CACHE_DIR, &mode0701);
+    (void)CreateRevocationCacheRdb();
 
     return CM_SUCCESS;
 }

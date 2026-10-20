@@ -60,6 +60,8 @@ ohos_static_library("cert_manager_engine_core_standard") {
     "src/cert_manager_updateflag.c",
     "src/cert_manager_uri.c",
     "src/cm_event_process.c",
+    "src/cert_manager_revocation_cache.c",
+    "src/cert_manager_revocation_cache_async.cpp",
   ]
 
   deps = [
