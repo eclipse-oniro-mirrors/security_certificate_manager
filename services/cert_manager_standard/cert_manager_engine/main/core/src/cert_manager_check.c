@@ -664,7 +664,25 @@ static const char *g_supportedConfigKeys[] = {
     "installGlobalUserCA_defaultConfig",
     "enableInstallGlobalUserCA_userList",
     "disableInstallGlobalUserCA_userList",
+    /* internal key of the revocation cache cleanup throttle: readable via the
+     * get path, never writable from outside (g_protectedConfigKeys) */
+    "last_cleanup_utc",
 };
+
+/* engine-managed keys: external callers may read them but must not modify them */
+static const char *g_protectedConfigKeys[] = {
+    "last_cleanup_utc", /* must stay in sync with REVOCATION_CACHE_LAST_CLEANUP_KEY (cm_rdb_config.h) */
+};
+
+static bool IsProtectedConfigKey(const char *key)
+{
+    for (uint32_t i = 0; i < sizeof(g_protectedConfigKeys) / sizeof(g_protectedConfigKeys[0]); i++) {
+        if (strcmp(key, g_protectedConfigKeys[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static bool IsConfigKeySupported(const char *key)
 {
@@ -732,6 +750,10 @@ int32_t CmServiceSetCertManagerConfigCheck(const struct CertManagerConfig *confi
         }
         if (!IsConfigKeySupported(key)) {
             CM_LOG_E("unsupported config key:%s", key);
+            return CMR_ERROR_INVALID_ARGUMENT;
+        }
+        if (IsProtectedConfigKey(key)) {
+            CM_LOG_E("config key:%s is engine-managed, external set is not allowed", key);
             return CMR_ERROR_INVALID_ARGUMENT;
         }
 

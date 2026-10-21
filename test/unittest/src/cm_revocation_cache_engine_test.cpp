@@ -33,7 +33,9 @@
 #include "cert_manager_api.h"
 #include "cert_manager_file_operator.h"
 #include "cert_manager_revocation_cache.h"
+#include "cert_manager_service.h"
 #include "cert_manager_storage.h"
+#include "cm_config_rdb.h"
 #include "cm_mem.h"
 #include "cm_revocation_cache.h"
 #include "cm_revocation_cache_rdb.h"
@@ -59,6 +61,7 @@ constexpr int POLL_MAX_ROUNDS = 100;        /* bounded poll rounds for the async
 constexpr useconds_t POLL_INTERVAL_USEC = 100 * 1000; /* 100ms between two poll rounds */
 constexpr uint32_t ASYNC_KEY_BUF_LEN = 8;   /* room for the short async test keys */
 constexpr uint64_t EXPIRED_RECORD_DATA_SIZE = 100;    /* dataSize of the fake expired record */
+constexpr int64_t META_VALUE_QUERYABLE = 424242;      /* meta value fetched back via the external get path */
 MockNativeToken *g_mockNative = nullptr;
 
 /* snapshot of all cache rel-paths recorded in the RDB; nullopt when the query itself fails */
@@ -209,6 +212,8 @@ void CmRevocationCacheEngineTest::SetUpTestCase()
 {
     /* record the shell token so MockNativeToken can query atm with shell identity */
     CmTestCommon::SetTestEnvironment(GetSelfTokenID());
+    /* the cleanup meta row lives in cert_manager_config: create it first */
+    ASSERT_EQ(CreateCertManagerConfigRdb(), CM_SUCCESS);
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
 }
 
@@ -824,4 +829,35 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
         EXPECT_LE(storedExpire, expire + EXPIRE_TOLERANCE_SEC);
         EXPECT_EQ(memcmp(fileBuf + sizeof(int64_t), expectDer, sizeof(expectDer) - 1), 0);
     }
+}
+
+/*
+ * The cleanup throttle timestamp is engine-managed state stored in the shared
+ * cert_manager_config table under a whitelisted key: readable from the outside,
+ * but never writable through the external config interface.
+ */
+TEST_F(CmRevocationCacheEngineTest, ExternalSetOfInternalKeyIsRejected)
+{
+    MockHapToken mockHap; /* system app holding ACCESS_CERT_MANAGER_INTERNAL */
+    struct CmConfigItem item = { "last_cleanup_utc", "12345" };
+    struct CertManagerConfig config = { 1, &item };
+    /* the value itself would pass the digit-list grammar: only the internal-key
+     * protection may keep it out of the table */
+    EXPECT_EQ(CmServiceSetCertManagerConfig(&config), CMR_ERROR_INVALID_ARGUMENT);
+    int64_t value = 0;
+    EXPECT_EQ(GetRevocationCacheMeta(&value), CMR_ERROR_NOT_FOUND);
+}
+
+TEST_F(CmRevocationCacheEngineTest, ExternalGetOfInternalKeyIsWhitelisted)
+{
+    ASSERT_EQ(SetRevocationCacheMeta(META_VALUE_QUERYABLE), CM_SUCCESS);
+    MockHapToken mockHap; /* system app holding ACCESS_CERT_MANAGER */
+    uint8_t keysBuf[] = "last_cleanup_utc"; /* keysBlob keeps the trailing NUL */
+    struct CmBlob keysBlob = { sizeof(keysBuf), keysBuf };
+    struct CertManagerConfig config = { 0, nullptr };
+    ASSERT_EQ(CmServiceGetCertManagerConfig(&keysBlob, &config), CM_SUCCESS);
+    ASSERT_EQ(config.count, 1u);
+    EXPECT_STREQ(config.configItems[0].key, "last_cleanup_utc");
+    EXPECT_STREQ(config.configItems[0].value, std::to_string(META_VALUE_QUERYABLE).c_str());
+    CM_FREE_PTR(config.configItems);
 }

@@ -22,6 +22,7 @@
 
 #include "securec.h"
 
+#include "cm_config_rdb.h"
 #include "cm_log.h"
 #include "cm_mem.h"
 #include "cm_rdb_config.h"
@@ -32,7 +33,6 @@ namespace Security {
 namespace CertManager {
 
 static std::shared_ptr<CmRdbDataManager> revocationCacheRdbDataManager = nullptr;
-static std::shared_ptr<CmRdbDataManager> revocationCacheMetaRdbDataManager = nullptr;
 
 } // namespace CertManager
 } // namespace Security
@@ -44,6 +44,10 @@ using namespace OHOS::Security::CertManager;
 static const char *REVOCATION_CACHE_SELECT_COLUMNS =
     "SELECT KEY, TYPE, EXPIRE_TIME_UTC, FILE_PATH, DATA_SIZE FROM ";
 
+/* the cleanup meta row lives in cert_manager_config: the int64 timestamp is
+ * stored as a decimal string; 32 bytes cover int64 (20 digits + sign + NUL) */
+constexpr uint32_t REVOCATION_CACHE_META_VALUE_STR_LEN = 32;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -51,28 +55,19 @@ extern "C" {
 int32_t CreateRevocationCacheRdb(void)
 {
     CM_LOG_D("enter CreateRevocationCacheRdb");
+    /* (KEY, TYPE) is the logical identity of one cached entry: a rewrite of the
+     * same key and type replaces the whole row (ON_CONFLICT_REPLACE), so
+     * FILE_PATH stays plain derived data instead of being the primary key */
     RdbConfig cacheConfig;
     cacheConfig.dbName = CERT_MANAGER_RDB_NAME;
     cacheConfig.tableName = REVOCATION_CACHE_TABLE_NAME;
     cacheConfig.createTableSql = std::string("CREATE TABLE IF NOT EXISTS " + REVOCATION_CACHE_TABLE_NAME +
         "(KEY TEXT NOT NULL, TYPE TEXT NOT NULL, EXPIRE_TIME_UTC INTEGER NOT NULL, WRITE_TIME_UTC INTEGER NOT NULL, " +
-        "FILE_PATH TEXT PRIMARY KEY, DATA_SIZE INTEGER NOT NULL)");
+        "FILE_PATH TEXT NOT NULL, DATA_SIZE INTEGER NOT NULL, PRIMARY KEY (KEY, TYPE))");
     revocationCacheRdbDataManager = std::make_shared<CmRdbDataManager>(cacheConfig);
     if (!revocationCacheRdbDataManager->CreateTable()) {
         CM_LOG_E("Failed to create revocation_cache table");
         revocationCacheRdbDataManager = nullptr;
-        return CMR_ERROR_CREATE_RDB_TABLE_FAIL;
-    }
-
-    RdbConfig metaConfig;
-    metaConfig.dbName = CERT_MANAGER_RDB_NAME;
-    metaConfig.tableName = REVOCATION_CACHE_META_TABLE_NAME;
-    metaConfig.createTableSql = std::string("CREATE TABLE IF NOT EXISTS " + REVOCATION_CACHE_META_TABLE_NAME +
-        "(CONFIG_KEY TEXT PRIMARY KEY, CONFIG_VALUE TEXT NOT NULL)");
-    revocationCacheMetaRdbDataManager = std::make_shared<CmRdbDataManager>(metaConfig);
-    if (!revocationCacheMetaRdbDataManager->CreateTable()) {
-        CM_LOG_E("Failed to create revocation_cache_meta table");
-        revocationCacheMetaRdbDataManager = nullptr;
         return CMR_ERROR_CREATE_RDB_TABLE_FAIL;
     }
     return CM_SUCCESS;
@@ -404,83 +399,29 @@ int32_t GetRevocationCacheMeta(int64_t *value)
         CM_LOG_E("value is nullptr");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    if (revocationCacheMetaRdbDataManager == nullptr) {
-        CM_LOG_E("revocationCacheMetaRdbDataManager is nullptr");
-        return CMR_ERROR_NULL_POINTER;
-    }
 
-    std::string sql = std::string("SELECT ") + COLUMN_CONFIG_VALUE + " FROM " +
-        REVOCATION_CACHE_META_TABLE_NAME + " WHERE " + COLUMN_CONFIG_KEY + " = ?";
-    std::vector<NativeRdb::ValueObject> args;
-    args.emplace_back(std::string(REVOCATION_CACHE_LAST_CLEANUP_KEY));
-    auto resultSet = revocationCacheMetaRdbDataManager->QueryBySql(sql, args);
-    if (resultSet == nullptr) {
-        CM_LOG_E("query meta failed");
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    char valueStr[REVOCATION_CACHE_META_VALUE_STR_LEN] = { 0 };
+    int32_t ret = QueryConfigByKey(REVOCATION_CACHE_LAST_CLEANUP_KEY.c_str(), valueStr, sizeof(valueStr));
+    if (ret != CM_SUCCESS) {
+        return ret; /* CMR_ERROR_NOT_FOUND propagates to the caller */
     }
-
-    int32_t rowCount = 0;
-    if (resultSet->GetRowCount(rowCount) != NativeRdb::E_OK) {
-        CM_LOG_E("GetRowCount failed");
-        resultSet->Close();
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-    if (rowCount <= 0 || resultSet->GoToFirstRow() != NativeRdb::E_OK) {
-        resultSet->Close();
-        return CMR_ERROR_NOT_FOUND;
-    }
-
-    int valueIndex = 0;
-    if (resultSet->GetColumnIndex(COLUMN_CONFIG_VALUE, valueIndex) != NativeRdb::E_OK) {
-        CM_LOG_E("GetColumnIndex for value failed");
-        resultSet->Close();
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-    std::string strValue;
-    if (resultSet->GetString(valueIndex, strValue) != NativeRdb::E_OK) {
-        CM_LOG_E("GetString for value failed");
-        resultSet->Close();
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-    resultSet->Close();
 
     constexpr int decimalBase = 10;
-    *value = std::strtoll(strValue.c_str(), nullptr, decimalBase);
+    *value = std::strtoll(valueStr, nullptr, decimalBase);
     return CM_SUCCESS;
 }
 
 int32_t SetRevocationCacheMeta(int64_t value)
 {
     CM_LOG_D("enter SetRevocationCacheMeta");
-    if (revocationCacheMetaRdbDataManager == nullptr) {
-        CM_LOG_E("revocationCacheMetaRdbDataManager is nullptr");
-        return CMR_ERROR_NULL_POINTER;
-    }
-
-    NativeRdb::ValuesBucket valuesBucket;
-    valuesBucket.PutString(COLUMN_CONFIG_KEY, REVOCATION_CACHE_LAST_CLEANUP_KEY);
-    valuesBucket.PutString(COLUMN_CONFIG_VALUE, std::to_string(value));
-    if (!revocationCacheMetaRdbDataManager->InsertData(valuesBucket)) {
-        CM_LOG_E("Failed to set revocation cache meta");
-        return CMR_ERROR_INSERT_RDB_DATA_FAIL;
-    }
-    return CM_SUCCESS;
+    std::string valueStr = std::to_string(value);
+    return InsertOrUpdateConfig(REVOCATION_CACHE_LAST_CLEANUP_KEY.c_str(), valueStr.c_str());
 }
 
 int32_t DeleteRevocationCacheMeta(void)
 {
     CM_LOG_D("enter DeleteRevocationCacheMeta");
-    if (revocationCacheMetaRdbDataManager == nullptr) {
-        CM_LOG_E("revocationCacheMetaRdbDataManager is nullptr");
-        return CMR_ERROR_NULL_POINTER;
-    }
-
-    if (!revocationCacheMetaRdbDataManager->DeleteData(std::string(REVOCATION_CACHE_LAST_CLEANUP_KEY),
-        COLUMN_CONFIG_KEY)) {
-        CM_LOG_E("Failed to delete revocation cache meta");
-        return CMR_ERROR_DELETE_RDB_DATA_FAIL;
-    }
-    return CM_SUCCESS;
+    return DeleteConfigByKey(REVOCATION_CACHE_LAST_CLEANUP_KEY.c_str());
 }
 
 #ifdef __cplusplus
