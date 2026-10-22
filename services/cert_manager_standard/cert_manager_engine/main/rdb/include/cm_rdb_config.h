@@ -44,6 +44,7 @@ const std::string COLUMN_EXPIRE_TIME_UTC = "EXPIRE_TIME_UTC";
 const std::string COLUMN_WRITE_TIME_UTC = "WRITE_TIME_UTC";
 const std::string COLUMN_FILE_PATH = "FILE_PATH";
 const std::string COLUMN_DATA_SIZE = "DATA_SIZE";
+const std::string COLUMN_IS_DELETED = "IS_DELETED";
 const std::string REVOCATION_CACHE_LAST_CLEANUP_KEY = "last_cleanup_utc";
 
 namespace OHOS {

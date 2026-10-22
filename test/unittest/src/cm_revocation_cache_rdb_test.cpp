@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <climits>
 #include <optional>
 #include <string>
@@ -43,6 +44,9 @@ constexpr uint64_t NON_ZERO_SENTINEL_SIZE = 77;         /* must be reset to 0 by
 constexpr uint64_t COEXIST_FIRST_DATA_SIZE = 100;       /* first row of the composite primary key cases */
 constexpr uint64_t COEXIST_SECOND_DATA_SIZE = 200;      /* second row: its values must win on a rewrite */
 constexpr int64_t META_VALUE_IN_CONFIG = 1729;          /* arbitrary meta value proving config-table storage */
+constexpr uint64_t ACTIVE_SUM_SELF_SIZE = 100;          /* self row: must be excluded from its own query */
+constexpr uint64_t ACTIVE_SUM_OTHER_SIZE = 200;         /* other active row: always counted */
+constexpr uint64_t ACTIVE_SUM_THIRD_SIZE = 300;         /* third row: later marked logically deleted */
 
 /* snapshot of all cache rel-paths recorded in the RDB; nullopt when the query itself fails */
 std::optional<std::vector<std::string>> QueryCacheFilePaths()
@@ -147,6 +151,98 @@ TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
     uint64_t total = NON_ZERO_SENTINEL_SIZE; /* must be reset to 0: the table is empty again */
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
     EXPECT_EQ(total, 0u);
+}
+
+TEST_F(CmRevocationCacheRdbTest, ActiveSumExcludesDeletedAndSelf)
+{
+    struct RevocationCacheRecord self = { FIXED_EXPIRE_TIME_UTC, "616263", "ocsp",
+        "ocsp/616263.cache", ACTIVE_SUM_SELF_SIZE };
+    struct RevocationCacheRecord other = { LATER_EXPIRE_TIME_UTC, "6b657931", "ocsp",
+        "ocsp/6b657931.cache", ACTIVE_SUM_OTHER_SIZE };
+    struct RevocationCacheRecord third = { LATER_EXPIRE_TIME_UTC, "6b657932", "crl",
+        "crl/6b657932.cache", ACTIVE_SUM_THIRD_SIZE };
+    ASSERT_EQ(InsertRevocationCacheRecord(&self), CM_SUCCESS);
+    ASSERT_EQ(InsertRevocationCacheRecord(&other), CM_SUCCESS);
+    ASSERT_EQ(InsertRevocationCacheRecord(&third), CM_SUCCESS);
+
+    uint64_t total = NON_ZERO_SENTINEL_SIZE;
+    /* the self row is excluded from its own query: only the other two count */
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize(self.key, self.type, &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACTIVE_SUM_OTHER_SIZE + ACTIVE_SUM_THIRD_SIZE);
+    /* no self match: every active row counts */
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACTIVE_SUM_SELF_SIZE + ACTIVE_SUM_OTHER_SIZE + ACTIVE_SUM_THIRD_SIZE);
+    /* a logically deleted row leaves the active sum */
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(third.filePath), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACTIVE_SUM_SELF_SIZE + ACTIVE_SUM_OTHER_SIZE);
+}
+
+TEST_F(CmRevocationCacheRdbTest, EvictCandidateFiltersAndOrders)
+{
+    struct RevocationCacheRecord oldest = { FIXED_EXPIRE_TIME_UTC, "6f6c6431", "ocsp",
+        "ocsp/6f6c6431.cache", ACTIVE_SUM_SELF_SIZE };
+    struct RevocationCacheRecord middle = { LATER_EXPIRE_TIME_UTC, "6d696464", "ocsp",
+        "ocsp/6d696464.cache", ACTIVE_SUM_OTHER_SIZE };
+    struct RevocationCacheRecord self = { LATER_EXPIRE_TIME_UTC, "73656c66", "crl",
+        "crl/73656c66.cache", ACTIVE_SUM_THIRD_SIZE };
+    ASSERT_EQ(InsertRevocationCacheRecord(&oldest), CM_SUCCESS);
+    ASSERT_EQ(InsertRevocationCacheRecord(&middle), CM_SUCCESS);
+    ASSERT_EQ(InsertRevocationCacheRecord(&self), CM_SUCCESS);
+
+    struct RevocationCacheRecord cand = { 0 };
+    /* earliest expire wins among active non-self rows */
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate(self.key, self.type, &cand), CM_SUCCESS);
+    EXPECT_STREQ(cand.filePath, oldest.filePath);
+    /* a logically deleted row is skipped: the next one steps up */
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(oldest.filePath), CM_SUCCESS);
+    (void)memset_s(&cand, sizeof(cand), 0, sizeof(cand));
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate(self.key, self.type, &cand), CM_SUCCESS);
+    EXPECT_STREQ(cand.filePath, middle.filePath);
+    /* the self row never becomes its own candidate, even as the last active row */
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(middle.filePath), CM_SUCCESS);
+    (void)memset_s(&cand, sizeof(cand), 0, sizeof(cand));
+    EXPECT_EQ(QueryRevocationCacheEvictCandidate(self.key, self.type, &cand), CMR_ERROR_NOT_FOUND);
+}
+
+TEST_F(CmRevocationCacheRdbTest, AllFilePathsIncludesDeletedRows)
+{
+    struct RevocationCacheRecord r = { FIXED_EXPIRE_TIME_UTC, "64656c31", "ocsp",
+        "ocsp/64656c31.cache", ACTIVE_SUM_SELF_SIZE };
+    ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(r.filePath), CM_SUCCESS);
+    /* the orphan scan must still see logically deleted rows: their files survive */
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_NE(std::find(paths->begin(), paths->end(), r.filePath), paths->end());
+}
+
+TEST_F(CmRevocationCacheRdbTest, InsertResurrectsDeletedRow)
+{
+    struct RevocationCacheRecord first = { FIXED_EXPIRE_TIME_UTC, "72657331", "ocsp",
+        "ocsp/72657331.cache", ACTIVE_SUM_SELF_SIZE };
+    ASSERT_EQ(InsertRevocationCacheRecord(&first), CM_SUCCESS);
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(first.filePath), CM_SUCCESS);
+
+    /* re-insert of the same (KEY, TYPE) replaces the whole row and revives it */
+    struct RevocationCacheRecord second = { LATER_EXPIRE_TIME_UTC, "72657331", "ocsp",
+        "ocsp/72657332.cache", ACTIVE_SUM_THIRD_SIZE };
+    ASSERT_EQ(InsertRevocationCacheRecord(&second), CM_SUCCESS);
+
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACTIVE_SUM_THIRD_SIZE);
+
+    /* the replaced row's old path is gone: REPLACE rewrote the whole row */
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_EQ(std::find(paths->begin(), paths->end(), first.filePath), paths->end());
+    EXPECT_NE(std::find(paths->begin(), paths->end(), second.filePath), paths->end());
+
+    /* and it is an eviction candidate again */
+    struct RevocationCacheRecord cand = { 0 };
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate("none", "none", &cand), CM_SUCCESS);
+    EXPECT_STREQ(cand.filePath, second.filePath);
 }
 
 TEST_F(CmRevocationCacheRdbTest, QueryEmptyTableReturnsNoPaths)

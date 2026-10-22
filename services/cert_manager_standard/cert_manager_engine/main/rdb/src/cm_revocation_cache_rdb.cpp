@@ -63,7 +63,8 @@ int32_t CreateRevocationCacheRdb(void)
     cacheConfig.tableName = REVOCATION_CACHE_TABLE_NAME;
     cacheConfig.createTableSql = std::string("CREATE TABLE IF NOT EXISTS " + REVOCATION_CACHE_TABLE_NAME +
         "(KEY TEXT NOT NULL, TYPE TEXT NOT NULL, EXPIRE_TIME_UTC INTEGER NOT NULL, WRITE_TIME_UTC INTEGER NOT NULL, " +
-        "FILE_PATH TEXT NOT NULL, DATA_SIZE INTEGER NOT NULL, PRIMARY KEY (KEY, TYPE))");
+        "FILE_PATH TEXT NOT NULL, DATA_SIZE INTEGER NOT NULL, IS_DELETED INTEGER NOT NULL DEFAULT 0, " +
+        "PRIMARY KEY (KEY, TYPE))");
     revocationCacheRdbDataManager = std::make_shared<CmRdbDataManager>(cacheConfig);
     if (!revocationCacheRdbDataManager->CreateTable()) {
         CM_LOG_E("Failed to create revocation_cache table");
@@ -92,6 +93,9 @@ int32_t InsertRevocationCacheRecord(const struct RevocationCacheRecord *record)
     valuesBucket.PutLong(COLUMN_WRITE_TIME_UTC, static_cast<int64_t>(std::time(nullptr)));
     valuesBucket.PutString(COLUMN_FILE_PATH, std::string(record->filePath));
     valuesBucket.PutLong(COLUMN_DATA_SIZE, static_cast<int64_t>(record->dataSize));
+    /* explicit 0: a re-inserted (KEY, TYPE) row is active again — a logical
+     * delete must never survive a re-save, whatever the column default says */
+    valuesBucket.PutLong(COLUMN_IS_DELETED, 0);
     if (!revocationCacheRdbDataManager->InsertData(valuesBucket)) {
         CM_LOG_E("Failed to insert revocation cache record:%s", record->filePath);
         return CMR_ERROR_INSERT_RDB_DATA_FAIL;
@@ -114,6 +118,32 @@ int32_t DeleteRevocationCacheRecord(const char *filePath)
     if (!revocationCacheRdbDataManager->DeleteData(std::string(filePath), COLUMN_FILE_PATH)) {
         CM_LOG_E("Failed to delete revocation cache record:%s", filePath);
         return CMR_ERROR_DELETE_RDB_DATA_FAIL;
+    }
+    return CM_SUCCESS;
+}
+
+int32_t MarkRevocationCacheRecordDeleted(const char *filePath)
+{
+    CM_LOG_D("enter MarkRevocationCacheRecordDeleted");
+    if (filePath == nullptr) {
+        CM_LOG_E("filePath is nullptr");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (revocationCacheRdbDataManager == nullptr) {
+        CM_LOG_E("revocationCacheRdbDataManager is nullptr");
+        return CMR_ERROR_NULL_POINTER;
+    }
+
+    /* logical delete only: the row keeps accounting for nothing, its file stays
+     * on disk until the entry expires and the periodic cleanup reclaims it;
+     * updating a nonexistent path affects no rows and stays idempotent */
+    std::string sql = std::string("UPDATE ") + REVOCATION_CACHE_TABLE_NAME + " SET " +
+        COLUMN_IS_DELETED + " = 1 WHERE " + COLUMN_FILE_PATH + " = ?";
+    std::vector<NativeRdb::ValueObject> args;
+    args.emplace_back(std::string(filePath));
+    if (!revocationCacheRdbDataManager->ExecuteSql(sql, args)) {
+        CM_LOG_E("Failed to mark revocation cache record deleted:%s", filePath);
+        return CMR_ERROR_UPDATE_RDB_DATA_FAIL;
     }
     return CM_SUCCESS;
 }
@@ -155,6 +185,58 @@ int32_t QueryRevocationCacheSumSize(uint64_t *totalSize)
     if (resultSet->IsColumnNull(0, isNull) == NativeRdb::E_OK && !isNull) {
         if (resultSet->GetLong(0, sum) != NativeRdb::E_OK) {
             CM_LOG_E("GetLong for sum failed");
+            resultSet->Close();
+            return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+        }
+    }
+    resultSet->Close();
+    *totalSize = sum < 0 ? 0 : static_cast<uint64_t>(sum);
+    return CM_SUCCESS;
+}
+
+int32_t QueryRevocationCacheActiveSumSize(const char *key, const char *type, uint64_t *totalSize)
+{
+    CM_LOG_D("enter QueryRevocationCacheActiveSumSize");
+    if (key == nullptr || type == nullptr || totalSize == nullptr) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (revocationCacheRdbDataManager == nullptr) {
+        CM_LOG_E("revocationCacheRdbDataManager is nullptr");
+        return CMR_ERROR_NULL_POINTER;
+    }
+    *totalSize = 0;
+
+    /* active rows only, with the caller's own row excluded: a re-save must not
+     * bill its old row twice while the REPLACE insert is still in flight */
+    std::string sql = std::string("SELECT SUM(") + COLUMN_DATA_SIZE + ") AS total_size FROM " +
+        REVOCATION_CACHE_TABLE_NAME + " WHERE " + COLUMN_IS_DELETED + " = 0 AND NOT (" + COLUMN_KEY +
+        " = ? AND " + COLUMN_TYPE + " = ?)";
+    std::vector<NativeRdb::ValueObject> args;
+    args.emplace_back(std::string(key));
+    args.emplace_back(std::string(type));
+    auto resultSet = revocationCacheRdbDataManager->QueryBySql(sql, args);
+    if (resultSet == nullptr) {
+        CM_LOG_E("query active sum size failed");
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+
+    int32_t rowCount = 0;
+    if (resultSet->GetRowCount(rowCount) != NativeRdb::E_OK) {
+        CM_LOG_E("GetRowCount failed");
+        resultSet->Close();
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    if (rowCount <= 0 || resultSet->GoToFirstRow() != NativeRdb::E_OK) {
+        resultSet->Close();
+        return CM_SUCCESS;
+    }
+
+    bool isNull = false;
+    int64_t sum = 0;
+    if (resultSet->IsColumnNull(0, isNull) == NativeRdb::E_OK && !isNull) {
+        if (resultSet->GetLong(0, sum) != NativeRdb::E_OK) {
+            CM_LOG_E("GetLong for active sum failed");
             resultSet->Close();
             return CMR_ERROR_QUERY_RDB_DATA_FAIL;
         }
@@ -283,6 +365,25 @@ int32_t QueryRevocationCacheRecordByExpireAsc(struct RevocationCacheRecord *reco
     std::string sql = std::string(REVOCATION_CACHE_SELECT_COLUMNS) + REVOCATION_CACHE_TABLE_NAME +
         " ORDER BY " + COLUMN_EXPIRE_TIME_UTC + " ASC, " + COLUMN_WRITE_TIME_UTC + " ASC LIMIT 1";
     return QuerySingleRecord(sql, std::vector<NativeRdb::ValueObject>(), record);
+}
+
+int32_t QueryRevocationCacheEvictCandidate(const char *key, const char *type,
+    struct RevocationCacheRecord *record)
+{
+    CM_LOG_D("enter QueryRevocationCacheEvictCandidate");
+    if (key == nullptr || type == nullptr) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    /* active rows only, self excluded: the running save must never evict the
+     * row (and file) it is about to replace */
+    std::string sql = std::string(REVOCATION_CACHE_SELECT_COLUMNS) + REVOCATION_CACHE_TABLE_NAME +
+        " WHERE " + COLUMN_IS_DELETED + " = 0 AND NOT (" + COLUMN_KEY + " = ? AND " + COLUMN_TYPE +
+        " = ?) ORDER BY " + COLUMN_EXPIRE_TIME_UTC + " ASC, " + COLUMN_WRITE_TIME_UTC + " ASC LIMIT 1";
+    std::vector<NativeRdb::ValueObject> args;
+    args.emplace_back(std::string(key));
+    args.emplace_back(std::string(type));
+    return QuerySingleRecord(sql, args, record);
 }
 
 int32_t QueryExpiredRevocationCacheRecord(int64_t nowUtc, struct RevocationCacheRecord *record)
