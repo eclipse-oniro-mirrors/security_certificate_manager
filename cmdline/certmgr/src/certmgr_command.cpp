@@ -292,17 +292,15 @@ struct LocaleTitleEntry {
 };
 
 static const LocaleTitleEntry TITLE_MAP[] = {
-    {"zh-CN", "您正在安装用户CA证书，为网站启用此证书后，第三方将可以查看发送给网站的任何敏感数据"},
-    {"en-US", "You are installing a user CA certificate. If this certificate is enabled for a website, "
-              "third parties will be able to view any sensitive data sent to the website."},
-    {"zh-HK", "您正在安裝用戶CA證書，為網站啟用此證書後，第三方將可以查看發送給網站的任何敏感數據"},
-    {"zh-TW", "您正在安裝使用者CA憑證，為網站啟用此憑證後，第三方將可以檢視傳送給網站的任何敏感資料"},
-    {"bo-CN", "ཁྱེད་ཀྱིས་སྤྱོད་མཁན་CAདཔང་ཡིག་སྒྲིག་སྦྱོར་བྱེད་བཞིན་ཡོད། "
-              "དྲ་ཚིགས་ལ་དཔང་ཡིག་འདི་སྤྱད་རྗེས། "
-              "ཕྱོགས་གསུམ་པས་དྲ་ཚིགས་ལ་སྐུར་བའི་གསང་བའི་གཞི་གྲངས་མཐོང་ཐུབ།"},
-    {"ug-CN", "سىز ھازىر ئىشلەتكۈچى CA گۇۋاھنامىسىنى قاچىلاۋاتىسىز، "
-              "تور بېكەتكە بۇ گۇۋاھنامىنى قوزغاتقاندىن كېيىن، "
-              "ئۈچىنچى تەرەپ تور بېكەتكە ئەۋەتىلگەن ھەرقانداق سەزگۈر مەلۇماتنى كۆرەلەيدۇ"}
+    {"zh-CN", "您正在安装用户 CA 证书，为网站启用此证书后，第三方将可以查看发送给网站的任何敏感数据"},
+    {"en-US", "You're installing a CA certificate. If this certificate is enabled for a website, "
+              "third parties will be able to view any sensitive data sent to that website."},
+    {"zh-HK", "您正在安裝用戶 CA 憑證，為網站啟用此憑證後，第三方將可以檢視發送給網站的任何敏感數據"},
+    {"zh-TW", "您正在安裝使用者 CA 憑證，為網站啟用此憑證後，第三方將可以查看傳送給網站的任何敏感資料"},
+    {"bo-CN", "ཁྱེད་ཀྱིས་ CA ལག་ཁྱེར་སྒྲིག་འཇུག་བྱེད་བཞིན་ཡོད། དྲ་ཚུགས་ལ་དཔང་ཡིག་འདི་སྤྱོད་འགོ་བཙུགས་ཚེ། "
+              "དྲ་རྒྱར་བསྐུར་བའི་ཚོར་སྐྱེན་གཞི་གྲངས་གང་ཡིན་ཡང་ཕྱོགས་གསུམ་པས་ལྟ་ཐུབ།"},
+    {"ug-CN", "ئىشلەتكۈچى CA ئىجازەتنامىسى قاچىلاۋاتىسىز. بۇ ئىجازەتنامە توربېكەت ئۈچۈن ئېچىلسا،"
+              " توربېكەتكە ئەۋەتكەن ھەرقانداق سەزگۈر مەلۇماتنى ئۈچىنچى تەرەپ كۆرەلەيدۇ."}
 };
 
 static const std::vector<std::string> CANDIDATE_LOCALES = {"zh-CN", "en-US", "zh-HK", "zh-TW", "bo-CN", "ug-CN"};
