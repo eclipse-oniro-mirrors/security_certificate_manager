@@ -634,12 +634,6 @@ int32_t CmDirRemove(const char *path)
     return DirRemove(path);
 }
 
-/*
- * Writes the payload to the tmp file through stdio and pushes it to disk.
- * fileno() is used only to pin the file mode and to fsync: the mode must stay
- * 0644 regardless of the umask, and crash consistency after the rename needs
- * the data on disk, not just inside the stdio buffer.
- */
 /* one metadata page is billed on top of the payload: the file system charges
  * an inode page per file */
 #define REVOCATION_CACHE_BLOCK_ALIGN_BYTES 4096UL
@@ -653,6 +647,12 @@ static uint64_t AccountedSize(uint64_t fileSize)
         REVOCATION_CACHE_BLOCK_ALIGN_BYTES) * REVOCATION_CACHE_BLOCK_ALIGN_BYTES;
 }
 
+/*
+ * Writes the payload to the tmp file through stdio and pushes it to disk.
+ * fileno() is used only to pin the file mode and to fsync: the mode must stay
+ * 0644 regardless of the umask, and crash consistency after the rename needs
+ * the data on disk, not just inside the stdio buffer.
+ */
 static int32_t WriteTmpFile(const char *tmpPath, const uint8_t *buf, uint32_t len, uint64_t *fileSizeOut)
 {
     FILE *fp = fopen(tmpPath, "wb");
@@ -798,8 +798,9 @@ int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, ui
         return CMR_ERROR_WRITE_FILE_FAIL;
     }
     /* fsync the parent directory so the rename survives a power loss; a
-     * validation failure here fails the save and the orphan cleanup later
-     * reclaims the renamed file */
+     * validation failure here fails the save — for a fresh key the orphan
+     * cleanup reclaims the renamed file, on a re-save the old row still
+     * references it and the expiry cleanup does the reaping */
     ret = SyncParentDir(fullPath);
     if (ret != CMR_OK) {
         return ret;

@@ -142,7 +142,7 @@ static int RemoveTreeEntry(const char *path, const struct stat *st, int type, st
 
 /*
  * The engine-level cases run in this root process and create the cache
- * directories (revocation_cache/<type>/<prefix>) with root ownership. The SA
+ * directories (revocation_cache/<type>) with root ownership. The SA
  * (uid cert_manager_server) then fails its atomic rename with EACCES when
  * saving through IPC, and chowning the tree back is not permitted for the test
  * process on device. Deleting is allowed though (same as teardown cleanup), so
@@ -742,17 +742,25 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
 
 TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
 {
-    /* a fake oldest record claiming the whole 2 MiB budget pushes the next
-     * save over the accounted capacity limit */
+    /* an expired record claiming the whole 2 MiB budget pushes the next save
+     * over the accounted capacity limit and is reaped physically; the
+     * unexpired logical branch has its own case (LogicalEvictionKeepsFile) */
     constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload: page + 8 bytes, aligned */
     struct RevocationCacheRecord big = { 0 };
-    big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + OLDER_EXPIRE_SEC; /* older than the new entry */
+    big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC; /* expired */
     const char *bigRel = "ocsp/cafe0000.cache";
     (void)strncpy_s(big.key, sizeof(big.key), "cafe0000", strlen("cafe0000"));
     (void)strncpy_s(big.type, sizeof(big.type), "ocsp", strlen("ocsp"));
     (void)strncpy_s(big.filePath, sizeof(big.filePath), bigRel, strlen(bigRel));
     big.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
     ASSERT_EQ(InsertRevocationCacheRecord(&big), CM_SUCCESS);
+    std::string bigFull = std::string(REVOCATION_CACHE_DIR) + bigRel;
+    const uint8_t body[] = "OLD";
+    ASSERT_EQ(WriteTestFile(bigFull.c_str(), body, sizeof(body) - 1), 0);
+
+    /* keep the periodic cleanup out: it would reap the expired row before
+     * the eviction branch under test sees it */
+    ASSERT_EQ(SetRevocationCacheMeta(static_cast<int64_t>(time(nullptr))), CM_SUCCESS);
 
     uint8_t keyBuf[] = "evctkey";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
@@ -761,10 +769,11 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
 
-    /* the oldest oversized record must have been evicted */
+    /* the oldest oversized record must have been evicted physically */
     const auto paths = QueryCacheFilePaths();
     ASSERT_NE(paths, std::nullopt);
     EXPECT_EQ(std::find(paths->begin(), paths->end(), bigRel), paths->end());
+    EXPECT_NE(access(bigFull.c_str(), F_OK), 0);
     /* the surviving row bills its accounted size, not the raw payload length */
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);

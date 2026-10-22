@@ -142,6 +142,9 @@ extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob *key, 
     if (data == nullptr) {
         return CMR_ERROR_NULL_POINTER;
     }
+    if (key == nullptr) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     data->data = nullptr;
     data->size = 0;
 

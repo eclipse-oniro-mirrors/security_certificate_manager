@@ -342,7 +342,8 @@ static int32_t SaveCacheEntryUnderLock(uint32_t type, const char *relPath, int64
     }
 
     /* self-exclusion: the row this save is about to replace must neither be
-     * billed nor evicted while the REPLACE insert is still in flight */
+     * billed nor evicted while the REPLACE insert is still in flight; the
+     * split cannot fail for a BuildRelPath path, the branch is a guard */
     char selfKey[CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN + 1] = { 0 };
     char selfType[CM_REVOCATION_CACHE_TYPE_LEN] = { 0 };
     if (GetKeyAndTypeFromRelPath(relPath, selfKey, sizeof(selfKey), selfType, sizeof(selfType)) !=
