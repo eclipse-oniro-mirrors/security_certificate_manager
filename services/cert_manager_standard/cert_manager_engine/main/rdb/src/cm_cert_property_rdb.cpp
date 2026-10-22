@@ -264,4 +264,114 @@ int32_t QueryCertProperty(const char *uri, struct CertProperty *certProperty)
     }
     return CM_SUCCESS;
 }
+
+static void BuildPredicatesFromCondition(NativeRdb::AbsRdbPredicates &predicates,
+    const struct CmFindCertCondition *condition)
+{
+    /* certType filter */
+    if (condition->certType != nullptr && strlen(condition->certType) > 0) {
+        predicates.EqualTo(COLUMN_CERT_TYPE, std::string(condition->certType));
+    }
+
+    /* userId filter: IN (userId1, userId2, ...) */
+    if (condition->userIds != nullptr && condition->userIdCount > 0) {
+        predicates.BeginWrap();
+        for (uint32_t i = 0; i < condition->userIdCount; i++) {
+            if (i > 0) {
+                predicates.Or();
+            }
+            predicates.EqualTo(COLUMN_USERID, std::to_string(condition->userIds[i]));
+        }
+        predicates.EndWrap();
+    }
+
+    /* name filter: alias LIKE '%name%' OR subject_name LIKE '%name%' */
+    if (condition->name != nullptr && strlen(condition->name) > 0) {
+        std::string namePattern = "%" + std::string(condition->name) + "%";
+        predicates.BeginWrap();
+        predicates.Like(COLUMN_ALIAS, namePattern);
+        predicates.Or();
+        predicates.Like(COLUMN_SUBJECT_NAME, namePattern);
+        predicates.EndWrap();
+    }
+
+    /* certId filter: URI LIKE '%o=certId;%' */
+    if (condition->certId != nullptr && strlen(condition->certId) > 0) {
+        std::string uriPattern = "%o=" + std::string(condition->certId) + ";%";
+        predicates.Like(COLUMN_URI, uriPattern);
+    }
+}
+
+static int32_t ReadCertPropertiesFromResultSet(
+    const std::shared_ptr<NativeRdb::AbsSharedResultSet> &resultSet,
+    struct CertProperty **results, uint32_t *resultCount)
+{
+    int rowCount = 0;
+    int ret = resultSet->GetRowCount(rowCount);
+    if (ret != NativeRdb::E_OK) {
+        CM_LOG_E("GetRowCount failed, ret: %d", ret);
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+
+    if (rowCount <= 0) {
+        *results = nullptr;
+        *resultCount = 0;
+        return CM_SUCCESS;
+    }
+
+    uint32_t count = static_cast<uint32_t>(rowCount);
+    uint32_t allocSize = sizeof(struct CertProperty) * count;
+    struct CertProperty *items = static_cast<struct CertProperty *>(malloc(allocSize));
+    if (items == nullptr) {
+        CM_LOG_E("malloc failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(items, allocSize, 0, allocSize);
+
+    uint32_t validCount = 0;
+    ret = resultSet->GoToFirstRow();
+    while (ret == NativeRdb::E_OK) {
+        int32_t result = GetCertProperty(resultSet, &items[validCount]);
+        if (result != CM_SUCCESS) {
+            CM_LOG_E("Failed to get cert property at index:%u", validCount);
+            break;
+        }
+        validCount++;
+        ret = resultSet->GoToNextRow();
+    }
+
+    if (validCount == 0 && count > 0) {
+        free(items);
+        items = nullptr;
+    }
+    *results = items;
+    *resultCount = validCount;
+    return CM_SUCCESS;
+}
+
+int32_t QueryCertPropertyByCondition(const struct CmFindCertCondition *condition,
+    struct CertProperty **results, uint32_t *resultCount)
+{
+    CM_LOG_D("enter QueryCertPropertyByCondition");
+    if (condition == nullptr || results == nullptr || resultCount == nullptr) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (cmRdbDataManager == nullptr) {
+        CM_LOG_E("cmRdbDataManager is nullptr");
+        return CMR_ERROR_NULL_POINTER;
+    }
+
+    NativeRdb::AbsRdbPredicates predicates(CERT_PROPERTY_TABLE_NAME);
+    BuildPredicatesFromCondition(predicates, condition);
+
+    auto absSharedResultSet = cmRdbDataManager->QueryDataWithPredicates(predicates);
+    if (absSharedResultSet == nullptr) {
+        CM_LOG_E("QueryCertPropertyByCondition query failed");
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+
+    CmScoprGuard stateGuard([&] { absSharedResultSet->Close(); });
+    return ReadCertPropertiesFromResultSet(absSharedResultSet, results, resultCount);
+}
  

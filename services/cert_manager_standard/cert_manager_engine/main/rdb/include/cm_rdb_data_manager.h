@@ -37,6 +37,8 @@ public:
     bool DeleteData(const std::string &primKey, const std::string &keyColumn);
     std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryData(const std::string &primKey, const std::string &keyColumn);
     std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryAllData();
+    std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryDataWithPredicates(
+        const NativeRdb::AbsRdbPredicates &predicates);
     bool ExecuteSql(const std::string &sql, const std::vector<NativeRdb::ValueObject> &args);
     std::shared_ptr<NativeRdb::AbsSharedResultSet> QueryBySql(const std::string &sql,
         const std::vector<NativeRdb::ValueObject> &args);

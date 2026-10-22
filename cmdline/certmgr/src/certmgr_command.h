@@ -58,6 +58,13 @@ int32_t AuthenticateUser(int32_t userId);
 
 int32_t AuthenticateAdmin();
 
+int32_t GetCertSha256Hex(const struct CmBlob &certData, std::string &sha256Hex);
+
+int32_t GetCertPemString(const struct CmBlob &certData, std::string &pemStr);
+
+int32_t GetCertHashStrings(const struct CmBlob &certData,
+    std::string &sha256Hex, std::string &sha1Hex);
+
 class CertMgrCommand {
 public:
     virtual ~CertMgrCommand() = default;
@@ -97,6 +104,25 @@ private:
     CmCertFileFormat certFormat_ = PEM_DER;
     std::string certFilePath_;
     bool hasCertFile_ = false;
+};
+
+class FindUserCACommand final : public CertMgrCommand {
+public:
+    FindUserCACommand() = default;
+
+protected:
+    int32_t ParseArgs(int argc, char *argv[]) override;
+    int32_t Validate() override;
+    int32_t Run() override;
+
+private:
+    bool hasG_ = false;
+    bool hasGU_ = false;
+    std::string certName_;
+    bool hasName_ = false;
+    int32_t certCount_ = 0;
+    bool printPem_ = false;
+    bool printHash_ = false;
 };
 
 } // namespace CertMgr

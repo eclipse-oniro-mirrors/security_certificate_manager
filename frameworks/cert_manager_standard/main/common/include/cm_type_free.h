@@ -24,6 +24,7 @@ extern "C" {
 #endif
 
 void CmFreeUkeyCertList(struct CredentialDetailList *credentialDetailList);
+void CmFreeFindCertResultInner(struct FindCertResult *result);
 
 #ifdef __cplusplus
 }

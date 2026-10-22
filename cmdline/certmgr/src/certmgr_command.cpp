@@ -25,6 +25,11 @@
 #include <future>
 #include <mutex>
 
+#include <openssl/sha.h>
+#include <openssl/x509.h>
+#include <openssl/bio.h>
+#include <openssl/pem.h>
+
 #include "securec.h"
 #include "cert_manager_api.h"
 #include "cm_type.h"
@@ -278,6 +283,120 @@ void WriteError(int32_t errCode, const std::string &detail)
     CertMgrCommand::WriteStdErr(msg);
 }
 
+// ============================================================
+// OpenSSL certificate utility functions
+// ============================================================
+
+static constexpr int HEX_PER_BYTE = 2;       /* one byte -> two hex chars */
+static constexpr int HEX_STR_TERMINATOR = 1;  /* '\0' */
+static constexpr int HEX_FORMAT_BUF_SIZE = 3; /* "%02X" writes 2 chars + '\0' */
+
+static X509 *ParseCertFromBlob(const struct CmBlob &certData)
+{
+    BIO *bio = BIO_new_mem_buf(certData.data, static_cast<int>(certData.size));
+    if (bio == nullptr) {
+        return nullptr;
+    }
+
+    X509 *x509 = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+    if (x509 == nullptr) {
+        (void)BIO_reset(bio);
+        x509 = d2i_X509_bio(bio, nullptr);
+    }
+    BIO_free(bio);
+    return x509;
+}
+
+static std::string HashToHex(const unsigned char *hash, int len)
+{
+    char hexBuf[SHA256_DIGEST_LENGTH * HEX_PER_BYTE + HEX_STR_TERMINATOR] = {0};
+    for (int i = 0; i < len; i++) {
+        (void)sprintf_s(hexBuf + i * HEX_PER_BYTE, HEX_FORMAT_BUF_SIZE, "%02X", hash[i]);
+    }
+    return std::string(hexBuf);
+}
+
+int32_t GetCertSha256Hex(const struct CmBlob &certData, std::string &sha256Hex)
+{
+    X509 *x509 = ParseCertFromBlob(certData);
+    if (x509 == nullptr) {
+        CertMgrCommand::WriteStdErr("Failed to parse certificate data\n");
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+
+    unsigned char *derData = nullptr;
+    int derLen = i2d_X509(x509, &derData);
+    X509_free(x509);
+
+    if (derLen <= 0 || derData == nullptr) {
+        return CMR_ERROR_OPENSSL_FAIL;
+    }
+
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256(derData, static_cast<size_t>(derLen), hash);
+    OPENSSL_free(derData);
+
+    sha256Hex = HashToHex(hash, SHA256_DIGEST_LENGTH);
+    return CM_SUCCESS;
+}
+
+int32_t GetCertPemString(const struct CmBlob &certData, std::string &pemStr)
+{
+    X509 *x509 = ParseCertFromBlob(certData);
+    if (x509 == nullptr) {
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+
+    BIO *outBio = BIO_new(BIO_s_mem());
+    if (outBio == nullptr) {
+        X509_free(x509);
+        return CMR_ERROR_OPENSSL_FAIL;
+    }
+
+    if (PEM_write_bio_X509(outBio, x509) == 0) {
+        BIO_free(outBio);
+        X509_free(x509);
+        return CMR_ERROR_OPENSSL_FAIL;
+    }
+    X509_free(x509);
+
+    char *pemData = nullptr;
+    long pemLen = BIO_get_mem_data(outBio, &pemData);
+    if (pemLen > 0 && pemData != nullptr) {
+        pemStr = std::string(pemData, static_cast<size_t>(pemLen));
+    }
+    BIO_free(outBio);
+    return CM_SUCCESS;
+}
+
+int32_t GetCertHashStrings(const struct CmBlob &certData,
+    std::string &sha256Hex, std::string &sha1Hex)
+{
+    X509 *x509 = ParseCertFromBlob(certData);
+    if (x509 == nullptr) {
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+
+    unsigned char *derData = nullptr;
+    int derLen = i2d_X509(x509, &derData);
+    X509_free(x509);
+
+    if (derLen <= 0 || derData == nullptr) {
+        return CMR_ERROR_OPENSSL_FAIL;
+    }
+
+    unsigned char sha256Hash[SHA256_DIGEST_LENGTH];
+    SHA256(derData, static_cast<size_t>(derLen), sha256Hash);
+    sha256Hex = HashToHex(sha256Hash, SHA256_DIGEST_LENGTH);
+
+    unsigned char sha1Hash[SHA_DIGEST_LENGTH];
+    SHA1(derData, static_cast<size_t>(derLen), sha1Hash);
+    sha1Hex = HashToHex(sha1Hash, SHA_DIGEST_LENGTH);
+
+    OPENSSL_free(derData);
+    return CM_SUCCESS;
+}
+
 namespace {
 #ifdef SUPPORT_USERIAM
 using namespace OHOS::UserIam::UserAuth;
@@ -517,6 +636,8 @@ std::unique_ptr<CertMgrCommand> CertMgrCommand::Create(const std::string &name)
     if (name == "installUserCA") {
         SetCommandName("installUserCA");
         return std::make_unique<InstallUserCACommand>();
+    } else if (name == "findUserCA") {
+        return std::make_unique<FindUserCACommand>();
     }
     return nullptr;
 }
@@ -718,6 +839,173 @@ int32_t InstallUserCACommand::Run()
         WriteError(ret, "Install failed: " + GetErrDetail(ret));
     }
     return ret;
+}
+
+// ============================================================
+// FindUserCACommand
+// ============================================================
+
+int32_t FindUserCACommand::ParseArgs(int argc, char *argv[])
+{
+    for (int i = 2; i < argc; i++) {
+        if (std::string(argv[i]) == "-h") {
+            WriteStdOut(HELP_FIND);
+            return -1;
+        }
+    }
+
+    int i = 2;
+    while (i < argc) {
+        std::string arg = argv[i];
+        if (arg == "-g") {
+            hasG_ = true;
+        } else if (arg == "-gu") {
+            hasGU_ = true;
+        } else if (arg == "-n") {
+            if (i + 1 >= argc) {
+                WriteStdErr("Missing value for -n parameter\n");
+                return CM_CMD_ERR_PARAM_INVALID;
+            }
+            i++;
+            certName_ = argv[i];
+            hasName_ = true;
+        } else if (arg == "-c") {
+            if (i + 1 >= argc) {
+                WriteStdErr("Missing value for -c parameter\n");
+                return CM_CMD_ERR_PARAM_INVALID;
+            }
+            i++;
+            char *endPtr = nullptr;
+            long val = strtol(argv[i], &endPtr, 10);
+            if (endPtr == argv[i] || *endPtr != '\0') {
+                WriteStdErr("Invalid count value: " + std::string(argv[i]) + "\n");
+                return CM_CMD_ERR_PARAM_INVALID;
+            }
+            certCount_ = static_cast<int32_t>(val);
+        } else if (arg == "-p") {
+            printPem_ = true;
+        } else if (arg == "-z") {
+            printHash_ = true;
+        } else {
+            WriteStdErr("Unknown parameter: " + arg + "\n");
+            WriteStdOut(HELP_FIND);
+            return CM_CMD_ERR_PARAM_INVALID;
+        }
+        i++;
+    }
+    return 0;
+}
+
+int32_t FindUserCACommand::Validate()
+{
+    if (hasG_ && hasGU_) {
+        WriteStdErr("Cannot specify both -g and -gu\n");
+        return CM_CMD_ERR_PARAM_INVALID;
+    }
+    return 0;
+}
+
+static void PrintCertHash(const struct FindCertInfo &info)
+{
+    if (!info.certData.data || info.certData.size == 0) {
+        return;
+    }
+    struct CmBlob certData = { info.certData.size, info.certData.data };
+    std::string sha256Hex;
+    std::string sha1Hex;
+    int32_t ret = GetCertHashStrings(certData, sha256Hex, sha1Hex);
+    if (ret == CM_SUCCESS) {
+        WriteStdOut("SHA-256 hash: " + sha256Hex + "\n");
+        WriteStdOut("SHA-1 hash: " + sha1Hex + "\n");
+    } else {
+        WriteStdErr("Failed to compute certificate hash\n");
+    }
+}
+
+static void PrintCertPem(const struct FindCertInfo &info)
+{
+    if (!info.certData.data || info.certData.size == 0) {
+        return;
+    }
+    struct CmBlob certData = { info.certData.size, info.certData.data };
+    std::string pemStr;
+    int32_t ret = GetCertPemString(certData, pemStr);
+    if (ret == CM_SUCCESS) {
+        WriteStdOut("pem:\n" + pemStr);
+    } else {
+        WriteStdErr("Failed to get PEM encoding\n");
+    }
+}
+
+static void PrintCertInfo(const struct FindCertInfo &info, bool printHash, bool printPem)
+{
+    WriteStdOut("URI: " + std::string(info.uri) + "\n");
+    WriteStdOut("certType: userCA\n");
+
+    std::string scopeStr = (info.scope == CM_FIND_CERT_SCOPE_GLOBAL) ? "globalUser" : "currentUser";
+    WriteStdOut("scope: " + scopeStr + "\n");
+
+    WriteStdOut("attributes:\n");
+    WriteStdOut("  \"alias\": " + std::string(info.alias) + "\n");
+    WriteStdOut("  \"subject\": " + std::string(info.subjectName) + "\n");
+    WriteStdOut(std::string("  \"state\": ") + (info.state == CERT_STATUS_ENABLED ? "enable" : "disable") + "\n");
+
+    if (printHash) {
+        PrintCertHash(info);
+    }
+    if (printPem) {
+        PrintCertPem(info);
+    }
+}
+
+int32_t FindUserCACommand::Run()
+{
+    enum CmFindCertType certType = CM_FIND_CERT_TYPE_USER_CA;
+    struct FindCertRequest request;
+    (void)memset_s(&request, sizeof(request), 0, sizeof(request));
+    request.certTypesCount = 1;
+    request.certTypes = &certType;
+
+    if (hasG_) {
+        request.scope = CM_FIND_CERT_SCOPE_GLOBAL;
+    } else if (hasGU_) {
+        request.scope = CM_FIND_CERT_SCOPE_CURRENT_AND_GLOBAL;
+    } else {
+        request.scope = CM_FIND_CERT_SCOPE_CURRENT_USER;
+    }
+
+    if (hasName_ && !certName_.empty()) {
+        if (certName_.size() >= MAX_LEN_FIND_CERT_NAME) {
+            WriteStdErr("Name too long\n");
+            return CM_CMD_ERR_PARAM_INVALID;
+        }
+        (void)memcpy_s(request.name, MAX_LEN_FIND_CERT_NAME,
+            certName_.c_str(), certName_.size() + 1);
+    }
+
+    request.countLimit = (certCount_ > 0) ? static_cast<uint32_t>(certCount_) : 0;
+    request.certId[0] = '\0';
+
+    struct FindCertResult result;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+
+    int32_t ret = CmFindCertificate(&request, &result);
+    if (ret != CM_SUCCESS) {
+        WriteStdErr("Find failed: " + ConvertErrCodeToMsg(ret) + "\n");
+        return ret;
+    }
+
+    WriteStdOut("certificate count: " + std::to_string(result.count) + "\n");
+
+    for (uint32_t i = 0; i < result.count; i++) {
+        PrintCertInfo(result.certInfos[i], printHash_, printPem_);
+        if (i < result.count - 1) {
+            WriteStdOut("\n");
+        }
+    }
+
+    CmFreeFindCertResult(&result);
+    return CM_SUCCESS;
 }
 
 } // namespace CertMgr

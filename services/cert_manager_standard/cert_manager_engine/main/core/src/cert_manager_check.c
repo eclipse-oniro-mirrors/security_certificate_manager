@@ -788,3 +788,39 @@ int32_t CmServiceGetCertManagerConfigCheckKeys(const struct CmBlob *keysBlob)
     }
     return CM_SUCCESS;
 }
+
+int32_t CmServiceFindCertCheck(const struct CmContext *cmContext, const struct FindCertRequest *request)
+{
+    (void)cmContext;
+    if (request == NULL) {
+        CM_LOG_E("request is null");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (!CmHasCommonPermission()) {
+        CM_LOG_E("find cert: no common permission");
+        return CMR_ERROR_PERMISSION_DENIED;
+    }
+
+    /* scope validation */
+    if (request->scope != CM_FIND_CERT_SCOPE_CURRENT_USER &&
+        request->scope != CM_FIND_CERT_SCOPE_GLOBAL &&
+        request->scope != CM_FIND_CERT_SCOPE_CURRENT_AND_GLOBAL) {
+        CM_LOG_E("invalid find cert scope:%u", request->scope);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    /* certTypes validation: currently only CM_FIND_CERT_TYPE_USER_CA is supported */
+    if (request->certTypesCount > 0 && request->certTypes == NULL) {
+        CM_LOG_E("certTypesCount > 0 but certTypes is null");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    for (uint32_t i = 0; i < request->certTypesCount; i++) {
+        if (request->certTypes[i] != CM_FIND_CERT_TYPE_USER_CA) {
+            CM_LOG_E("unsupported cert type:%u", request->certTypes[i]);
+            return CMR_ERROR_INVALID_ARGUMENT;
+        }
+    }
+
+    return CM_SUCCESS;
+}

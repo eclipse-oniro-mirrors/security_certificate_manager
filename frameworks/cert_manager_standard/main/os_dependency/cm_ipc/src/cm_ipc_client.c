@@ -20,6 +20,7 @@
 #include "cm_param.h"
 #include "cm_request.h"
 #include "cm_revocation_cache.h"
+#include <string.h>
 
 static int32_t CmSendParcelInit(struct CmParam *params, uint32_t paramCount,
     struct CmBlob *parcelBlob, struct CmParamSet **sendParamSet)
@@ -1526,7 +1527,7 @@ int32_t CmClientSaveRevocationCache(const struct CmBlob *key, uint32_t type, con
         { .tag = CM_TAG_PARAM2_BUFFER, .blob = expireBlob },
     };
 
-    CmRevocationCacheEncodeInt64Be(expireTimeUTC, expire8);
+    CmRevocationCacheEncodeInt64Be(expireTimeUTC, &expireBlob);
     do {
         ret = CmSendParcelInit(params, CM_ARRAY_SIZE(params), &parcelBlob, &sendParamSet);
         if (ret != CM_SUCCESS) {
@@ -1541,5 +1542,220 @@ int32_t CmClientSaveRevocationCache(const struct CmBlob *key, uint32_t type, con
         }
     } while (0);
     CmFreeParamSet(&sendParamSet);
+    return ret;
+}
+
+static int32_t FindCertInitOutData(struct CmBlob *outBlob)
+{
+    /* count + MAX items * (uriBlob + type + aliasBlob + state + subjectBlob + scope + certDataBlob) */
+    uint32_t buffSize = sizeof(uint32_t) +
+        MAX_COUNT_FIND_CERT_RESULT * (sizeof(uint32_t) + MAX_LEN_URI +
+        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_CERT_ALIAS +
+        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_SUBJECT_NAME +
+        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_CERTIFICATE);
+    outBlob->data = (uint8_t *)CmMalloc(buffSize);
+    if (outBlob->data == NULL) {
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    outBlob->size = buffSize;
+    return CM_SUCCESS;
+}
+
+int32_t CmClientFindCertificate(const struct FindCertRequest *request, struct FindCertResult *result)
+{
+    if (request == NULL || result == NULL) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CM_SUCCESS;
+    struct CmBlob outBlob = { 0, NULL };
+    struct CmBlob parcelBlob = { 0, NULL };
+    struct CmParamSet *sendParamSet = NULL;
+
+    /* pack FindCertRequest into a blob:
+       certTypesCount(4) + certTypes[](4*count) + scope(4) +
+       nameSize(4) + name[] + countLimit(4) + certIdSize(4) + certId[] */
+    uint32_t nameLen = (request->name[0] != '\0') ? (strlen(request->name) + 1) : 0;
+    uint32_t certIdLen = (request->certId[0] != '\0') ? (strlen(request->certId) + 1) : 0;
+    uint32_t requestBufSize = sizeof(uint32_t) +
+        sizeof(enum CmFindCertType) * request->certTypesCount +
+        sizeof(uint32_t) + sizeof(uint32_t) + nameLen +
+        sizeof(uint32_t) + sizeof(uint32_t) + certIdLen;
+    uint8_t *requestBuf = (uint8_t *)CmMalloc(requestBufSize);
+    if (requestBuf == NULL) {
+        CM_LOG_E("malloc request buf failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(requestBuf, requestBufSize, 0, requestBufSize);
+
+    uint32_t offset = 0;
+    *(uint32_t *)(requestBuf + offset) = request->certTypesCount;
+    offset += sizeof(uint32_t);
+    if (request->certTypesCount > 0 && request->certTypes != NULL) {
+        uint32_t typesSize = sizeof(enum CmFindCertType) * request->certTypesCount;
+        if (memcpy_s(requestBuf + offset, typesSize, request->certTypes, typesSize) != EOK) {
+            CM_FREE_PTR(requestBuf);
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += typesSize;
+    }
+    *(uint32_t *)(requestBuf + offset) = request->scope;
+    offset += sizeof(uint32_t);
+    *(uint32_t *)(requestBuf + offset) = nameLen;
+    offset += sizeof(uint32_t);
+    if (nameLen > 0) {
+        if (memcpy_s(requestBuf + offset, nameLen, request->name, nameLen) != EOK) {
+            CM_FREE_PTR(requestBuf);
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += nameLen;
+    }
+    *(uint32_t *)(requestBuf + offset) = request->countLimit;
+    offset += sizeof(uint32_t);
+    *(uint32_t *)(requestBuf + offset) = certIdLen;
+    offset += sizeof(uint32_t);
+    if (certIdLen > 0) {
+        if (memcpy_s(requestBuf + offset, certIdLen, request->certId, certIdLen) != EOK) {
+            CM_FREE_PTR(requestBuf);
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += certIdLen;
+    }
+
+    struct CmBlob requestBlob = { offset, requestBuf };
+    struct CmParam params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = requestBlob },
+    };
+
+    do {
+        ret = CmSendParcelInit(params, CM_ARRAY_SIZE(params), &parcelBlob, &sendParamSet);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("FindCertificate sendParcel failed");
+            break;
+        }
+
+        ret = FindCertInitOutData(&outBlob);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("malloc out data failed");
+            break;
+        }
+
+        ret = SendRequest(CM_MSG_FIND_CERTIFICATE, &parcelBlob, &outBlob);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("CmClientFindCertificate request fail");
+            break;
+        }
+
+        /* unpack FindCertResult */
+        uint32_t outOffset = 0;
+        uint32_t count = 0;
+        ret = GetUint32FromBuffer(&count, &outBlob, &outOffset);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("get cert count failed");
+            break;
+        }
+
+        if (count == 0) {
+            result->count = 0;
+            result->certInfos = NULL;
+            break;
+        }
+
+        if (count > MAX_COUNT_FIND_CERT_RESULT) {
+            CM_LOG_E("result count %u exceeds max", count);
+            ret = CMR_ERROR_INVALID_OPERATION;
+            break;
+        }
+
+        uint32_t allocSize = sizeof(struct FindCertInfo) * count;
+        struct FindCertInfo *certInfos = (struct FindCertInfo *)CmMalloc(allocSize);
+        if (certInfos == NULL) {
+            CM_LOG_E("malloc certInfos failed");
+            ret = CMR_ERROR_MALLOC_FAIL;
+            break;
+        }
+        (void)memset_s(certInfos, allocSize, 0, allocSize);
+
+        for (uint32_t i = 0; i < count; i++) {
+            struct CmBlob uriBlob = { 0, NULL };
+            ret = CmGetBlobFromBuffer(&uriBlob, &outBlob, &outOffset);
+            if (ret != CM_SUCCESS) {
+                CM_FREE_PTR(certInfos);
+                break;
+            }
+            if (memcpy_s(certInfos[i].uri, MAX_LEN_URI, uriBlob.data, uriBlob.size) != EOK) {
+                ret = CMR_ERROR_MEM_OPERATION_COPY;
+                break;
+            }
+
+            ret = GetUint32FromBuffer(&certInfos[i].type, &outBlob, &outOffset);
+            if (ret != CM_SUCCESS) {
+                break;
+            }
+
+            struct CmBlob aliasBlob = { 0, NULL };
+            ret = CmGetBlobFromBuffer(&aliasBlob, &outBlob, &outOffset);
+            if (ret != CM_SUCCESS) {
+                break;
+            }
+            if (memcpy_s(certInfos[i].alias, MAX_LEN_CERT_ALIAS, aliasBlob.data, aliasBlob.size) != EOK) {
+                ret = CMR_ERROR_MEM_OPERATION_COPY;
+                break;
+            }
+
+            ret = GetUint32FromBuffer(&certInfos[i].state, &outBlob, &outOffset);
+            if (ret != CM_SUCCESS) {
+                break;
+            }
+
+            struct CmBlob subjectBlob = { 0, NULL };
+            ret = CmGetBlobFromBuffer(&subjectBlob, &outBlob, &outOffset);
+            if (ret != CM_SUCCESS) {
+                break;
+            }
+            if (memcpy_s(certInfos[i].subjectName, MAX_LEN_SUBJECT_NAME,
+                subjectBlob.data, subjectBlob.size) != EOK) {
+                ret = CMR_ERROR_MEM_OPERATION_COPY;
+                break;
+            }
+
+            ret = GetUint32FromBuffer((uint32_t *)&certInfos[i].scope, &outBlob, &outOffset);
+            if (ret != CM_SUCCESS) {
+                break;
+            }
+
+            struct CmBlob certDataBlob = { 0, NULL };
+            ret = CmGetBlobFromBuffer(&certDataBlob, &outBlob, &outOffset);
+            if (ret != CM_SUCCESS) {
+                break;
+            }
+            certInfos[i].certData.size = certDataBlob.size;
+            if (certDataBlob.size > 0) {
+                certInfos[i].certData.data = (uint8_t *)CmMalloc(certDataBlob.size);
+                if (certInfos[i].certData.data == NULL) {
+                    ret = CMR_ERROR_MALLOC_FAIL;
+                    break;
+                }
+                (void)memcpy_s(certInfos[i].certData.data, certDataBlob.size,
+                    certDataBlob.data, certDataBlob.size);
+            }
+        }
+
+        if (ret == CM_SUCCESS) {
+            result->count = count;
+            result->certInfos = certInfos;
+        } else {
+            /* free already-allocated certData to prevent memory leak */
+            for (uint32_t j = 0; j < count; j++) {
+                CM_FREE_BLOB(certInfos[j].certData);
+            }
+            CM_FREE_PTR(certInfos);
+        }
+    } while (0);
+
+    CmFreeParamSet(&sendParamSet);
+    CM_FREE_BLOB(outBlob);
+    CM_FREE_PTR(requestBuf);
     return ret;
 }
