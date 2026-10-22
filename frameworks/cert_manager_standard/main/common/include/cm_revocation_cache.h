@@ -35,8 +35,8 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
     char *relPath, uint32_t relPathLen);
 
 /*
- * Strict whitelist for cache sub paths: "<type>/<xx>/<encoded>.cache" where
- * <type> is "ocsp" or "crl", <xx> is two lowercase hex chars and <encoded> is
+ * Strict whitelist for cache sub paths: "<type>/<encoded>.cache" where
+ * <type> is "ocsp" or "crl" and <encoded> is
  * 1..CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN lowercase hex chars. Everything else
  * (absolute paths, "..", case variations, non-hex names) is rejected, so any
  * path built from a validated rel path stays inside the cache root.

@@ -24,7 +24,7 @@ extern "C" {
 
 /* type string buffer: "ocsp" / "crl" plus headroom */
 #define CM_REVOCATION_CACHE_TYPE_LEN 8
-/* rel-path buffer: <type>/<prefix>/<encoded>.cache with the 128-char encoded name */
+/* rel-path buffer: <type>/<encoded>.cache with the 128-char encoded name */
 #define CM_REVOCATION_CACHE_FILE_PATH_LEN 256
 
 /* expireTimeUtc stays first: scalar-led aggregates keep the "= { 0 }" idiom warning-free */

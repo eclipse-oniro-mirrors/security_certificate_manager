@@ -79,8 +79,7 @@ static int32_t BuildRelPathFromFileName(const char *prefix, const char *encodedN
     if (prefix == NULL || encodedName == NULL || relPath == NULL || relPathLen == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s",
-        prefix, encodedName[0], encodedName[1], encodedName);
+    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%s", prefix, encodedName);
     if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
@@ -163,10 +162,11 @@ static int32_t RemoveOrphanRecords(void)
     if (QueryAllRevocationCacheFilePaths(&paths, &pathCount) != CM_SUCCESS) {
         return CMR_OK;
     }
+    /* two-level layout: cache files live directly in the store dir, no fanout */
     const char *types[] = { "ocsp", "crl" };
     for (uint32_t t = 0; t < CM_ARRAY_SIZE(types); ++t) {
         char typeDir[PATH_MAX] = {0};
-        if (snprintf_s(typeDir, sizeof(typeDir), sizeof(typeDir) - 1, "%s%s/", REVOCATION_CACHE_DIR,
+        if (snprintf_s(typeDir, sizeof(typeDir), sizeof(typeDir) - 1, "%s%s", REVOCATION_CACHE_DIR,
             types[t]) < 0) {
             continue;
         }
@@ -174,22 +174,9 @@ static int32_t RemoveOrphanRecords(void)
         if (dirp == NULL) {
             continue;
         }
-        struct CmFileDirentInfo dent;
-        while (CmGetSubDir(dirp, &dent) == CM_SUCCESS) {
-            char subDir[PATH_MAX] = {0};
-            if (snprintf_s(subDir, sizeof(subDir), sizeof(subDir) - 1, "%s%s", typeDir,
-                dent.fileName) < 0) {
-                continue;
-            }
-            void *subp = CmOpenDir(subDir);
-            if (subp == NULL) {
-                continue;
-            }
-            struct CmFileDirentInfo f;
-            while (CmGetDirFile(subp, &f) == CM_SUCCESS) {
-                RemoveOrphanFileIfNeed(subDir, types[t], &f, paths, pathCount);
-            }
-            CmCloseDir(subp);
+        struct CmFileDirentInfo f;
+        while (CmGetDirFile(dirp, &f) == CM_SUCCESS) {
+            RemoveOrphanFileIfNeed(typeDir, types[t], &f, paths, pathCount);
         }
         CmCloseDir(dirp);
     }
@@ -232,7 +219,8 @@ static void EvictUntilCapacity(uint64_t payloadLen, uint64_t *totalSize)
     }
 }
 
-static int32_t EnsureCacheDirs(uint32_t type, const char *relPath)
+/* two-level layout: the cache root plus the one store dir per type */
+static int32_t EnsureCacheDirs(uint32_t type)
 {
     mode_t mode0701 = S_IRWXU | S_IXOTH;
     if (EnsureDirWithMode(REVOCATION_CACHE_DIR, &mode0701) == CMR_ERROR_MAKE_DIR_FAIL) {
@@ -243,22 +231,6 @@ static int32_t EnsureCacheDirs(uint32_t type, const char *relPath)
     if (snprintf_s(typeDir, sizeof(typeDir), sizeof(typeDir) - 1, "%s%s/", REVOCATION_CACHE_DIR,
         prefixType) >= 0) {
         (void)EnsureDirWithMode(typeDir, &mode0701);
-    }
-
-    char encodedName[PATH_MAX] = {0};
-    const char *lastSlash = strrchr(relPath, '/');
-    if (lastSlash != NULL) {
-        if (strncpy_s(encodedName, sizeof(encodedName), lastSlash + 1,
-            strlen(lastSlash + 1) - CACHE_SUFFIX_LEN) != EOK) {
-            return CMR_ERROR_MEM_OPERATION_COPY;
-        }
-    }
-    if (encodedName[0] != '\0' && encodedName[1] != '\0') {
-        char prefixDir[PATH_MAX] = {0};
-        if (snprintf_s(prefixDir, sizeof(prefixDir), sizeof(prefixDir) - 1, "%s%s/%c%c/", REVOCATION_CACHE_DIR,
-            prefixType, encodedName[0], encodedName[1]) >= 0) {
-            (void)EnsureDirWithMode(prefixDir, &mode0701);
-        }
     }
     return CMR_OK;
 }
@@ -354,7 +326,7 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
     (void)QueryRevocationCacheSumSize(&totalSize);
     EvictUntilCapacity((uint64_t)payloadLen, &totalSize);
 
-    int32_t ensureRet = EnsureCacheDirs(type, relPath);
+    int32_t ensureRet = EnsureCacheDirs(type);
     if (ensureRet != CMR_OK) {
         writeRet = ensureRet;
         goto cleanup;

@@ -99,7 +99,7 @@ TEST_F(CmRevocationCacheRdbTest, CreateInsertQueryDelete)
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
     /* key "616263" = hex("abc"): the row keeps the encoded key and its type */
     struct RevocationCacheRecord r = { FIXED_EXPIRE_TIME_UTC, "616263", "ocsp",
-        "ocsp/61/616263.cache", RECORD_DATA_SIZE };
+        "ocsp/616263.cache", RECORD_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
@@ -109,8 +109,8 @@ TEST_F(CmRevocationCacheRdbTest, CreateInsertQueryDelete)
     ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&queried), CM_SUCCESS);
     EXPECT_STREQ(queried.key, "616263");
     EXPECT_STREQ(queried.type, "ocsp");
-    EXPECT_STREQ(queried.filePath, "ocsp/61/616263.cache");
-    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/61/616263.cache"), CM_SUCCESS);
+    EXPECT_STREQ(queried.filePath, "ocsp/616263.cache");
+    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/616263.cache"), CM_SUCCESS);
 }
 
 TEST_F(CmRevocationCacheRdbTest, MetaRoundTrip)
@@ -140,11 +140,11 @@ TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
 {
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
     /* deleting a path that was never inserted must still report success */
-    EXPECT_EQ(DeleteRevocationCacheRecord("ocsp/ff/ffff0000.cache"), CM_SUCCESS);
+    EXPECT_EQ(DeleteRevocationCacheRecord("ocsp/ffff0000.cache"), CM_SUCCESS);
 
     /* deleting an already deleted record stays successful and leaves nothing behind */
     struct RevocationCacheRecord r = { FIXED_EXPIRE_TIME_UTC, "deadbeef", "ocsp",
-        "ocsp/de/deadbeef.cache", RECORD_DATA_SIZE };
+        "ocsp/deadbeef.cache", RECORD_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
     ASSERT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
     EXPECT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
@@ -282,11 +282,11 @@ TEST_F(CmRevocationCacheRdbTest, InsertDuplicatePathReplaces)
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
     /* key "647570" = hex("dup"): same path means the same encoded key and type */
     struct RevocationCacheRecord first = { FIXED_EXPIRE_TIME_UTC, "647570", "ocsp",
-        "ocsp/64/647570.cache", DUP_FIRST_DATA_SIZE };
+        "ocsp/647570.cache", DUP_FIRST_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&first), CM_SUCCESS);
     /* inserting the same path again must replace the row, not duplicate it */
     struct RevocationCacheRecord second = { LATER_EXPIRE_TIME_UTC, "647570", "ocsp",
-        "ocsp/64/647570.cache", DUP_SECOND_DATA_SIZE };
+        "ocsp/647570.cache", DUP_SECOND_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&second), CM_SUCCESS);
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
@@ -296,7 +296,7 @@ TEST_F(CmRevocationCacheRdbTest, InsertDuplicatePathReplaces)
     EXPECT_EQ(oldest.dataSize, DUP_SECOND_DATA_SIZE); /* the newest values win */
     EXPECT_STREQ(oldest.key, "647570");
     EXPECT_STREQ(oldest.type, "ocsp");
-    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/64/647570.cache"), CM_SUCCESS);
+    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/647570.cache"), CM_SUCCESS);
 }
 
 TEST_F(CmRevocationCacheRdbTest, SamePathDifferentKeysCoexist)
@@ -304,11 +304,11 @@ TEST_F(CmRevocationCacheRdbTest, SamePathDifferentKeysCoexist)
     /* the primary key is (KEY, TYPE): two different keys must coexist even
      * when a crafted row pair shares one FILE_PATH */
     struct RevocationCacheRecord first = { FIXED_EXPIRE_TIME_UTC, "616263", "ocsp",
-        "ocsp/61/616263.cache", COEXIST_FIRST_DATA_SIZE };
+        "ocsp/616263.cache", COEXIST_FIRST_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&first), CM_SUCCESS);
     /* key "6b657931" = hex("key1"): deliberately the same path, different key */
     struct RevocationCacheRecord second = { FIXED_EXPIRE_TIME_UTC, "6b657931", "ocsp",
-        "ocsp/61/616263.cache", COEXIST_SECOND_DATA_SIZE };
+        "ocsp/616263.cache", COEXIST_SECOND_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&second), CM_SUCCESS);
 
     const auto paths = QueryCacheFilePaths();
@@ -317,24 +317,25 @@ TEST_F(CmRevocationCacheRdbTest, SamePathDifferentKeysCoexist)
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
     EXPECT_EQ(total, COEXIST_FIRST_DATA_SIZE + COEXIST_SECOND_DATA_SIZE);
-    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/61/616263.cache"), CM_SUCCESS);
+    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/616263.cache"), CM_SUCCESS);
 }
 
 TEST_F(CmRevocationCacheRdbTest, SameKeyAndTypeReplaceAcrossPaths)
 {
     /* one (KEY, TYPE) is one logical entry: a rewrite replaces the whole row,
-     * also when the crafted rows disagree on FILE_PATH */
+     * also when the crafted rows disagree on FILE_PATH (production paths are
+     * derived from the key, so disagreeing rows only exist as crafted data) */
     struct RevocationCacheRecord first = { FIXED_EXPIRE_TIME_UTC, "616263", "ocsp",
-        "ocsp/61/616263.cache", COEXIST_FIRST_DATA_SIZE };
+        "ocsp/616263.cache", COEXIST_FIRST_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&first), CM_SUCCESS);
     struct RevocationCacheRecord second = { LATER_EXPIRE_TIME_UTC, "616263", "ocsp",
-        "ocsp/62/616263.cache", COEXIST_SECOND_DATA_SIZE };
+        "ocsp/7265706c.cache", COEXIST_SECOND_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&second), CM_SUCCESS);
 
     const auto paths = QueryCacheFilePaths();
     ASSERT_TRUE(paths.has_value());
     ASSERT_EQ(paths->size(), 1u);
-    EXPECT_STREQ((*paths)[0].c_str(), "ocsp/62/616263.cache"); /* the newest write wins */
+    EXPECT_STREQ((*paths)[0].c_str(), "ocsp/7265706c.cache"); /* the newest write wins */
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
     EXPECT_EQ(total, COEXIST_SECOND_DATA_SIZE);
@@ -342,17 +343,17 @@ TEST_F(CmRevocationCacheRdbTest, SameKeyAndTypeReplaceAcrossPaths)
     ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&oldest), CM_SUCCESS);
     EXPECT_EQ(oldest.expireTimeUtc, LATER_EXPIRE_TIME_UTC);
     EXPECT_EQ(oldest.dataSize, COEXIST_SECOND_DATA_SIZE);
-    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/62/616263.cache"), CM_SUCCESS);
+    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/7265706c.cache"), CM_SUCCESS);
 }
 
 TEST_F(CmRevocationCacheRdbTest, SameKeyDifferentTypesCoexist)
 {
     /* one encoded key cached for both ocsp and crl stays two independent entries */
     struct RevocationCacheRecord ocspRec = { FIXED_EXPIRE_TIME_UTC, "616263", "ocsp",
-        "ocsp/61/616263.cache", COEXIST_FIRST_DATA_SIZE };
+        "ocsp/616263.cache", COEXIST_FIRST_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&ocspRec), CM_SUCCESS);
     struct RevocationCacheRecord crlRec = { FIXED_EXPIRE_TIME_UTC, "616263", "crl",
-        "crl/61/616263.cache", COEXIST_SECOND_DATA_SIZE };
+        "crl/616263.cache", COEXIST_SECOND_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&crlRec), CM_SUCCESS);
 
     const auto paths = QueryCacheFilePaths();
@@ -361,8 +362,8 @@ TEST_F(CmRevocationCacheRdbTest, SameKeyDifferentTypesCoexist)
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
     EXPECT_EQ(total, COEXIST_FIRST_DATA_SIZE + COEXIST_SECOND_DATA_SIZE);
-    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/61/616263.cache"), CM_SUCCESS);
-    ASSERT_EQ(DeleteRevocationCacheRecord("crl/61/616263.cache"), CM_SUCCESS);
+    ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/616263.cache"), CM_SUCCESS);
+    ASSERT_EQ(DeleteRevocationCacheRecord("crl/616263.cache"), CM_SUCCESS);
 }
 
 TEST_F(CmRevocationCacheRdbTest, MetaLivesInCertManagerConfig)

@@ -53,7 +53,7 @@ constexpr int64_t FAR_FUTURE_SEC = 100LL * 24 * 3600; /* beyond the 30d cap: cla
 constexpr int64_t OLDER_EXPIRE_SEC = 60;    /* expire earlier than the new entry, still in the future */
 constexpr int64_t EXPIRE_TOLERANCE_SEC = 5; /* slack between the requested and the stored expire */
 constexpr uint32_t REL_PATH_BUF_SIZE = 512; /* comfortably above any built rel path */
-constexpr uint32_t ENCODED_NAME_PREFIX_LEN = 2; /* fanout dir name = first two encoded-name chars */
+constexpr uint32_t ENCODED_NAME_PREFIX_LEN = 2; /* flip offset: craft an orphan name that differs from the real entry yet stays well-formed */
 constexpr uint32_t FILE_READ_BUF_SIZE = 64; /* 8-byte header + payload of a persisted file */
 constexpr uint32_t TINY_FILE_LEN = 4;       /* deliberately below the 8-byte expire header */
 constexpr int NFTW_MAX_OPEN_FDS = 16;       /* max fds nftw may keep open while walking */
@@ -274,14 +274,14 @@ TEST_F(CmRevocationCacheEngineTest, SaveRecordsKeyAndTypeColumns)
     ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&rec), CM_SUCCESS);
     EXPECT_STREQ(rec.key, "6b657931");
     EXPECT_STREQ(rec.type, "ocsp");
-    EXPECT_STREQ(rec.filePath, "ocsp/6b/6b657931.cache");
+    EXPECT_STREQ(rec.filePath, "ocsp/6b657931.cache");
     ASSERT_EQ(DeleteRevocationCacheRecord(rec.filePath), CM_SUCCESS);
 
     /* the crl row follows: hex("ck") = 636b */
     ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&rec), CM_SUCCESS);
     EXPECT_STREQ(rec.key, "636b");
     EXPECT_STREQ(rec.type, "crl");
-    EXPECT_STREQ(rec.filePath, "crl/63/636b.cache");
+    EXPECT_STREQ(rec.filePath, "crl/636b.cache");
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetMissingKeyReturnsNotExist)
@@ -519,27 +519,33 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicRejectsBadRelPath)
 {
     uint8_t buf[] = "x";
     EXPECT_EQ(CmRevocationCacheWriteAtomic(nullptr, buf, sizeof(buf) - 1), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/ok.cache", nullptr, 1), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/ok.cache", buf, 0), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ok.cache", nullptr, 1), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ok.cache", buf, 0), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(CmRevocationCacheWriteAtomic("/data/tmp/abs.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/../../escape.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/../../escape.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_INVALID_ARGUMENT);
     /* the strict rel-path whitelist also rejects non-hex and uppercase names */
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/zz/616263.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/zz616263.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/61626G.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/61626G.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/aa/ABCD.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ABCD.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_INVALID_ARGUMENT);
 }
 
 TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
 {
     uint8_t buf[] = "x";
-    /* the prefix directory does not exist: the hex-shaped name passes the
+    /* best effort: drop the (normally empty) type dirs so the parent of a
+     * well-formed path is genuinely missing; SetUp already removed every
+     * row-backed file, so a leftover file would make the write below succeed
+     * and fail this test loudly */
+    (void)rmdir((std::string(REVOCATION_CACHE_DIR) + "ocsp").c_str());
+    (void)rmdir((std::string(REVOCATION_CACHE_DIR) + "crl").c_str());
+    /* the type directory does not exist: the hex-shaped name passes the
      * whitelist, and opening the tmp file must still fail */
-    const char *missingOcsp = "ocsp/99/badbad.cache";
+    const char *missingOcsp = "ocsp/badbad.cache";
     EXPECT_EQ(CmRevocationCacheWriteAtomic(missingOcsp, buf, sizeof(buf) - 1), CMR_ERROR_OPEN_FILE_FAIL);
     /* the failed write must not leave a partial tmp or cache file behind */
     char leftover[PATH_MAX] = { 0 };
@@ -550,7 +556,7 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
         missingOcsp), 0);
     EXPECT_EQ(access(leftover, F_OK), -1);
     /* the crl store fails the same way when its directory is missing */
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("crl/99/badbad.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("crl/badbad.cache", buf, sizeof(buf) - 1),
         CMR_ERROR_OPEN_FILE_FAIL);
 }
 
@@ -582,7 +588,7 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesExpiredRecord)
     /* an RDB record whose expire is in the past, with no file on disk */
     struct RevocationCacheRecord expired = { 0 };
     expired.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC;
-    const char *expiredRel = "ocsp/ee/ee998877.cache";
+    const char *expiredRel = "ocsp/ee998877.cache";
     (void)strncpy_s(expired.key, sizeof(expired.key), "ee998877", strlen("ee998877"));
     (void)strncpy_s(expired.type, sizeof(expired.type), "ocsp", strlen("ocsp"));
     (void)strncpy_s(expired.filePath, sizeof(expired.filePath), expiredRel, strlen(expiredRel));
@@ -615,10 +621,11 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
     char relA[REL_PATH_BUF_SIZE] = { 0 };
     ASSERT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, relA, sizeof(relA)), CM_SUCCESS);
     std::string rel(relA);
-    std::string dir = rel.substr(0, rel.rfind('/') + 1);    /* ocsp/<xx>/ */
+    std::string dir = rel.substr(0, rel.rfind('/') + 1);    /* ocsp/ */
     std::string name = rel.substr(dir.size());              /* <hex>.cache */
-    /* the orphan .cache keeps the two-char name prefix: the cleanup derives the
-     * real path from the file name, so only a char beyond the prefix may differ */
+    /* the orphan .cache differs from the real entry's name by one flipped hex
+     * char: the cleanup derives the rel path from the file name, so the
+     * crafted name must stay well-formed */
     ASSERT_GT(name.size(), ENCODED_NAME_PREFIX_LEN + strlen(".cache"));
     std::string orphanName = name;
     /* stay inside the hex alphabet so the crafted name is a well-formed orphan */
@@ -655,7 +662,7 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
     /* a fake oldest record claiming 50MB pushes the total over the capacity limit */
     struct RevocationCacheRecord big = { 0 };
     big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + OLDER_EXPIRE_SEC; /* older than the new entry */
-    const char *bigRel = "ocsp/ca/cafe0000.cache";
+    const char *bigRel = "ocsp/cafe0000.cache";
     (void)strncpy_s(big.key, sizeof(big.key), "cafe0000", strlen("cafe0000"));
     (void)strncpy_s(big.type, sizeof(big.type), "ocsp", strlen("ocsp"));
     (void)strncpy_s(big.filePath, sizeof(big.filePath), bigRel, strlen(bigRel));

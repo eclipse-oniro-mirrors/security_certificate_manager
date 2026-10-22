@@ -27,7 +27,6 @@
 #define CM_REVOCATION_HEX_CHARS_PER_BYTE 2
 #define CM_REVOCATION_HEX_BITS_PER_NIBBLE 4
 #define CM_REVOCATION_HEX_NIBBLE_MASK 0x0F
-#define CM_REVOCATION_PREFIX_DIR_CHARS 2 /* fanout dir: first two encoded-name chars */
 
 static bool CmRevocationCacheIsTypeValid(uint32_t type)
 {
@@ -76,8 +75,7 @@ int32_t CmRevocationCacheBuildRelPath(uint32_t type, const struct CmBlob *key,
     }
 
     const char *prefix = (type == CM_REVOCATION_TYPE_OCSP) ? "ocsp" : "crl";
-    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%c%c/%s.cache", prefix,
-        encoded[0], encoded[1], encoded);
+    int ret = snprintf_s(relPath, relPathLen, relPathLen - 1, "%s/%s.cache", prefix, encoded);
     if (ret < 0) {
         CM_LOG_E("revocation cache rel path buffer too small");
         return CMR_ERROR_BUFFER_TOO_SMALL;
@@ -95,7 +93,9 @@ int32_t CmRevocationCacheValidateRelPath(const char *relPath)
     if ((relPath == NULL) || (relPath[0] == '\0')) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    /* "ocsp" or "crl", then a two-char hex prefix dir, then the encoded name */
+    /* "ocsp" or "crl", then the encoded name directly: the store dir holds
+     * files only, any deeper hierarchy (including the retired fanout layout)
+     * is rejected here */
     const char *name = NULL;
     if (strncmp(relPath, "ocsp/", strlen("ocsp/")) == 0) {
         name = relPath + strlen("ocsp/");
@@ -104,11 +104,9 @@ int32_t CmRevocationCacheValidateRelPath(const char *relPath)
     } else {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    if (!CmRevocationCacheIsHexChar(name[0]) || !CmRevocationCacheIsHexChar(name[1]) ||
-        (name[CM_REVOCATION_PREFIX_DIR_CHARS] != '/')) {
+    if (strchr(name, '/') != NULL) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    name += CM_REVOCATION_PREFIX_DIR_CHARS + 1; /* skip the two-char dir and its slash */
     size_t nameLen = strlen(name);
     const size_t suffixLen = sizeof(".cache") - 1;
     if ((nameLen <= suffixLen) || (nameLen > (size_t)CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN + suffixLen)) {
