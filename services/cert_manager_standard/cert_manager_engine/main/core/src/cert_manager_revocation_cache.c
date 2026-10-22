@@ -196,6 +196,19 @@ static void CleanupExpiredAndOrphans(int64_t now)
     (void)SetRevocationCacheMeta(now);
 }
 
+/* unlinks the file of an evicted or expired row: only a strict cache
+ * sub-path may be unlinked, never an arbitrary one */
+static void UnlinkCacheFileForPath(const char *relPath)
+{
+    if (CmRevocationCacheValidateRelPath(relPath) != CM_SUCCESS) {
+        return;
+    }
+    char full[PATH_MAX] = {0};
+    if (snprintf_s(full, sizeof(full), sizeof(full) - 1, "%s%s", REVOCATION_CACHE_DIR, relPath) >= 0) {
+        (void)unlink(full);
+    }
+}
+
 static void EvictUntilCapacity(const char *selfKey, const char *selfType, uint64_t newSize,
     uint64_t *totalSize)
 {
@@ -204,17 +217,21 @@ static void EvictUntilCapacity(const char *selfKey, const char *selfType, uint64
         if (QueryRevocationCacheEvictCandidate(selfKey, selfType, &cand) != CM_SUCCESS) {
             break; /* nothing left to evict: accept the overage rather than loop */
         }
-        /* only a strict cache sub-path may be unlinked, never an arbitrary one */
-        if (CmRevocationCacheValidateRelPath(cand.filePath) == CM_SUCCESS) {
-            char candFull[PATH_MAX] = {0};
-            if (snprintf_s(candFull, sizeof(candFull), sizeof(candFull) - 1, "%s%s", REVOCATION_CACHE_DIR,
-                cand.filePath) >= 0) {
-                (void)unlink(candFull);
+        if (cand.expireTimeUtc <= (int64_t)time(NULL)) {
+            /* expired (same boundary as the read path): reap physically, the
+             * file goes with the row */
+            UnlinkCacheFileForPath(cand.filePath);
+            if (DeleteRevocationCacheRecord(cand.filePath) != CM_SUCCESS) {
+                CM_LOG_W("delete revocation cache record for capacity failed");
+                break;
             }
-        }
-        if (DeleteRevocationCacheRecord(cand.filePath) != CM_SUCCESS) {
-            CM_LOG_W("delete revocation cache record for capacity failed");
-            break;
+        } else {
+            /* unexpired: mark deleted and keep the file, the periodic cleanup
+             * reaps the row and file once the expire time passes */
+            if (MarkRevocationCacheRecordDeleted(cand.filePath) != CM_SUCCESS) {
+                CM_LOG_W("mark revocation cache record deleted for capacity failed");
+                break;
+            }
         }
         *totalSize = (*totalSize >= cand.dataSize) ? (*totalSize - cand.dataSize) : 0;
     }

@@ -809,6 +809,233 @@ TEST_F(CmRevocationCacheEngineTest, ResaveBillsOnceNeverEvictsOthers)
     EXPECT_EQ(total, static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES));
 }
 
+TEST_F(CmRevocationCacheEngineTest, LogicalEvictionKeepsFile)
+{
+    /* an unexpired oversized row is logically evicted: the row leaves the
+     * active accounting but the file stays on disk for late readers */
+    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    const char *bigRel = "ocsp/6c6f6769.cache"; /* hex("logi") */
+    struct RevocationCacheRecord big = { 0 };
+    big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC; /* unexpired */
+    (void)strncpy_s(big.key, sizeof(big.key), "6c6f6769", strlen("6c6f6769"));
+    (void)strncpy_s(big.type, sizeof(big.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(big.filePath, sizeof(big.filePath), bigRel, strlen(bigRel));
+    big.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
+    ASSERT_EQ(InsertRevocationCacheRecord(&big), CM_SUCCESS);
+    std::string bigFull = std::string(REVOCATION_CACHE_DIR) + bigRel;
+    const uint8_t body[] = "KEEPME";
+    ASSERT_EQ(WriteTestFile(bigFull.c_str(), body, sizeof(body) - 1), 0);
+
+    uint8_t keyBuf[] = "lgckey1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    /* the row no longer bills capacity ... */
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+    /* ... but the path stays queryable and the file stays on disk */
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_NE(std::find(paths->begin(), paths->end(), bigRel), paths->end());
+    EXPECT_EQ(access(bigFull.c_str(), F_OK), 0);
+}
+
+TEST_F(CmRevocationCacheEngineTest, ResaveResurrectsDeletedRow)
+{
+    /* a re-save after logical deletion resurrects the row: the REPLACE insert
+     * writes IS_DELETED = 0 and the new accounted size bills again */
+    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    uint8_t keyBuf[] = "rsrkey1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    char selfRel[REL_PATH_BUF_SIZE] = { 0 };
+    ASSERT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, selfRel, sizeof(selfRel)),
+        CM_SUCCESS);
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(selfRel), CM_SUCCESS);
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, 0u); /* the deleted row no longer bills */
+
+    /* re-save the same (key, type): REPLACE resurrects the row */
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+    /* and the entry reads back */
+    struct CmBlob out = { 0, nullptr };
+    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    CmFreeRevocationCache(&out);
+}
+
+TEST_F(CmRevocationCacheEngineTest, RaceRegressionExpiredSelfRowSurvives)
+{
+    /* race regression: an expired row for the very key being re-saved must
+     * never be an eviction candidate, or the physical branch would unlink
+     * the just-renamed new file at the same path */
+    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    uint8_t keyBuf[] = "racekey1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    char selfRel[REL_PATH_BUF_SIZE] = { 0 };
+    ASSERT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, selfRel, sizeof(selfRel)),
+        CM_SUCCESS);
+
+    /* the old world: an expired row for this key with a huge billed size and
+     * the old file on disk */
+    struct RevocationCacheRecord selfRow = { 0 };
+    selfRow.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC;
+    (void)strncpy_s(selfRow.key, sizeof(selfRow.key), "726163656b657931", strlen("726163656b657931"));
+    (void)strncpy_s(selfRow.type, sizeof(selfRow.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(selfRow.filePath, sizeof(selfRow.filePath), selfRel, strlen(selfRel));
+    selfRow.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
+    ASSERT_EQ(InsertRevocationCacheRecord(&selfRow), CM_SUCCESS);
+    std::string selfFull = std::string(REVOCATION_CACHE_DIR) + selfRel;
+    const uint8_t oldBody[] = "OLDFILE";
+    ASSERT_EQ(WriteTestFile(selfFull.c_str(), oldBody, sizeof(oldBody) - 1), 0);
+
+    /* a filler row keeps the store over capacity so the eviction loop runs;
+     * without the self exclusion the expired self row would be picked first */
+    struct RevocationCacheRecord filler = { 0 };
+    filler.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
+    const char *fillerRel = "ocsp/66696c6c.cache"; /* hex("fill") */
+    (void)strncpy_s(filler.key, sizeof(filler.key), "66696c6c", strlen("66696c6c"));
+    (void)strncpy_s(filler.type, sizeof(filler.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(filler.filePath, sizeof(filler.filePath), fillerRel, strlen(fillerRel));
+    filler.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
+    ASSERT_EQ(InsertRevocationCacheRecord(&filler), CM_SUCCESS);
+
+    /* the periodic cleanup must NOT run first: it would mask the race by
+     * reaping the expired row before the eviction could see it */
+    ASSERT_EQ(SetRevocationCacheMeta(static_cast<int64_t>(time(nullptr))), CM_SUCCESS);
+
+    /* re-save: the new file lands on the very path the expired row points to */
+    uint8_t newBody[] = "NEWFILE";
+    struct CmBlob data = { sizeof(newBody) - 1, newBody };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    /* the new file must have survived and carry the new content */
+    struct CmBlob out = { 0, nullptr };
+    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_NE(out.data, nullptr);
+    EXPECT_EQ(out.size, data.size);
+    EXPECT_EQ(memcmp(out.data, data.data, out.size), 0);
+    CmFreeRevocationCache(&out);
+    /* the self row survived for the REPLACE and bills the new accounted size */
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_NE(std::find(paths->begin(), paths->end(), selfRel), paths->end());
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+}
+
+TEST_F(CmRevocationCacheEngineTest, EvictBoundaryExpireEqualsNow)
+{
+    /* the eviction boundary matches the read path: expire == now counts as
+     * expired, so the candidate row and its file go physically */
+    const char *edgeRel = "ocsp/65646765.cache"; /* hex("edge") */
+    struct RevocationCacheRecord edge = { 0 };
+    edge.expireTimeUtc = static_cast<int64_t>(time(nullptr)); /* exactly now */
+    (void)strncpy_s(edge.key, sizeof(edge.key), "65646765", strlen("65646765"));
+    (void)strncpy_s(edge.type, sizeof(edge.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(edge.filePath, sizeof(edge.filePath), edgeRel, strlen(edgeRel));
+    edge.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
+    ASSERT_EQ(InsertRevocationCacheRecord(&edge), CM_SUCCESS);
+    std::string edgeFull = std::string(REVOCATION_CACHE_DIR) + edgeRel;
+    const uint8_t body[] = "EDGE";
+    ASSERT_EQ(WriteTestFile(edgeFull.c_str(), body, sizeof(body) - 1), 0);
+
+    /* keep the periodic cleanup out: it spares expire == now, the eviction
+     * branch under test must not */
+    ASSERT_EQ(SetRevocationCacheMeta(static_cast<int64_t>(time(nullptr))), CM_SUCCESS);
+    uint8_t keyBuf[] = "edgkey1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    /* physically gone: neither the row nor the file remains */
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_EQ(std::find(paths->begin(), paths->end(), edgeRel), paths->end());
+    EXPECT_NE(access(edgeFull.c_str(), F_OK), 0);
+}
+
+TEST_F(CmRevocationCacheEngineTest, OrphanScanKeepsDeletedRowFiles)
+{
+    /* a logically deleted row keeps its file: the orphan scan must not reap
+     * files that a deleted-but-unexpired row still points to */
+    const char *keptRel = "ocsp/6b657074.cache"; /* hex("kept") */
+    struct RevocationCacheRecord kept = { 0 };
+    kept.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
+    (void)strncpy_s(kept.key, sizeof(kept.key), "6b657074", strlen("6b657074"));
+    (void)strncpy_s(kept.type, sizeof(kept.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(kept.filePath, sizeof(kept.filePath), keptRel, strlen(keptRel));
+    kept.dataSize = EXPIRED_RECORD_DATA_SIZE;
+    ASSERT_EQ(InsertRevocationCacheRecord(&kept), CM_SUCCESS);
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(keptRel), CM_SUCCESS);
+    std::string keptFull = std::string(REVOCATION_CACHE_DIR) + keptRel;
+    const uint8_t body[] = "KEPT";
+    ASSERT_EQ(WriteTestFile(keptFull.c_str(), body, sizeof(body) - 1), 0);
+
+    /* last-clean=0 forces the cleanup pass on the next save */
+    ASSERT_EQ(SetRevocationCacheMeta(0), CM_SUCCESS);
+    uint8_t keyBuf[] = "orpkdy1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    /* the row is still there (unexpired) and the file survived the scan */
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_NE(std::find(paths->begin(), paths->end(), keptRel), paths->end());
+    EXPECT_EQ(access(keptFull.c_str(), F_OK), 0);
+}
+
+TEST_F(CmRevocationCacheEngineTest, CleanupRemovesExpiredDeletedRow)
+{
+    /* a logically deleted row is reaped physically once it expires: the
+     * periodic cleanup deletes the row and unlinks the file */
+    const char *goneRel = "ocsp/676f6e65.cache"; /* hex("gone") */
+    struct RevocationCacheRecord gone = { 0 };
+    gone.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC;
+    (void)strncpy_s(gone.key, sizeof(gone.key), "676f6e65", strlen("676f6e65"));
+    (void)strncpy_s(gone.type, sizeof(gone.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(gone.filePath, sizeof(gone.filePath), goneRel, strlen(goneRel));
+    gone.dataSize = EXPIRED_RECORD_DATA_SIZE;
+    ASSERT_EQ(InsertRevocationCacheRecord(&gone), CM_SUCCESS);
+    ASSERT_EQ(MarkRevocationCacheRecordDeleted(goneRel), CM_SUCCESS);
+    std::string goneFull = std::string(REVOCATION_CACHE_DIR) + goneRel;
+    const uint8_t body[] = "GONE";
+    ASSERT_EQ(WriteTestFile(goneFull.c_str(), body, sizeof(body) - 1), 0);
+
+    /* last-clean=0 forces the cleanup pass on the next save */
+    ASSERT_EQ(SetRevocationCacheMeta(0), CM_SUCCESS);
+    uint8_t keyBuf[] = "rpkdly1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    /* the row is gone and the file went with it */
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_EQ(std::find(paths->begin(), paths->end(), goneRel), paths->end());
+    EXPECT_NE(access(goneFull.c_str(), F_OK), 0);
+}
+
 TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
 {
     /* write an entry as native so the service-store file really exists */
