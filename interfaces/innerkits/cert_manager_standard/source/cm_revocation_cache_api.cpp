@@ -137,7 +137,7 @@ static int32_t CmReadRevocationCacheFile(const char *basePath, const char *fullP
     return ret;
 }
 
-extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, enum CmRevocationType type,
+extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob *key, enum CmRevocationType type,
     struct CmBlob *data)
 {
     if (data == nullptr) {
@@ -149,12 +149,12 @@ extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, e
     if (type != CM_REVOCATION_TYPE_OCSP && type != CM_REVOCATION_TYPE_CRL) {
         return CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE;
     }
-    if (CmCheckBlob(&key) != CM_SUCCESS || key.size > CM_REVOCATION_CACHE_KEY_MAX_LEN) {
+    if (CmCheckBlob(key) != CM_SUCCESS || key->size > CM_REVOCATION_CACHE_KEY_MAX_LEN) {
         return CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY;
     }
 
     char relPath[CERT_MAX_PATH_LEN] = { 0 };
-    int32_t ret = CmRevocationCacheBuildRelPath(static_cast<uint32_t>(type), &key, relPath, sizeof(relPath));
+    int32_t ret = CmRevocationCacheBuildRelPath(static_cast<uint32_t>(type), key, relPath, sizeof(relPath));
     if (ret != CM_SUCCESS) {
         return ret;
     }
@@ -189,11 +189,14 @@ extern "C" CM_API_EXPORT void CmFreeRevocationCache(struct CmBlob *data)
     }
 }
 
-extern "C" CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, enum CmRevocationType type,
-    const struct CmBlob data, int64_t expireTimeUTC)
+extern "C" CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob *key, enum CmRevocationType type,
+    const struct CmBlob *data, int64_t expireTimeUTC)
 {
+    if (key == nullptr || data == nullptr) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     int64_t clamped = 0;
-    int32_t ret = CmRevocationCacheValidateSaveParams(&key, static_cast<uint32_t>(type), &data,
+    int32_t ret = CmRevocationCacheValidateSaveParams(key, static_cast<uint32_t>(type), data,
         expireTimeUTC, &clamped);
     if (ret != CM_SUCCESS) {
         return ret;
@@ -201,5 +204,5 @@ extern "C" CM_API_EXPORT int32_t CmSaveRevocationCache(const struct CmBlob key, 
     if (!CmRevocationCacheIsCallerAllowed()) {
         return CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID;
     }
-    return CmClientSaveRevocationCache(&key, static_cast<uint32_t>(type), &data, clamped);
+    return CmClientSaveRevocationCache(key, static_cast<uint32_t>(type), data, clamped);
 }
