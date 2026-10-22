@@ -68,20 +68,19 @@ extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenTyp
     return CM_SUCCESS;
 }
 
-/* sizes the open cache file and rewinds it; the expire header must fit */
+/* sizes the open cache file with fstat: the stream position stays where
+ * fopen left it, and only a regular file may be read; the expire header
+ * must fit */
 static int32_t GetCacheFileSize(FILE *fp, long *fileSize)
 {
-    if (fseek(fp, 0, SEEK_END) != 0) {
+    struct stat st = { 0 };
+    if (fstat(fileno(fp), &st) != 0 || !S_ISREG(st.st_mode)) {
         return CMR_ERROR_NOT_EXIST;
     }
-    long size = ftell(fp);
-    if (size < static_cast<long>(sizeof(int64_t))) {
+    if (st.st_size < static_cast<off_t>(sizeof(int64_t))) {
         return CMR_ERROR_NOT_EXIST;
     }
-    if (fseek(fp, 0, SEEK_SET) != 0) {
-        return CMR_ERROR_NOT_EXIST;
-    }
-    *fileSize = size;
+    *fileSize = static_cast<long>(st.st_size);
     return CM_SUCCESS;
 }
 

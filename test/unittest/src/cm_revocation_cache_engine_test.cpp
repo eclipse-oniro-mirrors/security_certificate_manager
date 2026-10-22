@@ -468,6 +468,40 @@ TEST_F(CmRevocationCacheEngineTest, GetOversizedFileReturnsError)
     EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
 }
 
+TEST_F(CmRevocationCacheEngineTest, GetSizingIsExactAtBlockBoundaries)
+{
+    /* payload = 8-byte expire header + data: with 4088 data bytes it is
+     * exactly one 4096-byte block, with 4089 it is one byte past; both must
+     * read back byte-identical, the file size must never be taken from
+     * block rounding */
+    constexpr uint32_t DATA_EXACT_BLOCK = 4088; /* 8 + 4088 = 4096 */
+    constexpr uint32_t DATA_PAST_BLOCK = 4089;  /* 8 + 4089 = 4097 */
+    uint8_t key1Buf[] = "blk4088";
+    struct CmBlob key1 = { sizeof(key1Buf) - 1, key1Buf };
+    uint8_t key2Buf[] = "blk4089";
+    struct CmBlob key2 = { sizeof(key2Buf) - 1, key2Buf };
+    std::vector<uint8_t> data1(DATA_EXACT_BLOCK, 0x5a);
+    std::vector<uint8_t> data2(DATA_PAST_BLOCK, 0xa5);
+    struct CmBlob blob1 = { static_cast<uint32_t>(data1.size()), data1.data() };
+    struct CmBlob blob2 = { static_cast<uint32_t>(data2.size()), data2.data() };
+    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key1, CM_REVOCATION_TYPE_OCSP, &blob1, expire), CM_SUCCESS);
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key2, CM_REVOCATION_TYPE_OCSP, &blob2, expire), CM_SUCCESS);
+
+    struct CmBlob out = { 0, nullptr };
+    ASSERT_EQ(CmGetRevocationCache(&key1, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    EXPECT_EQ(out.size, blob1.size);
+    ASSERT_NE(out.data, nullptr);
+    EXPECT_EQ(memcmp(out.data, data1.data(), out.size), 0);
+    CmFreeRevocationCache(&out);
+
+    ASSERT_EQ(CmGetRevocationCache(&key2, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    EXPECT_EQ(out.size, blob2.size);
+    ASSERT_NE(out.data, nullptr);
+    EXPECT_EQ(memcmp(out.data, data2.data(), out.size), 0);
+    CmFreeRevocationCache(&out);
+}
+
 TEST_F(CmRevocationCacheEngineTest, GetSymlinkedEntryReturnsNotExist)
 {
     uint8_t keyBuf[] = "symget1";
