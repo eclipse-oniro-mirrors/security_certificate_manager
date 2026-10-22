@@ -271,14 +271,14 @@ TEST_F(CmRevocationCacheEngineTest, SaveRecordsKeyAndTypeColumns)
 
     /* the RDB row must carry the hex-encoded key (hex("key1") = 6b657931) and the type string */
     struct RevocationCacheRecord rec = { 0 };
-    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&rec), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate("none", "none", &rec), CM_SUCCESS);
     EXPECT_STREQ(rec.key, "6b657931");
     EXPECT_STREQ(rec.type, "ocsp");
     EXPECT_STREQ(rec.filePath, "ocsp/6b657931.cache");
     ASSERT_EQ(DeleteRevocationCacheRecord(rec.filePath), CM_SUCCESS);
 
     /* the crl row follows: hex("ck") = 636b */
-    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&rec), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate("none", "none", &rec), CM_SUCCESS);
     EXPECT_STREQ(rec.key, "636b");
     EXPECT_STREQ(rec.type, "crl");
     EXPECT_STREQ(rec.filePath, "crl/636b.cache");
@@ -552,20 +552,28 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicDoesNotFollowTmpSymlink)
 TEST_F(CmRevocationCacheEngineTest, WriteAtomicRejectsBadRelPath)
 {
     uint8_t buf[] = "x";
-    EXPECT_EQ(CmRevocationCacheWriteAtomic(nullptr, buf, sizeof(buf) - 1), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ok.cache", nullptr, 1), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ok.cache", buf, 0), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("/data/tmp/abs.cache", buf, sizeof(buf) - 1),
+    uint64_t accounted = 0; /* out param: must never be written on rejection */
+    EXPECT_EQ(CmRevocationCacheWriteAtomic(nullptr, buf, sizeof(buf) - 1, &accounted),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/../../escape.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ok.cache", nullptr, 1, &accounted),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ok.cache", buf, 0, &accounted),
+        CMR_ERROR_INVALID_ARGUMENT);
+    /* the accounted-size out parameter is mandatory too */
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ok.cache", buf, sizeof(buf) - 1, nullptr),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("/data/tmp/abs.cache", buf, sizeof(buf) - 1, &accounted),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/../../escape.cache", buf, sizeof(buf) - 1, &accounted),
         CMR_ERROR_INVALID_ARGUMENT);
     /* the strict rel-path whitelist also rejects non-hex and uppercase names */
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/zz616263.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/zz616263.cache", buf, sizeof(buf) - 1, &accounted),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/61626G.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/61626G.cache", buf, sizeof(buf) - 1, &accounted),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ABCD.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("ocsp/ABCD.cache", buf, sizeof(buf) - 1, &accounted),
         CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(accounted, 0u);
 }
 
 TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
@@ -580,7 +588,9 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
     /* the type directory does not exist: the hex-shaped name passes the
      * whitelist, and opening the tmp file must still fail */
     const char *missingOcsp = "ocsp/badbad.cache";
-    EXPECT_EQ(CmRevocationCacheWriteAtomic(missingOcsp, buf, sizeof(buf) - 1), CMR_ERROR_OPEN_FILE_FAIL);
+    uint64_t accounted = 0;
+    EXPECT_EQ(CmRevocationCacheWriteAtomic(missingOcsp, buf, sizeof(buf) - 1, &accounted),
+        CMR_ERROR_OPEN_FILE_FAIL);
     /* the failed write must not leave a partial tmp or cache file behind */
     char leftover[PATH_MAX] = { 0 };
     ASSERT_GE(snprintf_s(leftover, sizeof(leftover), sizeof(leftover) - 1, "%s%s.tmp", REVOCATION_CACHE_DIR,
@@ -590,7 +600,7 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicMissingDirFails)
         missingOcsp), 0);
     EXPECT_EQ(access(leftover, F_OK), -1);
     /* the crl store fails the same way when its directory is missing */
-    EXPECT_EQ(CmRevocationCacheWriteAtomic("crl/badbad.cache", buf, sizeof(buf) - 1),
+    EXPECT_EQ(CmRevocationCacheWriteAtomic("crl/badbad.cache", buf, sizeof(buf) - 1, &accounted),
         CMR_ERROR_OPEN_FILE_FAIL);
 }
 
@@ -607,7 +617,10 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicPersistsContent)
     ASSERT_FALSE(full.empty());
     std::string rel = full.substr(strlen(REVOCATION_CACHE_DIR));
     const uint8_t body[] = "RAWBODY";
-    ASSERT_EQ(CmRevocationCacheWriteAtomic(rel.c_str(), body, sizeof(body) - 1), CM_SUCCESS);
+    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 8-byte body + 4 KiB page, 4 KiB aligned */
+    uint64_t accounted = 0;
+    ASSERT_EQ(CmRevocationCacheWriteAtomic(rel.c_str(), body, sizeof(body) - 1, &accounted), CM_SUCCESS);
+    EXPECT_EQ(accounted, ACCOUNTED_TWO_BLOCKS);
     FILE *fp = fopen(full.c_str(), "rb");
     ASSERT_NE(fp, nullptr);
     uint8_t readBack[sizeof(body) - 1] = { 0 }; /* exactly the body length: the read must fill it */
@@ -615,6 +628,42 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicPersistsContent)
     (void)fclose(fp);
     EXPECT_EQ(n, sizeof(body) - 1);
     EXPECT_EQ(memcmp(readBack, body, sizeof(body) - 1), 0);
+}
+
+TEST_F(CmRevocationCacheEngineTest, WriteAtomicAccountsAlignedSize)
+{
+    /* accounted = payload + one 4 KiB metadata page, rounded up to 4 KiB */
+    constexpr uint32_t LEN_BELOW_BLOCK = 1;              /* payload under one block */
+    constexpr uint32_t LEN_EXACT_BLOCK = 4096;           /* exactly one block */
+    constexpr uint32_t LEN_PAST_BLOCK = 4097;            /* one byte past one block */
+    constexpr uint32_t LEN_SECOND_BLOCK_PARTIAL = 5000;  /* inside the second block */
+    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192;
+    constexpr uint64_t ACCOUNTED_THREE_BLOCKS = 12288;
+    uint8_t buf[LEN_SECOND_BLOCK_PARTIAL] = { 0 };
+    const struct {
+        uint32_t len;
+        uint64_t accounted;
+    } vectors[] = {
+        { LEN_BELOW_BLOCK, ACCOUNTED_TWO_BLOCKS },
+        { LEN_EXACT_BLOCK, ACCOUNTED_TWO_BLOCKS },
+        { LEN_PAST_BLOCK, ACCOUNTED_THREE_BLOCKS },
+        { LEN_SECOND_BLOCK_PARTIAL, ACCOUNTED_THREE_BLOCKS },
+    };
+    std::vector<std::string> created;
+    for (uint32_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
+        /* hex-only crafted names keep every path inside the whitelist */
+        char name[32] = { 0 };
+        ASSERT_GE(snprintf_s(name, sizeof(name), sizeof(name) - 1, "acc%06x", i), 0);
+        std::string rel = std::string("ocsp/") + name + ".cache";
+        uint64_t accounted = 0;
+        ASSERT_EQ(CmRevocationCacheWriteAtomic(rel.c_str(), buf, vectors[i].len, &accounted), CM_SUCCESS);
+        EXPECT_EQ(accounted, vectors[i].accounted);
+        created.push_back(std::string(REVOCATION_CACHE_DIR) + rel);
+    }
+    /* raw writes leave no RDB rows: remove the files so later cases start clean */
+    for (const auto &full : created) {
+        (void)unlink(full.c_str());
+    }
 }
 
 TEST_F(CmRevocationCacheEngineTest, CleanupRemovesExpiredRecord)
@@ -693,7 +742,9 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
 
 TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
 {
-    /* a fake oldest record claiming 50MB pushes the total over the capacity limit */
+    /* a fake oldest record claiming the whole 2 MiB budget pushes the next
+     * save over the accounted capacity limit */
+    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload: page + 8 bytes, aligned */
     struct RevocationCacheRecord big = { 0 };
     big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + OLDER_EXPIRE_SEC; /* older than the new entry */
     const char *bigRel = "ocsp/cafe0000.cache";
@@ -714,6 +765,48 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
     const auto paths = QueryCacheFilePaths();
     ASSERT_NE(paths, std::nullopt);
     EXPECT_EQ(std::find(paths->begin(), paths->end(), bigRel), paths->end());
+    /* the surviving row bills its accounted size, not the raw payload length */
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+}
+
+TEST_F(CmRevocationCacheEngineTest, ResaveBillsOnceNeverEvictsOthers)
+{
+    /* a re-save must never bill or evict for its own old row: the old row is
+     * excluded from the active sum and from the eviction candidates */
+    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    uint8_t keyBuf[] = "reself1";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+    /* DATA_SIZE holds the accounted size: one active row, nothing excluded */
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+
+    /* a fake peer sized to exactly fill the rest of the budget: the store is
+     * at capacity, so double-billing the self row would evict the peer */
+    struct RevocationCacheRecord peer = { 0 };
+    peer.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + OLDER_EXPIRE_SEC;
+    const char *peerRel = "ocsp/70656572.cache"; /* hex("peer") */
+    (void)strncpy_s(peer.key, sizeof(peer.key), "70656572", strlen("70656572"));
+    (void)strncpy_s(peer.type, sizeof(peer.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(peer.filePath, sizeof(peer.filePath), peerRel, strlen(peerRel));
+    peer.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES) - ACCOUNTED_TWO_BLOCKS;
+    ASSERT_EQ(InsertRevocationCacheRecord(&peer), CM_SUCCESS);
+
+    /* the re-save succeeds and the peer survives: the self row is replaced by
+     * the (KEY, TYPE) conflict with the same accounted size */
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+    const auto paths = QueryCacheFilePaths();
+    ASSERT_NE(paths, std::nullopt);
+    EXPECT_NE(std::find(paths->begin(), paths->end(), peerRel), paths->end());
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES));
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)

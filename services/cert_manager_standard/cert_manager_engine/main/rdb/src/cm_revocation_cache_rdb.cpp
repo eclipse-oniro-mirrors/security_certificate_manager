@@ -148,52 +148,6 @@ int32_t MarkRevocationCacheRecordDeleted(const char *filePath)
     return CM_SUCCESS;
 }
 
-int32_t QueryRevocationCacheSumSize(uint64_t *totalSize)
-{
-    CM_LOG_D("enter QueryRevocationCacheSumSize");
-    if (totalSize == nullptr) {
-        CM_LOG_E("totalSize is nullptr");
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-    if (revocationCacheRdbDataManager == nullptr) {
-        CM_LOG_E("revocationCacheRdbDataManager is nullptr");
-        return CMR_ERROR_NULL_POINTER;
-    }
-    *totalSize = 0;
-
-    std::string sql = std::string("SELECT SUM(") + COLUMN_DATA_SIZE + ") AS total_size FROM " +
-        REVOCATION_CACHE_TABLE_NAME;
-    auto resultSet = revocationCacheRdbDataManager->QueryBySql(sql, std::vector<NativeRdb::ValueObject>());
-    if (resultSet == nullptr) {
-        CM_LOG_E("query sum size failed");
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-
-    int32_t rowCount = 0;
-    if (resultSet->GetRowCount(rowCount) != NativeRdb::E_OK) {
-        CM_LOG_E("GetRowCount failed");
-        resultSet->Close();
-        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-    }
-    if (rowCount <= 0 || resultSet->GoToFirstRow() != NativeRdb::E_OK) {
-        resultSet->Close();
-        return CM_SUCCESS;
-    }
-
-    bool isNull = false;
-    int64_t sum = 0;
-    if (resultSet->IsColumnNull(0, isNull) == NativeRdb::E_OK && !isNull) {
-        if (resultSet->GetLong(0, sum) != NativeRdb::E_OK) {
-            CM_LOG_E("GetLong for sum failed");
-            resultSet->Close();
-            return CMR_ERROR_QUERY_RDB_DATA_FAIL;
-        }
-    }
-    resultSet->Close();
-    *totalSize = sum < 0 ? 0 : static_cast<uint64_t>(sum);
-    return CM_SUCCESS;
-}
-
 int32_t QueryRevocationCacheActiveSumSize(const char *key, const char *type, uint64_t *totalSize)
 {
     CM_LOG_D("enter QueryRevocationCacheActiveSumSize");
@@ -357,14 +311,6 @@ static int32_t QuerySingleRecord(const std::string &sql, const std::vector<Nativ
     int32_t ret = ReadRecordFromResultSet(resultSet, record);
     resultSet->Close();
     return ret;
-}
-
-int32_t QueryRevocationCacheRecordByExpireAsc(struct RevocationCacheRecord *record)
-{
-    CM_LOG_D("enter QueryRevocationCacheRecordByExpireAsc");
-    std::string sql = std::string(REVOCATION_CACHE_SELECT_COLUMNS) + REVOCATION_CACHE_TABLE_NAME +
-        " ORDER BY " + COLUMN_EXPIRE_TIME_UTC + " ASC, " + COLUMN_WRITE_TIME_UTC + " ASC LIMIT 1";
-    return QuerySingleRecord(sql, std::vector<NativeRdb::ValueObject>(), record);
 }
 
 int32_t QueryRevocationCacheEvictCandidate(const char *key, const char *type,

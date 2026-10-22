@@ -42,10 +42,6 @@ int32_t InsertRevocationCacheRecord(const struct RevocationCacheRecord *record);
 
 int32_t DeleteRevocationCacheRecord(const char *filePath);
 
-int32_t QueryRevocationCacheSumSize(uint64_t *totalSize);
-
-int32_t QueryRevocationCacheRecordByExpireAsc(struct RevocationCacheRecord *record);
-
 /* sum of DATA_SIZE over active (IS_DELETED = 0) rows, excluding the given (key, type)
  * row: the exclusion keeps a re-save from billing its own old row twice */
 int32_t QueryRevocationCacheActiveSumSize(const char *key, const char *type, uint64_t *totalSize);

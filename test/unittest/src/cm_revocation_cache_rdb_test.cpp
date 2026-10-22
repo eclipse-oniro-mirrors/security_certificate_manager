@@ -102,11 +102,11 @@ TEST_F(CmRevocationCacheRdbTest, CreateInsertQueryDelete)
         "ocsp/616263.cache", RECORD_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
     uint64_t total = 0;
-    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_GE(total, RECORD_DATA_SIZE);
     /* the KEY/TYPE columns must round-trip through the record query */
     struct RevocationCacheRecord queried = { 0 };
-    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&queried), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate("none", "none", &queried), CM_SUCCESS);
     EXPECT_STREQ(queried.key, "616263");
     EXPECT_STREQ(queried.type, "ocsp");
     EXPECT_STREQ(queried.filePath, "ocsp/616263.cache");
@@ -149,7 +149,7 @@ TEST_F(CmRevocationCacheRdbTest, DeleteNonexistentRecordIsIdempotent)
     ASSERT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
     EXPECT_EQ(DeleteRevocationCacheRecord(r.filePath), CM_SUCCESS);
     uint64_t total = NON_ZERO_SENTINEL_SIZE; /* must be reset to 0: the table is empty again */
-    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_EQ(total, 0u);
 }
 
@@ -255,14 +255,17 @@ TEST_F(CmRevocationCacheRdbTest, QueryEmptyTableReturnsNoPaths)
     EXPECT_EQ(paths, nullptr);
     FreeRevocationCacheFilePaths(paths, count);
     uint64_t total = NON_ZERO_SENTINEL_SIZE; /* must be reset to 0 as well */
-    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_EQ(total, 0u);
 }
 
 TEST_F(CmRevocationCacheRdbTest, QueryRejectsNullArgs)
 {
     ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
-    EXPECT_EQ(QueryRevocationCacheSumSize(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    uint64_t sum = 0;
+    EXPECT_EQ(QueryRevocationCacheActiveSumSize(nullptr, "ocsp", &sum), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(QueryRevocationCacheActiveSumSize("616263", nullptr, &sum), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(QueryRevocationCacheActiveSumSize("616263", "ocsp", nullptr), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(QueryAllRevocationCacheFilePaths(nullptr, nullptr), CMR_ERROR_INVALID_ARGUMENT);
     /* a single null out parameter is rejected the same way */
     uint32_t count = 0;
@@ -270,7 +273,7 @@ TEST_F(CmRevocationCacheRdbTest, QueryRejectsNullArgs)
     char **paths = nullptr;
     EXPECT_EQ(QueryAllRevocationCacheFilePaths(&paths, nullptr), CMR_ERROR_INVALID_ARGUMENT);
     /* record queries and mutations guard their pointers too */
-    EXPECT_EQ(QueryRevocationCacheRecordByExpireAsc(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(QueryRevocationCacheEvictCandidate(nullptr, "ocsp", nullptr), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(QueryExpiredRevocationCacheRecord(0, nullptr), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(InsertRevocationCacheRecord(nullptr), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(DeleteRevocationCacheRecord(nullptr), CMR_ERROR_INVALID_ARGUMENT);
@@ -289,10 +292,10 @@ TEST_F(CmRevocationCacheRdbTest, InsertDuplicatePathReplaces)
         "ocsp/647570.cache", DUP_SECOND_DATA_SIZE };
     ASSERT_EQ(InsertRevocationCacheRecord(&second), CM_SUCCESS);
     uint64_t total = 0;
-    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_EQ(total, DUP_SECOND_DATA_SIZE);
     struct RevocationCacheRecord oldest = { 0 };
-    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&oldest), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate("none", "none", &oldest), CM_SUCCESS);
     EXPECT_EQ(oldest.dataSize, DUP_SECOND_DATA_SIZE); /* the newest values win */
     EXPECT_STREQ(oldest.key, "647570");
     EXPECT_STREQ(oldest.type, "ocsp");
@@ -315,7 +318,7 @@ TEST_F(CmRevocationCacheRdbTest, SamePathDifferentKeysCoexist)
     ASSERT_TRUE(paths.has_value());
     EXPECT_EQ(paths->size(), 2u);
     uint64_t total = 0;
-    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_EQ(total, COEXIST_FIRST_DATA_SIZE + COEXIST_SECOND_DATA_SIZE);
     ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/616263.cache"), CM_SUCCESS);
 }
@@ -337,10 +340,10 @@ TEST_F(CmRevocationCacheRdbTest, SameKeyAndTypeReplaceAcrossPaths)
     ASSERT_EQ(paths->size(), 1u);
     EXPECT_STREQ((*paths)[0].c_str(), "ocsp/7265706c.cache"); /* the newest write wins */
     uint64_t total = 0;
-    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_EQ(total, COEXIST_SECOND_DATA_SIZE);
     struct RevocationCacheRecord oldest = { 0 };
-    ASSERT_EQ(QueryRevocationCacheRecordByExpireAsc(&oldest), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheEvictCandidate("none", "none", &oldest), CM_SUCCESS);
     EXPECT_EQ(oldest.expireTimeUtc, LATER_EXPIRE_TIME_UTC);
     EXPECT_EQ(oldest.dataSize, COEXIST_SECOND_DATA_SIZE);
     ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/7265706c.cache"), CM_SUCCESS);
@@ -360,7 +363,7 @@ TEST_F(CmRevocationCacheRdbTest, SameKeyDifferentTypesCoexist)
     ASSERT_TRUE(paths.has_value());
     EXPECT_EQ(paths->size(), 2u);
     uint64_t total = 0;
-    ASSERT_EQ(QueryRevocationCacheSumSize(&total), CM_SUCCESS);
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_EQ(total, COEXIST_FIRST_DATA_SIZE + COEXIST_SECOND_DATA_SIZE);
     ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/616263.cache"), CM_SUCCESS);
     ASSERT_EQ(DeleteRevocationCacheRecord("crl/616263.cache"), CM_SUCCESS);
