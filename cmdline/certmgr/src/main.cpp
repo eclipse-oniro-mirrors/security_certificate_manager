@@ -24,19 +24,19 @@ int main(int argc, char *argv[])
 {
     if (argc < MIN_ARG_COUNT) {
         CertMgr::CertMgrCommand::WriteStdOut(CertMgr::HELP_MAIN);
-        return 1;
+        return CertMgr::CM_CMD_ERR_PARAM_INVALID;
     }
 
     std::string command = argv[1];
 
     if (command == "-h") {
         CertMgr::CertMgrCommand::WriteStdOut(CertMgr::HELP_MAIN);
-        return 0;
+        return CertMgr::CM_CMD_SUCCESS;
     }
 
     auto cmd = CertMgr::CertMgrCommand::Create(command);
     if (cmd == nullptr) {
-        CertMgr::CertMgrCommand::WriteStdErr("Unknown command: " + command + "\n");
+        CertMgr::WriteError(CertMgr::CM_CMD_ERR_PARAM_INVALID, "Unknown command: " + command);
         CertMgr::CertMgrCommand::WriteStdOut(CertMgr::HELP_MAIN);
         return CertMgr::CM_CMD_ERR_PARAM_INVALID;
     }

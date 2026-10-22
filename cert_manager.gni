@@ -54,3 +54,10 @@ if (defined(global_parts_info) &&
     defined(global_parts_info.security_security_guard)) {
   support_security_guard = true
 }
+
+# Enable useriam_user_auth only when the useriam_user_auth_framework part exists
+useriam_user_auth_enable = false
+if (defined(global_parts_info) &&
+    defined(global_parts_info.useriam_user_auth_framework)) {
+  useriam_user_auth_enable = true
+}
