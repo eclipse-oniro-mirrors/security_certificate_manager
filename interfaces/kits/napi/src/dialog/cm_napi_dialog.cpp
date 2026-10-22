@@ -51,9 +51,9 @@ static napi_value CreateCmErrorCode(napi_env env)
     AddInt32Property(env, dialogErrorCode, "ERROR_NO_AVAILABLE_CERTIFICATE",
         DIALOG_ERROR_NO_AVAILABLE_CERTIFICATE);
     /* ukey dialog dedicated codes (spec D8 v4: unfolded on ForProvider) */
-    AddInt32Property(env, dialogErrorCode, "ERROR_UKEY_AUTH_REPORT_TIMEOUT",
+    AddInt32Property(env, dialogErrorCode, "ERROR_OPERATION_TIMEOUT",
         DIALOG_ERROR_UKEY_AUTH_REPORT_TIMEOUT);
-    AddInt32Property(env, dialogErrorCode, "ERROR_UKEY_DIALOG_IN_PROGRESS",
+    AddInt32Property(env, dialogErrorCode, "ERROR_NOT_CONCURRENT_SUPPORT",
         DIALOG_ERROR_UKEY_DIALOG_IN_PROGRESS);
 
     return dialogErrorCode;
