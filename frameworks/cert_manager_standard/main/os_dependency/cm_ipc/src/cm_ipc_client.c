@@ -1526,7 +1526,7 @@ int32_t CmClientSaveRevocationCache(const struct CmBlob *key, uint32_t type, con
         { .tag = CM_TAG_PARAM2_BUFFER, .blob = expireBlob },
     };
 
-    CmRevocationCacheEncodeInt64Be(expireTimeUTC, expire8);
+    CmRevocationCacheEncodeInt64Be(expireTimeUTC, &expireBlob);
     do {
         ret = CmSendParcelInit(params, CM_ARRAY_SIZE(params), &parcelBlob, &sendParamSet);
         if (ret != CM_SUCCESS) {
