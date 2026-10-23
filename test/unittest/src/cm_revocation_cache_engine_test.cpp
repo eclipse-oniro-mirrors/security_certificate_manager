@@ -248,7 +248,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveThenGetRoundTrip)
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     const uint8_t expectDer[] = "DER";
     ASSERT_EQ(out.size, sizeof(expectDer) - 1);
     EXPECT_EQ(memcmp(out.data, expectDer, sizeof(expectDer) - 1), 0);
@@ -289,11 +289,11 @@ TEST_F(CmRevocationCacheEngineTest, GetMissingKeyReturnsNotExist)
     uint8_t keyBuf[] = "nokey00";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_CRL, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_CRL, &out), CMR_ERROR_NOT_EXIST);
     EXPECT_EQ(out.data, nullptr); /* out params must stay clean on failure */
     EXPECT_EQ(out.size, 0u);
     /* the ocsp store behaves the same for an absent key */
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
     EXPECT_EQ(out.data, nullptr);
     EXPECT_EQ(out.size, 0u);
 }
@@ -317,7 +317,7 @@ TEST_F(CmRevocationCacheEngineTest, ClampBeyondMaxValid)
     int64_t far = static_cast<int64_t>(time(nullptr)) + FAR_FUTURE_SEC; /* > 30d cap: clamped, not an error */
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, far), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     CmFreeRevocationCache(&out);
 }
 
@@ -333,7 +333,7 @@ TEST_F(CmRevocationCacheEngineTest, ResaveSameKeyLastWriteWins)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &d1, expire), CM_SUCCESS);
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &d2, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     const uint8_t expectData[] = "BBB";
     ASSERT_EQ(out.size, sizeof(expectData) - 1);
     EXPECT_EQ(memcmp(out.data, expectData, sizeof(expectData) - 1), 0);
@@ -375,7 +375,7 @@ TEST_F(CmRevocationCacheEngineTest, KeyMaxLenRoundTrip)
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire), CM_SUCCESS);
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     const uint8_t expectDer[] = "DER-MAXKEY";
     ASSERT_EQ(out.size, sizeof(expectDer) - 1);
     EXPECT_EQ(memcmp(out.data, expectDer, sizeof(expectDer) - 1), 0);
@@ -411,7 +411,7 @@ TEST_F(CmRevocationCacheEngineTest, GetExpiredEntryReturnsNotExist)
     (void)memcpy_s(payload + sizeof(int64_t), sizeof(payload) - sizeof(int64_t), der, sizeof(der) - 1);
     ASSERT_EQ(WriteTestFile(full.c_str(), payload, sizeof(payload)), 0);
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetHeaderOnlyFileReturnsError)
@@ -430,7 +430,7 @@ TEST_F(CmRevocationCacheEngineTest, GetHeaderOnlyFileReturnsError)
     CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, &expireBlob);
     ASSERT_EQ(WriteTestFile(full.c_str(), headerOnly, sizeof(headerOnly)), 0);
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetTinyFileReturnsNotExist)
@@ -446,7 +446,7 @@ TEST_F(CmRevocationCacheEngineTest, GetTinyFileReturnsNotExist)
     uint8_t tiny[TINY_FILE_LEN] = { 0 }; /* smaller than the 8-byte expire header */
     ASSERT_EQ(WriteTestFile(full.c_str(), tiny, sizeof(tiny)), 0);
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetOversizedFileReturnsError)
@@ -465,7 +465,7 @@ TEST_F(CmRevocationCacheEngineTest, GetOversizedFileReturnsError)
     CmRevocationCacheEncodeInt64Be(static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC, &expireBlob);
     ASSERT_EQ(WriteTestFile(full.c_str(), big.data(), static_cast<uint32_t>(big.size())), 0);
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_BUFFER_TOO_SMALL);
 }
 
 TEST_F(CmRevocationCacheEngineTest, GetSizingIsExactAtBlockBoundaries)
@@ -489,13 +489,13 @@ TEST_F(CmRevocationCacheEngineTest, GetSizingIsExactAtBlockBoundaries)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key2, CM_REVOCATION_TYPE_OCSP, &blob2, expire), CM_SUCCESS);
 
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key1, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key1, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     EXPECT_EQ(out.size, blob1.size);
     ASSERT_NE(out.data, nullptr);
     EXPECT_EQ(memcmp(out.data, data1.data(), out.size), 0);
     CmFreeRevocationCache(&out);
 
-    ASSERT_EQ(CmGetRevocationCache(&key2, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key2, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     EXPECT_EQ(out.size, blob2.size);
     ASSERT_NE(out.data, nullptr);
     EXPECT_EQ(memcmp(out.data, data2.data(), out.size), 0);
@@ -517,7 +517,7 @@ TEST_F(CmRevocationCacheEngineTest, GetSymlinkedEntryReturnsNotExist)
      * its target exists: the normalized path escapes the cache root */
     ASSERT_EQ(symlink("/etc/passwd", full.c_str()), 0);
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
     (void)unlink(full.c_str()); /* remove the planted symlink; the row is cleaned by teardown */
 }
 
@@ -736,7 +736,7 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesOrphanAndTmpFiles)
     (void)unlink(txtFull.c_str()); /* do not leave unrelated files to other cases */
     /* the valid entry must survive the cleanup */
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     CmFreeRevocationCache(&out);
 }
 
@@ -880,7 +880,7 @@ TEST_F(CmRevocationCacheEngineTest, ResaveResurrectsDeletedRow)
     EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
     /* and the entry reads back */
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     CmFreeRevocationCache(&out);
 }
 
@@ -932,7 +932,7 @@ TEST_F(CmRevocationCacheEngineTest, RaceRegressionExpiredSelfRowSurvives)
 
     /* the new file must have survived and carry the new content */
     struct CmBlob out = { 0, nullptr };
-    ASSERT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
     ASSERT_NE(out.data, nullptr);
     EXPECT_EQ(out.size, data.size);
     EXPECT_EQ(memcmp(out.data, data.data, out.size), 0);
@@ -1058,7 +1058,7 @@ TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
     /* HAP callers read from their sandbox base and must not see the native entry */
     MockHapToken mockHap;
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
     EXPECT_EQ(out.data, nullptr); /* out params must stay clean on failure */
     EXPECT_EQ(out.size, 0u);
 }
@@ -1090,7 +1090,7 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
         allDone = true;
         for (int i = 0; i < asyncKeyCount; i++) {
             struct CmBlob out = { 0, nullptr };
-            if (CmGetRevocationCache(&keys[i], CM_REVOCATION_TYPE_OCSP, &out) != CM_SUCCESS) {
+            if (CmGetRevocationCache(keys[i], CM_REVOCATION_TYPE_OCSP, &out) != CM_SUCCESS) {
                 allDone = false;
             }
             CmFreeRevocationCache(&out);
@@ -1102,7 +1102,7 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
     ASSERT_TRUE(allDone);
     for (int i = 0; i < asyncKeyCount; i++) {
         struct CmBlob out = { 0, nullptr };
-        ASSERT_EQ(CmGetRevocationCache(&keys[i], CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+        ASSERT_EQ(CmGetRevocationCache(keys[i], CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
         const uint8_t expectData[] = "AD";
         EXPECT_EQ(out.size, sizeof(expectData) - 1);
         CmFreeRevocationCache(&out);
@@ -1124,7 +1124,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     /* same store the SA writes: REVOCATION_CACHE_DIR */
     const std::string formalFull = BuildCacheFullPath(&key, CM_REVOCATION_TYPE_OCSP);
     ASSERT_FALSE(formalFull.empty());
-    ASSERT_EQ(CmSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire), CM_SUCCESS);
+    ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
 
     /* the SA persists asynchronously into the FORMAL store: verify the raw file
        itself, including the on-disk big-endian expiry header encoding */
@@ -1174,7 +1174,7 @@ TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
     ASSERT_FALSE(formalFull.empty());
     {
         MockHapToken mockHap;
-        ASSERT_EQ(CmSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire), CM_SUCCESS);
+        ASSERT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire), CM_SUCCESS);
     }
 
     /* back to native: the FORMAL shared store must hold the HAP-written entry */

@@ -133,7 +133,7 @@ TEST_F(CmRevocationCacheTest, SaveRejectsOversizedData)
     std::vector<uint8_t> big(CM_REVOCATION_CACHE_DATA_MAX_LEN + 1, 1);
     struct CmBlob data = { static_cast<uint32_t>(big.size()), big.data() };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
-    EXPECT_EQ(CmSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire),
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
         CMR_ERROR_INVALID_ARGUMENT_CACHE_DATA);
 }
 
@@ -144,26 +144,10 @@ TEST_F(CmRevocationCacheTest, SaveRejectsBadArgs)
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob data = { 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
-    EXPECT_EQ(CmSaveRevocationCache(&key, static_cast<enum CmRevocationType>(INVALID_REVOCATION_TYPE), &data,
+    EXPECT_EQ(CmSaveRevocationCache(key, static_cast<enum CmRevocationType>(INVALID_REVOCATION_TYPE), data,
         expire), CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
-    EXPECT_EQ(CmSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data,
         static_cast<int64_t>(time(nullptr)) - 1), CMR_ERROR_INVALID_ARGUMENT_EXPIRE_TIME);
-}
-
-TEST_F(CmRevocationCacheTest, PointerArgsRejectNullptr)
-{
-    uint8_t keyBuf[] = "npkey";
-    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
-    uint8_t dataBuf[] = "D";
-    struct CmBlob data = { 1, dataBuf };
-    struct CmBlob out = { 0, nullptr };
-    int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
-    EXPECT_EQ(CmSaveRevocationCache(nullptr, CM_REVOCATION_TYPE_OCSP, &data, expire),
-        CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, nullptr, expire),
-        CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmGetRevocationCache(nullptr, CM_REVOCATION_TYPE_OCSP, &out),
-        CMR_ERROR_INVALID_ARGUMENT);
 }
 
 TEST_F(CmRevocationCacheTest, SaveRejectsOversizedKey)
@@ -174,7 +158,7 @@ TEST_F(CmRevocationCacheTest, SaveRejectsOversizedKey)
     uint8_t dataBuf[] = "d";
     struct CmBlob data = { 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
-    EXPECT_EQ(CmSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire),
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
         CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
 }
 
@@ -186,10 +170,10 @@ TEST_F(CmRevocationCacheTest, GetRejectsBadArgs)
     (void)memset_s(keyBufBig, sizeof(keyBufBig), 'g', sizeof(keyBufBig));
     struct CmBlob bigKey = { sizeof(keyBufBig), keyBufBig };
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, nullptr), CMR_ERROR_NULL_POINTER);
-    EXPECT_EQ(CmGetRevocationCache(&key, static_cast<enum CmRevocationType>(INVALID_REVOCATION_TYPE), &out),
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, nullptr), CMR_ERROR_NULL_POINTER);
+    EXPECT_EQ(CmGetRevocationCache(key, static_cast<enum CmRevocationType>(INVALID_REVOCATION_TYPE), &out),
         CMR_ERROR_INVALID_ARGUMENT_REVOCATION_TYPE);
-    EXPECT_EQ(CmGetRevocationCache(&bigKey, CM_REVOCATION_TYPE_OCSP, &out),
+    EXPECT_EQ(CmGetRevocationCache(bigKey, CM_REVOCATION_TYPE_OCSP, &out),
         CMR_ERROR_INVALID_ARGUMENT_CACHE_KEY);
 }
 
@@ -199,7 +183,7 @@ TEST_F(CmRevocationCacheTest, GetShellCallerRejected)
     uint8_t keyBuf[] = "shkey1";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &out),
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
     EXPECT_EQ(out.data, nullptr); /* out params must stay clean on rejection */
     EXPECT_EQ(out.size, 0u);
@@ -213,7 +197,7 @@ TEST_F(CmRevocationCacheTest, SaveShellCallerRejected)
     uint8_t dataBuf[] = "D";
     struct CmBlob data = { 1, dataBuf };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
-    EXPECT_EQ(CmSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data, expire),
+    EXPECT_EQ(CmSaveRevocationCache(key, CM_REVOCATION_TYPE_OCSP, data, expire),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
 }
 

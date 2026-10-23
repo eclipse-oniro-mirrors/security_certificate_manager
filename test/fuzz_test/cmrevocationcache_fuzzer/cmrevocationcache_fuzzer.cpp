@@ -65,10 +65,10 @@ bool DoSomethingInterestingWithRevocationCache(const uint8_t *data, size_t size)
         (void)memcpy_s(&expireTime, sizeof(int64_t), myData + offset, sizeof(int64_t));
     }
 
-    (void)CmSaveRevocationCache(&key, static_cast<enum CmRevocationType>(type), &cacheData, expireTime);
+    (void)CmSaveRevocationCache(key, static_cast<enum CmRevocationType>(type), cacheData, expireTime);
 
     struct CmBlob outData = { 0, nullptr };
-    (void)CmGetRevocationCache(&key, static_cast<enum CmRevocationType>(type), &outData);
+    (void)CmGetRevocationCache(key, static_cast<enum CmRevocationType>(type), &outData);
     CmFreeRevocationCache(&outData);
 
     CmFree(myData);
