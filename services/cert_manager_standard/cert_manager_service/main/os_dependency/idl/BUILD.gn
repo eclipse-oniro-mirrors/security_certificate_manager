@@ -55,6 +55,7 @@ ohos_static_library("libcm_service_idl_standard_static") {
     "ability_runtime:ability_connect_callback_stub",
     "access_token:libaccesstoken_sdk",
     "c_utils:utils",
+    "eventhandler:libeventhandler",
     "huks:libhukssdk",
     "init:libbegetutil",
     "ipc:ipc_core",
