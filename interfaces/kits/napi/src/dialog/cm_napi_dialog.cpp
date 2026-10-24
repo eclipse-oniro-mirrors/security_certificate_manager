@@ -50,6 +50,9 @@ static napi_value CreateCmErrorCode(napi_env env)
         DIALOG_ERROR_PARAMETER_VALIDATION_FAILED);
     AddInt32Property(env, dialogErrorCode, "ERROR_NO_AVAILABLE_CERTIFICATE",
         DIALOG_ERROR_NO_AVAILABLE_CERTIFICATE);
+    /* keystorePwd of InstallCertificateRequest is incorrect (since 26.2.0) */
+    AddInt32Property(env, dialogErrorCode, "ERROR_PASSWORD_IS_INCORRECT",
+        DIALOG_ERROR_KEYSTORE_PWD_INCORRECT);
     /* ukey dialog dedicated codes (spec D8 v4: unfolded on ForProvider) */
     AddInt32Property(env, dialogErrorCode, "ERROR_UKEY_AUTH_REPORT_TIMEOUT",
         DIALOG_ERROR_UKEY_AUTH_REPORT_TIMEOUT);

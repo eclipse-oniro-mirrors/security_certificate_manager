@@ -166,6 +166,9 @@ enum CMDialogErrorCode {
     CMR_DIALOG_ERROR_NOT_PC_DEVICE = -1020, /* UIExtension dialog requires a PC device or PC mode (29700005) */
 
     CMR_DIALOG_ERROR_UIABILITY_NOT_SUPPORTED = -1021, /* ukey driver pin dialog is a UIAbility, rejected (29700003) */
+
+    /* Caller-provided keystore password is incorrect in the install dialog (-> 29700008) */
+    CMR_DIALOG_ERROR_KEYSTORE_PWD_INCORRECT = -1022,
 };
 
 #ifdef __cplusplus

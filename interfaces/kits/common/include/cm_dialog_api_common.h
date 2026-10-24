@@ -38,6 +38,7 @@ enum ErrorCode {
     DIALOG_ERROR_NOT_COMPLY_SECURITY_POLICY = 29700005,
     DIALOG_ERROR_PARAMETER_VALIDATION_FAILED = 29700006,
     DIALOG_ERROR_NO_AVAILABLE_CERTIFICATE = 29700007,
+    DIALOG_ERROR_KEYSTORE_PWD_INCORRECT = 29700008,
     DIALOG_ERROR_UKEY_AUTH_REPORT_TIMEOUT = 29700009,
     DIALOG_ERROR_UKEY_DIALOG_IN_PROGRESS = 29700010,
 };
@@ -63,6 +64,7 @@ static const std::string NOT_ENTERPRISE_DEVICE_MSG = "The operation does not com
     "such as the device does not allow users to manage the ca certificate of the global user.";
 static const std::string CAPABILITY_NOT_SUPPORTED_MSG = "the capability not supported.";
 static const std::string NO_AVAILABLE_CERTIFICATE_MSG = "no available certificate for authorization.";
+static const std::string KEYSTORE_PWD_INCORRECT_MSG = "the keystore file password is incorrect.";
 static const std::string START_UIABILITY_FAILED_MSG = "start uiAbility failed.";
 static const std::string UKEY_AUTH_REPORT_TIMEOUT_MSG =
     "the ukey driver did not report the auth result within the timeout.";
@@ -93,6 +95,7 @@ static const std::string CERT_MANAGER_PAGE_TYPE = "pageType";
 static const std::string CERT_MANAGER_CERT_KEY_URI = "keyUri";
 static const std::string CERT_MANAGER_CERTSCOPE_TYPE = "certScope";
 static const std::string CERT_MANAGER_CERTIFICATE_DATA = "cert";
+static const std::string CERT_MANAGER_KEYSTORE_PWD = "keystorePwd";
 static const std::string CERT_MANAGER_CALLER_BUNDLENAME = "bundleName";
 static const std::string CERT_MANAGER_CERT_URI = "certUri";
 static const std::string CERT_MANAGER_OPERATION_TYPE = "operationType";
@@ -113,6 +116,10 @@ constexpr int32_t PARAM_SIZE_ONE = 1;
 constexpr int32_t PARAM_SIZE_TWO = 2;
 constexpr int32_t PARAM_SIZE_THREE = 3;
 constexpr int32_t PARAM_SIZE_FOUR = 4;
+constexpr int32_t PARAM_SIZE_FIVE = 5;
+
+/* max length (bytes) of the optional keystorePwd of InstallCertificateRequest */
+constexpr int32_t KEYSTORE_PWD_MAX_LEN = 128;
 
 enum CmDialogPageType {
     PAGE_MAIN = 1,
@@ -164,6 +171,8 @@ static const std::unordered_map<int32_t, int32_t> DIALOG_CODE_TO_JS_CODE_MAP = {
     { CMR_DIALOG_ERROR_CAPABILITY_NOT_SUPPORTED, DIALOG_ERROR_CAPABILITY_NOT_SUPPORTED },
     // The device has no available cert
     { CMR_DIALOG_ERROR_NO_AVAILABLE_CERTIFICATE, DIALOG_ERROR_NO_AVAILABLE_CERTIFICATE },
+    // The caller-provided keystore password is incorrect (install dialog, 29700008)
+    { CMR_DIALOG_ERROR_KEYSTORE_PWD_INCORRECT, DIALOG_ERROR_KEYSTORE_PWD_INCORRECT },
 
     { CMR_DIALOG_ERROR_PARSE_CERT_FAILED, DIALOG_ERROR_INSTALL_FAILED },
     { CMR_DIALOG_ERROR_ADVANCED_SECURITY, DIALOG_ERROR_INSTALL_FAILED },
@@ -196,6 +205,7 @@ static const std::unordered_map<int32_t, std::string> DIALOG_CODE_TO_MSG_MAP = {
     { CMR_DIALOG_ERROR_PARAM_INVALID, DIALOG_INVALID_PARAMS_MSG },
     { CMR_DIALOG_ERROR_CAPABILITY_NOT_SUPPORTED, CAPABILITY_NOT_SUPPORTED_MSG },
     { CMR_DIALOG_ERROR_NO_AVAILABLE_CERTIFICATE, NO_AVAILABLE_CERTIFICATE_MSG },
+    { CMR_DIALOG_ERROR_KEYSTORE_PWD_INCORRECT, KEYSTORE_PWD_INCORRECT_MSG },
 
     { CMR_DIALOG_ERROR_PARSE_CERT_FAILED, DIALOG_OPERATION_FAILED_MSG + PARSE_CERT_FAILED_MSG },
     { CMR_DIALOG_ERROR_ADVANCED_SECURITY, DIALOG_OPERATION_FAILED_MSG + ADVANCED_SECURITY_MSG },

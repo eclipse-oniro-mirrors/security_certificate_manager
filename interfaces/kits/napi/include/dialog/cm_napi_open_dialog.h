@@ -54,6 +54,14 @@ struct CmUIExtensionRequestContext : public CommonAsyncContext {
             CM_FREE_PTR(certUri->data);
             CM_FREE_PTR(certUri);
         }
+        if (keystorePwd != nullptr) {
+            /* keystore password is sensitive; scrub before free */
+            if (keystorePwd->data != nullptr && keystorePwd->size > 0) {
+                (void)memset_s(keystorePwd->data, keystorePwd->size, 0, keystorePwd->size);
+            }
+            CM_FREE_PTR(keystorePwd->data);
+            CM_FREE_PTR(keystorePwd);
+        }
         if (authCustomData != nullptr) {
             /* customData is caller-opaque data; scrub before free (spec R10) */
             if (authCustomData->data != nullptr && authCustomData->size > 0) {
@@ -73,6 +81,8 @@ struct CmUIExtensionRequestContext : public CommonAsyncContext {
     std::string certStr = "";
     std::string labelName = "";
     CmBlob *certUri = nullptr;
+    CmBlob *keystorePwd = nullptr; /* optional install dialog keystore password (<= KEYSTORE_PWD_MAX_LEN bytes),
+                                      carries the terminating NUL, empty string allowed, scrubbed on destruction */
     bool showInstallButton = false;
     std::vector<int32_t> certTypes;
     uint32_t certPurpose = 0;
