@@ -16,6 +16,7 @@
 #include "certmgr_command.h"
 #include "certmgr_help.h"
 
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -293,6 +294,9 @@ static constexpr int HEX_FORMAT_BUF_SIZE = 3; /* "%02X" writes 2 chars + '\0' */
 
 static X509 *ParseCertFromBlob(const struct CmBlob &certData)
 {
+    if (certData.size > static_cast<uint32_t>(INT_MAX)) {
+        return nullptr;
+    }
     BIO *bio = BIO_new_mem_buf(certData.data, static_cast<int>(certData.size));
     if (bio == nullptr) {
         return nullptr;
@@ -309,6 +313,9 @@ static X509 *ParseCertFromBlob(const struct CmBlob &certData)
 
 static std::string HashToHex(const unsigned char *hash, int len)
 {
+    if (len <= 0 || len > SHA256_DIGEST_LENGTH) {
+        return "";
+    }
     char hexBuf[SHA256_DIGEST_LENGTH * HEX_PER_BYTE + HEX_STR_TERMINATOR] = {0};
     for (int i = 0; i < len; i++) {
         (void)sprintf_s(hexBuf + i * HEX_PER_BYTE, HEX_FORMAT_BUF_SIZE, "%02X", hash[i]);

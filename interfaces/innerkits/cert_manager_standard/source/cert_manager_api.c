@@ -22,6 +22,7 @@
 #include "cm_mem.h"
 #include "cm_ipc_client.h"
 #include "cm_type.h"
+#include "cm_type_free.h"
 #include "cm_ukey_ability_type.h"
 
 const char *HUKS_SYSCAP = "SystemCapability.Security.Huks.CryptoExtension";
@@ -758,14 +759,11 @@ CM_API_EXPORT int32_t CmFindCertificate(const struct FindCertRequest *request,
  
 CM_API_EXPORT void CmFreeFindCertResult(struct FindCertResult *result)
 {
+    CM_LOG_I("enter free find cert result");
     if (result == NULL) {
+        CM_LOG_E("result is null");
         return;
     }
-    if (result->certInfos != NULL) {
-        for (uint32_t i = 0; i < result->count; i++) {
-            CM_FREE_BLOB(result->certInfos[i].certData);
-        }
-        CM_FREE_PTR(result->certInfos);
-    }
-    result->count = 0;
+    CmFreeFindCertResultInner(result);
+    CM_LOG_I("leave free find cert result");
 }
