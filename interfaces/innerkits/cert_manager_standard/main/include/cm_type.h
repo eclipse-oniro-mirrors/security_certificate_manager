@@ -106,7 +106,7 @@ extern "C" {
 #define CA_STORE_PATH_USER_SERVICE_BASE   "/data/service/el1/public/cert_manager_service/certificates/user_open/"
 
 #define REVOCATION_CACHE_SANDBOX_BASE  "/data/certificates/revocation_cache/"
-#define REVOCATION_CACHE_SERVICE_BASE  "/data/service/el1/public/for-all-app/cert_manager_service/revocation_cache/"
+#define REVOCATION_CACHE_SERVICE_BASE  "/data/service/el1/public/for-all-app/cert_manager_service/certificates/revocation/"
 #define CM_REVOCATION_CACHE_KEY_MAX_LEN    64
 /* hex-encoded key length: two chars per key byte, used for file names and RDB rows */
 #define CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN (CM_REVOCATION_CACHE_KEY_MAX_LEN * 2)
