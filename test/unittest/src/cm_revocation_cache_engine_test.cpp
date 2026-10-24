@@ -26,7 +26,6 @@
 
 #include <climits>
 #include <ftw.h>
-#include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -117,22 +116,24 @@ static std::string BuildCacheFullPath(const struct CmBlob *key, uint32_t type)
     return std::string(REVOCATION_CACHE_DIR) + relPath;
 }
 
-static uid_t g_saDataUid = 0;
-static gid_t g_saDataGid = 0;
-
-static int ChownTreeToSa(const char *path, const struct stat *st, int type, struct FTW *ftw)
-{
-    (void)st;
-    (void)type;
-    (void)ftw;
-    (void)chown(path, g_saDataUid, g_saDataGid); /* best effort: keep walking the tree */
-    return 0;
-}
-
 static int RemoveTreeEntry(const char *path, const struct stat *st, int type, struct FTW *ftw)
 {
     (void)st;
     (void)ftw;
+    /* the walk root is the base cache directory itself (nftw may hand it back
+     * with or without its trailing slash): it belongs to the SA lifecycle and
+     * must survive the cleanup */
+    std::string entry = path;
+    std::string base = REVOCATION_CACHE_DIR;
+    if (!entry.empty() && entry.back() == '/') {
+        entry.pop_back();
+    }
+    if (!base.empty() && base.back() == '/') {
+        base.pop_back();
+    }
+    if (entry == base) {
+        return 0;
+    }
     if (type == FTW_D || type == FTW_DP) {
         (void)rmdir(path); /* FTW_DEPTH visits children first, so dirs are empty here */
     } else {
@@ -145,32 +146,14 @@ static int RemoveTreeEntry(const char *path, const struct stat *st, int type, st
  * The engine-level cases run in this root process and create the cache
  * directories (revocation_cache/<type>) with root ownership. The SA
  * (uid cert_manager_server) then fails its atomic rename with EACCES when
- * saving through IPC, and chowning the tree back is not permitted for the test
- * process on device. Deleting is allowed though (same as teardown cleanup), so
- * drop the whole tree before pulling up the SA and let its own save pipeline
- * recreate every level with the SA's ownership.
+ * saving through IPC. Deleting is allowed though (same as teardown cleanup), so
+ * drop the tree contents before pulling up the SA and let its own save
+ * pipeline recreate the levels below with the SA's ownership; the base
+ * directory itself belongs to the SA lifecycle and is kept.
  */
 static void RemoveRevocationCacheTree(void)
 {
     (void)nftw(REVOCATION_CACHE_DIR, RemoveTreeEntry, NFTW_MAX_OPEN_FDS, FTW_DEPTH | FTW_PHYS);
-}
-
-/*
- * Best-effort safety net: hand the formal data root back to the SA in case any
- * part of it was created by this root process (e.g. on a fresh device). On TDD
- * devices the shell domain is typically not allowed to chown system data files,
- * so the cache-tree removal below is the mechanism that actually guarantees the
- * SA can write; this chown only helps where the policy permits it.
- */
-static void FixCmDataOwnershipForSa(void)
-{
-    struct passwd *sa = getpwnam("cert_manager_server");
-    if (sa == nullptr) {
-        return; /* no such account on this device: let the SA fail with a clear error */
-    }
-    g_saDataUid = sa->pw_uid;
-    g_saDataGid = sa->pw_gid;
-    (void)nftw("/data/service/el1/public/cert_manager_service", ChownTreeToSa, NFTW_MAX_OPEN_FDS, FTW_PHYS);
 }
 
 /* ---------- helpers for verifying the SA-persisted formal store ---------- */
@@ -1113,12 +1096,35 @@ TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
     }
 }
 
+TEST_F(CmRevocationCacheEngineTest, CacheTreeRemovalKeepsBaseDir)
+{
+    /* populate the store the way engine cases do: the save pipeline creates
+     * the base directory, the type subdirectory and cache files */
+    uint8_t keyBuf[] = "basedir";
+    uint8_t dataBuf[] = "BD";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    struct CmBlob data = { sizeof(dataBuf) - 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+    const std::string ocspDir = std::string(REVOCATION_CACHE_DIR) + "ocsp";
+    const std::string probe = ocspDir + "/probe.cache";
+    const uint8_t one[] = "x";
+    ASSERT_EQ(WriteTestFile(probe.c_str(), one, 1), 0);
+
+    RemoveRevocationCacheTree();
+
+    /* the base directory belongs to the SA lifecycle and must survive the
+     * cleanup; every level below it is gone */
+    EXPECT_EQ(access(REVOCATION_CACHE_DIR, F_OK), 0);
+    EXPECT_EQ(access(ocspDir.c_str(), F_OK), -1);
+    EXPECT_EQ(access(probe.c_str(), F_OK), -1);
+}
+
 TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
 {
-    /* drop the root-owned cache tree so the SA recreates it itself (see helper) */
+    /* drop the root-owned cache tree contents so the SA recreates the levels below (see helper) */
     CleanupRevocationCacheState();
     RemoveRevocationCacheTree();
-    FixCmDataOwnershipForSa();
     /* full SDK save chain: param check -> native caller check -> IPC -> SA async save */
     uint8_t keyBuf[] = "sdkkey1";
     uint8_t dataBuf[] = "SDK-DER";
@@ -1144,8 +1150,8 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
     /*
      * Persistence requires the SA to own the cache directories. The engine-level
      * cases run as root and create them first, and on locked-down TDD devices the
-     * test process (shell domain) is denied both chown and rmdir on system data,
-     * so the SA's atomic rename fails with EACCES there. The accepted save is the
+     * test process (shell domain) cannot rmdir system data directories, so the
+     * SA's atomic rename fails with EACCES there. The accepted save is the
      * portable assertion; when the environment does let the SA persist (e.g.
      * permissive, or dirs the SA created itself), also check the file content.
      */
@@ -1163,10 +1169,9 @@ TEST_F(CmRevocationCacheEngineTest, SaveThroughSdkIpcRoundTrip)
 
 TEST_F(CmRevocationCacheEngineTest, SaveHapCallerWritesSharedStore)
 {
-    /* drop the root-owned cache tree so the SA recreates it itself (see helper) */
+    /* drop the root-owned cache tree contents so the SA recreates the levels below (see helper) */
     CleanupRevocationCacheState();
     RemoveRevocationCacheTree();
-    FixCmDataOwnershipForSa();
     /* HAP callers are allowed to save through the SDK as well */
     uint8_t keyBuf[] = "hapkey2";
     uint8_t dataBuf[] = "HAP-DER";
