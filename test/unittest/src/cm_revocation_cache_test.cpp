@@ -97,10 +97,12 @@ TEST_F(CmRevocationCacheTest, BuildRelPathHexKnownVectors)
 TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
 {
     char base[PATH_BUF_SIZE] = {0};
+    /* one shared base for every allowed caller: HAP and native read the same
+     * for-all-app location, only shell/unknown tokens stay rejected */
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, base, sizeof(base)), CM_SUCCESS);
-    EXPECT_STREQ(base, REVOCATION_CACHE_SANDBOX_BASE);
+    EXPECT_STREQ(base, REVOCATION_CACHE_BASE);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, base, sizeof(base)), CM_SUCCESS);
-    EXPECT_STREQ(base, REVOCATION_CACHE_SERVICE_BASE);
+    EXPECT_STREQ(base, REVOCATION_CACHE_BASE);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_SHELL, base, sizeof(base)),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(INVALID_REVOCATION_TYPE, base, sizeof(base)),

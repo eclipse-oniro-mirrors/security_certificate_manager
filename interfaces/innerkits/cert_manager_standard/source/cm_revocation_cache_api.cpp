@@ -54,15 +54,14 @@ extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenTyp
     if (basePath == nullptr || basePathLen == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    const char *base = nullptr;
-    if (tokenType == static_cast<int32_t>(ATokenTypeEnum::TOKEN_HAP)) {
-        base = REVOCATION_CACHE_SANDBOX_BASE;
-    } else if (tokenType == static_cast<int32_t>(ATokenTypeEnum::TOKEN_NATIVE)) {
-        base = REVOCATION_CACHE_SERVICE_BASE;
-    } else {
+    /* one shared base for every allowed caller: the for-all-app location is
+     * directly visible inside HAP sandboxes, so HAP and native readers use
+     * the same path; shell and unknown tokens stay rejected */
+    if (tokenType != static_cast<int32_t>(ATokenTypeEnum::TOKEN_HAP) &&
+        tokenType != static_cast<int32_t>(ATokenTypeEnum::TOKEN_NATIVE)) {
         return CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID;  /* TOKEN_SHELL / unknown rejected */
     }
-    if (strcpy_s(basePath, basePathLen, base) != EOK) {
+    if (strcpy_s(basePath, basePathLen, REVOCATION_CACHE_BASE) != EOK) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
     return CM_SUCCESS;

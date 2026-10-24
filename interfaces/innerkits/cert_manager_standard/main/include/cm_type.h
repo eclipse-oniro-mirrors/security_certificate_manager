@@ -105,8 +105,10 @@ extern "C" {
 #define CA_STORE_PATH_USER_SANDBOX_BASE   "/data/certificates/user_cacerts/"
 #define CA_STORE_PATH_USER_SERVICE_BASE   "/data/service/el1/public/cert_manager_service/certificates/user_open/"
 
-#define REVOCATION_CACHE_SANDBOX_BASE  "/data/certificates/revocation_cache/"
-#define REVOCATION_CACHE_SERVICE_BASE  \
+/* single shared base: the cache lives under for-all-app, which is directly
+ * visible inside every HAP sandbox, so callers no longer need a separate
+ * sandbox-view path */
+#define REVOCATION_CACHE_BASE  \
     "/data/service/el1/public/for-all-app/cert_manager_service/certificates/revocation/"
 #define CM_REVOCATION_CACHE_KEY_MAX_LEN    64
 /* hex-encoded key length: two chars per key byte, used for file names and RDB rows */

@@ -67,6 +67,11 @@ int64_t CmRevocationCacheDecodeInt64Be(const struct CmBlob *in8);
 int32_t CmRevocationCacheValidateSaveParams(const struct CmBlob *key, uint32_t type,
     const struct CmBlob *data, int64_t expireTimeUtc, int64_t *clampedExpireUtc);
 
+/*
+ * Writes the shared revocation cache base path for the given caller token
+ * type into basePath. HAP and native callers share one for-all-app base;
+ * shell and unknown token types are rejected.
+ */
 CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenType, char *basePath,
     uint32_t basePathLen);
 
