@@ -116,6 +116,10 @@ protected:
     int32_t Run() override;
 
 private:
+    void PrintCertHash(const struct FindCertInfo &info);
+    void PrintCertPem(const struct FindCertInfo &info);
+    void PrintCertInfo(const struct FindCertInfo &info, bool printHash, bool printPem);
+
     bool hasG_ = false;
     bool hasGU_ = false;
     std::string certName_;

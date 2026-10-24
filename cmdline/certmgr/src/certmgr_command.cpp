@@ -870,7 +870,7 @@ int32_t FindUserCACommand::ParseArgs(int argc, char *argv[])
             hasGU_ = true;
         } else if (arg == "-n") {
             if (i + 1 >= argc) {
-                WriteStdErr("Missing value for -n parameter\n");
+                WriteError(CM_CMD_ERR_PARAM_INVALID, "Missing value for -n parameter");
                 return CM_CMD_ERR_PARAM_INVALID;
             }
             i++;
@@ -878,14 +878,14 @@ int32_t FindUserCACommand::ParseArgs(int argc, char *argv[])
             hasName_ = true;
         } else if (arg == "-c") {
             if (i + 1 >= argc) {
-                WriteStdErr("Missing value for -c parameter\n");
+                WriteError(CM_CMD_ERR_PARAM_INVALID, "Missing value for -c parameter");
                 return CM_CMD_ERR_PARAM_INVALID;
             }
             i++;
             char *endPtr = nullptr;
             long val = strtol(argv[i], &endPtr, 10);
             if (endPtr == argv[i] || *endPtr != '\0') {
-                WriteStdErr("Invalid count value: " + std::string(argv[i]) + "\n");
+                WriteError(CM_CMD_ERR_PARAM_INVALID, "Invalid count value: " + std::string(argv[i]));
                 return CM_CMD_ERR_PARAM_INVALID;
             }
             certCount_ = static_cast<int32_t>(val);
@@ -894,7 +894,7 @@ int32_t FindUserCACommand::ParseArgs(int argc, char *argv[])
         } else if (arg == "-z") {
             printHash_ = true;
         } else {
-            WriteStdErr("Unknown parameter: " + arg + "\n");
+            WriteError(CM_CMD_ERR_PARAM_INVALID, "Unknown parameter: " + arg);
             WriteStdOut(HELP_FIND);
             return CM_CMD_ERR_PARAM_INVALID;
         }
@@ -906,13 +906,13 @@ int32_t FindUserCACommand::ParseArgs(int argc, char *argv[])
 int32_t FindUserCACommand::Validate()
 {
     if (hasG_ && hasGU_) {
-        WriteStdErr("Cannot specify both -g and -gu\n");
+        WriteError(CM_CMD_ERR_PARAM_INVALID, "Cannot specify both -g and -gu");
         return CM_CMD_ERR_PARAM_INVALID;
     }
     return 0;
 }
 
-static void PrintCertHash(const struct FindCertInfo &info)
+void FindUserCACommand::PrintCertHash(const struct FindCertInfo &info)
 {
     if (!info.certData.data || info.certData.size == 0) {
         return;
@@ -925,11 +925,11 @@ static void PrintCertHash(const struct FindCertInfo &info)
         WriteStdOut("SHA-256 hash: " + sha256Hex + "\n");
         WriteStdOut("SHA-1 hash: " + sha1Hex + "\n");
     } else {
-        WriteStdErr("Failed to compute certificate hash\n");
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to compute certificate hash");
     }
 }
 
-static void PrintCertPem(const struct FindCertInfo &info)
+void FindUserCACommand::PrintCertPem(const struct FindCertInfo &info)
 {
     if (!info.certData.data || info.certData.size == 0) {
         return;
@@ -940,11 +940,11 @@ static void PrintCertPem(const struct FindCertInfo &info)
     if (ret == CM_SUCCESS) {
         WriteStdOut("pem:\n" + pemStr);
     } else {
-        WriteStdErr("Failed to get PEM encoding\n");
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get PEM encoding");
     }
 }
 
-static void PrintCertInfo(const struct FindCertInfo &info, bool printHash, bool printPem)
+void FindUserCACommand::PrintCertInfo(const struct FindCertInfo &info, bool printHash, bool printPem)
 {
     WriteStdOut("URI: " + std::string(info.uri) + "\n");
     WriteStdOut("certType: userCA\n");
@@ -983,7 +983,7 @@ int32_t FindUserCACommand::Run()
 
     if (hasName_ && !certName_.empty()) {
         if (certName_.size() >= MAX_LEN_FIND_CERT_NAME) {
-            WriteStdErr("Name too long\n");
+            WriteError(CM_CMD_ERR_PARAM_INVALID, "Name too long");
             return CM_CMD_ERR_PARAM_INVALID;
         }
         (void)memcpy_s(request.name, MAX_LEN_FIND_CERT_NAME,
@@ -998,8 +998,8 @@ int32_t FindUserCACommand::Run()
 
     int32_t ret = CmFindCertificate(&request, &result);
     if (ret != CM_SUCCESS) {
-        WriteStdErr("Find failed: " + ConvertErrCodeToMsg(ret) + "\n");
-        return ret;
+        WriteError(MapSdkErrToCmdErr(ret), "Find failed");
+        return MapSdkErrToCmdErr(ret);
     }
 
     WriteStdOut("certificate count: " + std::to_string(result.count) + "\n");
