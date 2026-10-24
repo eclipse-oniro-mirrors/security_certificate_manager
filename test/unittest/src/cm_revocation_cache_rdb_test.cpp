@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unistd.h>
@@ -26,6 +27,7 @@
 #include "cm_config_rdb.h"
 #include "cm_mem.h"
 #include "cm_rdb_config.h"
+#include "cm_rdb_data_manager.h"
 #include "cm_revocation_cache_rdb.h"
 #include "securec.h"
 
@@ -47,6 +49,13 @@ constexpr int64_t META_VALUE_IN_CONFIG = 1729;          /* arbitrary meta value 
 constexpr uint64_t ACTIVE_SUM_SELF_SIZE = 100;          /* self row: must be excluded from its own query */
 constexpr uint64_t ACTIVE_SUM_OTHER_SIZE = 200;         /* other active row: always counted */
 constexpr uint64_t ACTIVE_SUM_THIRD_SIZE = 300;         /* third row: later marked logically deleted */
+
+/* legacy DDL from before the IS_DELETED column existed: a db written by an older
+ * build keeps this shape and must be rebuilt instead of failing every query */
+const char *LEGACY_REVOCATION_CACHE_DDL =
+    "CREATE TABLE IF NOT EXISTS revocation_cache(KEY TEXT NOT NULL, TYPE TEXT NOT NULL, "
+    "EXPIRE_TIME_UTC INTEGER NOT NULL, WRITE_TIME_UTC INTEGER NOT NULL, FILE_PATH TEXT NOT NULL, "
+    "DATA_SIZE INTEGER NOT NULL, PRIMARY KEY (KEY, TYPE))";
 
 /* snapshot of all cache rel-paths recorded in the RDB; nullopt when the query itself fails */
 std::optional<std::vector<std::string>> QueryCacheFilePaths()
@@ -111,6 +120,38 @@ TEST_F(CmRevocationCacheRdbTest, CreateInsertQueryDelete)
     EXPECT_STREQ(queried.type, "ocsp");
     EXPECT_STREQ(queried.filePath, "ocsp/616263.cache");
     ASSERT_EQ(DeleteRevocationCacheRecord("ocsp/616263.cache"), CM_SUCCESS);
+}
+
+TEST_F(CmRevocationCacheRdbTest, LegacyTableWithoutIsDeletedColumnIsRebuilt)
+{
+    using namespace OHOS::Security::CertManager;
+
+    /* simulate a db written by an older build: swap in the pre-IS_DELETED DDL */
+    RdbConfig dropCfg;
+    dropCfg.dbName = CERT_MANAGER_RDB_NAME;
+    dropCfg.tableName = REVOCATION_CACHE_TABLE_NAME;
+    dropCfg.createTableSql = "DROP TABLE IF EXISTS revocation_cache";
+    /* make_shared is mandatory: the manager takes shared_from_this on open */
+    auto dropMgr = std::make_shared<CmRdbDataManager>(dropCfg);
+    ASSERT_TRUE(dropMgr->CreateTable());
+
+    RdbConfig legacyCfg = dropCfg;
+    legacyCfg.createTableSql = LEGACY_REVOCATION_CACHE_DDL;
+    auto legacyMgr = std::make_shared<CmRdbDataManager>(legacyCfg);
+    ASSERT_TRUE(legacyMgr->CreateTable());
+
+    /* the create must self-heal the legacy table instead of returning success
+     * while every IS_DELETED statement keeps failing */
+    ASSERT_EQ(CreateRevocationCacheRdb(), CM_SUCCESS);
+
+    /* insert writes IS_DELETED explicitly and the sum queries it: on the legacy
+     * schema both failed with "no such column: IS_DELETED" */
+    struct RevocationCacheRecord r = { FIXED_EXPIRE_TIME_UTC, "6c656761", "ocsp",
+        "ocsp/6c656761.cache", RECORD_DATA_SIZE };
+    ASSERT_EQ(InsertRevocationCacheRecord(&r), CM_SUCCESS);
+    uint64_t total = 0;
+    ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
+    EXPECT_EQ(total, RECORD_DATA_SIZE);
 }
 
 TEST_F(CmRevocationCacheRdbTest, MetaRoundTrip)

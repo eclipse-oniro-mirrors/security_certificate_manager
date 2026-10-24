@@ -52,6 +52,47 @@ constexpr uint32_t REVOCATION_CACHE_META_VALUE_STR_LEN = 32;
 extern "C" {
 #endif
 
+/* tri-state probe of the live table schema: 1 = the stored DDL contains the
+ * column, 0 = the table exists without it (legacy schema), -1 = the schema
+ * could not be inspected; sqlite_master is read through a plain SELECT because
+ * multi-column PRAGMA statements are rejected by the rdb ExecuteSql path */
+static int32_t CheckRevocationCacheColumn(const std::string &column)
+{
+    std::string sql = std::string("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '") +
+        REVOCATION_CACHE_TABLE_NAME + "'";
+    auto resultSet = revocationCacheRdbDataManager->QueryBySql(sql, std::vector<NativeRdb::ValueObject>());
+    if (resultSet == nullptr) {
+        CM_LOG_E("query sqlite_master for revocation_cache ddl failed");
+        return -1;
+    }
+    int32_t rowCount = 0;
+    if (resultSet->GetRowCount(rowCount) != NativeRdb::E_OK) {
+        CM_LOG_E("GetRowCount for revocation_cache ddl failed");
+        resultSet->Close();
+        return -1;
+    }
+    if (rowCount <= 0) {
+        /* CREATE TABLE just reported success, so the missing sqlite_master row
+         * is not explainable here: report the legacy state and let the caller
+         * rebuild the table */
+        resultSet->Close();
+        return 0;
+    }
+    if (resultSet->GoToFirstRow() != NativeRdb::E_OK) {
+        CM_LOG_E("GoToFirstRow for revocation_cache ddl failed");
+        resultSet->Close();
+        return -1;
+    }
+    std::string ddl;
+    if (resultSet->GetString(0, ddl) != NativeRdb::E_OK) {
+        CM_LOG_E("GetString for revocation_cache ddl failed");
+        resultSet->Close();
+        return -1;
+    }
+    resultSet->Close();
+    return ddl.find(column) != std::string::npos ? 1 : 0;
+}
+
 int32_t CreateRevocationCacheRdb(void)
 {
     CM_LOG_D("enter CreateRevocationCacheRdb");
@@ -68,6 +109,34 @@ int32_t CreateRevocationCacheRdb(void)
     revocationCacheRdbDataManager = std::make_shared<CmRdbDataManager>(cacheConfig);
     if (!revocationCacheRdbDataManager->CreateTable()) {
         CM_LOG_E("Failed to create revocation_cache table");
+        revocationCacheRdbDataManager = nullptr;
+        return CMR_ERROR_CREATE_RDB_TABLE_FAIL;
+    }
+    /* CREATE TABLE IF NOT EXISTS also succeeds against a legacy table that
+     * predates the IS_DELETED column, while every IS_DELETED statement would
+     * fail at prepare time with "no such column"; the table holds derived
+     * cache data only, so self-heal by dropping and rebuilding it with the
+     * current schema (files losing their rows are reclaimed by the periodic
+     * orphan cleanup); init contexts are the only callers, so nothing races
+     * the drop */
+    int32_t columnState = CheckRevocationCacheColumn(COLUMN_IS_DELETED);
+    if (columnState == 1) {
+        return CM_SUCCESS;
+    }
+    if (columnState < 0) {
+        CM_LOG_E("Failed to inspect revocation_cache table schema");
+        revocationCacheRdbDataManager = nullptr;
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    CM_LOG_W("revocation_cache table predates the IS_DELETED column, rebuilding it");
+    std::string dropSql = std::string("DROP TABLE IF EXISTS ") + REVOCATION_CACHE_TABLE_NAME;
+    if (!revocationCacheRdbDataManager->ExecuteSql(dropSql, std::vector<NativeRdb::ValueObject>())) {
+        CM_LOG_E("Failed to drop outdated revocation_cache table");
+        revocationCacheRdbDataManager = nullptr;
+        return CMR_ERROR_CREATE_RDB_TABLE_FAIL;
+    }
+    if (!revocationCacheRdbDataManager->CreateTable()) {
+        CM_LOG_E("Failed to rebuild revocation_cache table");
         revocationCacheRdbDataManager = nullptr;
         return CMR_ERROR_CREATE_RDB_TABLE_FAIL;
     }
