@@ -1032,9 +1032,9 @@ TEST_F(CmRevocationCacheEngineTest, CleanupRemovesExpiredDeletedRow)
     EXPECT_NE(access(goneFull.c_str(), F_OK), 0);
 }
 
-TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
+TEST_F(CmRevocationCacheEngineTest, GetHapCallerSharesTheUnifiedBase)
 {
-    /* write an entry as native so the service-store file really exists */
+    /* write an entry as native so the shared-store file really exists */
     uint8_t keyBuf[] = "hapkey1";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
@@ -1042,12 +1042,14 @@ TEST_F(CmRevocationCacheEngineTest, GetHapCallerUsesSandboxBase)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
 
-    /* HAP callers read from their sandbox base and must not see the native entry */
+    /* one shared base: a HAP caller reads the same store and sees the entry */
     MockHapToken mockHap;
     struct CmBlob out = { 0, nullptr };
-    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CMR_ERROR_NOT_EXIST);
-    EXPECT_EQ(out.data, nullptr); /* out params must stay clean on failure */
-    EXPECT_EQ(out.size, 0u);
+    EXPECT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
+    ASSERT_NE(out.data, nullptr);
+    EXPECT_EQ(out.size, 1u);
+    EXPECT_EQ(out.data[0], 'D');
+    CmFreeRevocationCache(&out);
 }
 
 TEST_F(CmRevocationCacheEngineTest, AsyncSaveEventuallyPersists)
