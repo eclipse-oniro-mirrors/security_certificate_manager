@@ -53,7 +53,8 @@ constexpr int64_t FAR_FUTURE_SEC = 100LL * 24 * 3600; /* beyond the 30d cap: cla
 constexpr int64_t OLDER_EXPIRE_SEC = 60;    /* expire earlier than the new entry, still in the future */
 constexpr int64_t EXPIRE_TOLERANCE_SEC = 5; /* slack between the requested and the stored expire */
 constexpr uint32_t REL_PATH_BUF_SIZE = 512; /* comfortably above any built rel path */
-constexpr uint32_t ENCODED_NAME_PREFIX_LEN = 2; /* flip offset: craft an orphan name that differs from the real entry yet stays well-formed */
+/* flip offset: craft an orphan name that differs from the real entry yet stays well-formed */
+constexpr uint32_t ENCODED_NAME_PREFIX_LEN = 2;
 constexpr uint32_t FILE_READ_BUF_SIZE = 64; /* 8-byte header + payload of a persisted file */
 constexpr uint32_t TINY_FILE_LEN = 4;       /* deliberately below the 8-byte expire header */
 constexpr int NFTW_MAX_OPEN_FDS = 16;       /* max fds nftw may keep open while walking */
@@ -474,14 +475,14 @@ TEST_F(CmRevocationCacheEngineTest, GetSizingIsExactAtBlockBoundaries)
      * exactly one 4096-byte block, with 4089 it is one byte past; both must
      * read back byte-identical, the file size must never be taken from
      * block rounding */
-    constexpr uint32_t DATA_EXACT_BLOCK = 4088; /* 8 + 4088 = 4096 */
-    constexpr uint32_t DATA_PAST_BLOCK = 4089;  /* 8 + 4089 = 4097 */
+    constexpr uint32_t dataExactBlock = 4088; /* 8 + 4088 = 4096 */
+    constexpr uint32_t dataPastBlock = 4089;    /* 8 + 4089 = 4097 */
     uint8_t key1Buf[] = "blk4088";
     struct CmBlob key1 = { sizeof(key1Buf) - 1, key1Buf };
     uint8_t key2Buf[] = "blk4089";
     struct CmBlob key2 = { sizeof(key2Buf) - 1, key2Buf };
-    std::vector<uint8_t> data1(DATA_EXACT_BLOCK, 0x5a);
-    std::vector<uint8_t> data2(DATA_PAST_BLOCK, 0xa5);
+    std::vector<uint8_t> data1(dataExactBlock, 0x5a);
+    std::vector<uint8_t> data2(dataPastBlock, 0xa5);
     struct CmBlob blob1 = { static_cast<uint32_t>(data1.size()), data1.data() };
     struct CmBlob blob2 = { static_cast<uint32_t>(data2.size()), data2.data() };
     int64_t expire = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC;
@@ -617,10 +618,10 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicPersistsContent)
     ASSERT_FALSE(full.empty());
     std::string rel = full.substr(strlen(REVOCATION_CACHE_DIR));
     const uint8_t body[] = "RAWBODY";
-    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 8-byte body + 4 KiB page, 4 KiB aligned */
+    constexpr uint64_t accountedTwoBlocks = 8192; /* 8-byte body + 4 KiB page, 4 KiB aligned */
     uint64_t accounted = 0;
     ASSERT_EQ(CmRevocationCacheWriteAtomic(rel.c_str(), body, sizeof(body) - 1, &accounted), CM_SUCCESS);
-    EXPECT_EQ(accounted, ACCOUNTED_TWO_BLOCKS);
+    EXPECT_EQ(accounted, accountedTwoBlocks);
     FILE *fp = fopen(full.c_str(), "rb");
     ASSERT_NE(fp, nullptr);
     uint8_t readBack[sizeof(body) - 1] = { 0 }; /* exactly the body length: the read must fill it */
@@ -633,21 +634,21 @@ TEST_F(CmRevocationCacheEngineTest, WriteAtomicPersistsContent)
 TEST_F(CmRevocationCacheEngineTest, WriteAtomicAccountsAlignedSize)
 {
     /* accounted = payload + one 4 KiB metadata page, rounded up to 4 KiB */
-    constexpr uint32_t LEN_BELOW_BLOCK = 1;              /* payload under one block */
-    constexpr uint32_t LEN_EXACT_BLOCK = 4096;           /* exactly one block */
-    constexpr uint32_t LEN_PAST_BLOCK = 4097;            /* one byte past one block */
-    constexpr uint32_t LEN_SECOND_BLOCK_PARTIAL = 5000;  /* inside the second block */
-    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192;
-    constexpr uint64_t ACCOUNTED_THREE_BLOCKS = 12288;
-    uint8_t buf[LEN_SECOND_BLOCK_PARTIAL] = { 0 };
+    constexpr uint32_t lenBelowBlock = 1;              /* payload under one block */
+    constexpr uint32_t lenExactBlock = 4096;         /* exactly one block */
+    constexpr uint32_t lenPastBlock = 4097;          /* one byte past one block */
+    constexpr uint32_t lenSecondBlockPartial = 5000;  /* inside the second block */
+    constexpr uint64_t accountedTwoBlocks = 8192;
+    constexpr uint64_t accountedThreeBlocks = 12288;
+    uint8_t buf[lenSecondBlockPartial] = { 0 };
     const struct {
         uint32_t len;
         uint64_t accounted;
     } vectors[] = {
-        { LEN_BELOW_BLOCK, ACCOUNTED_TWO_BLOCKS },
-        { LEN_EXACT_BLOCK, ACCOUNTED_TWO_BLOCKS },
-        { LEN_PAST_BLOCK, ACCOUNTED_THREE_BLOCKS },
-        { LEN_SECOND_BLOCK_PARTIAL, ACCOUNTED_THREE_BLOCKS },
+        { lenBelowBlock, accountedTwoBlocks },
+        { lenExactBlock, accountedTwoBlocks },
+        { lenPastBlock, accountedThreeBlocks },
+        { lenSecondBlockPartial, accountedThreeBlocks },
     };
     std::vector<std::string> created;
     for (uint32_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
@@ -745,7 +746,7 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
     /* an expired record claiming the whole 2 MiB budget pushes the next save
      * over the accounted capacity limit and is reaped physically; the
      * unexpired logical branch has its own case (LogicalEvictionKeepsFile) */
-    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload: page + 8 bytes, aligned */
+    constexpr uint64_t accountedTwoBlocks = 8192; /* 9-byte payload: page + 8 bytes, aligned */
     struct RevocationCacheRecord big = { 0 };
     big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC; /* expired */
     const char *bigRel = "ocsp/cafe0000.cache";
@@ -760,7 +761,8 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
 
     /* keep the periodic cleanup out: it would reap the expired row before
      * the eviction branch under test sees it */
-    ASSERT_EQ(SetRevocationCacheMeta(static_cast<int64_t>(time(nullptr))), CM_SUCCESS);
+    int64_t nowSec = static_cast<int64_t>(time(nullptr));
+    ASSERT_EQ(SetRevocationCacheMeta(nowSec), CM_SUCCESS);
 
     uint8_t keyBuf[] = "evctkey";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
@@ -777,14 +779,14 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
     /* the surviving row bills its accounted size, not the raw payload length */
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
-    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+    EXPECT_EQ(total, accountedTwoBlocks);
 }
 
 TEST_F(CmRevocationCacheEngineTest, ResaveBillsOnceNeverEvictsOthers)
 {
     /* a re-save must never bill or evict for its own old row: the old row is
      * excluded from the active sum and from the eviction candidates */
-    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    constexpr uint64_t accountedTwoBlocks = 8192; /* 9-byte payload, aligned */
     uint8_t keyBuf[] = "reself1";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
@@ -794,7 +796,7 @@ TEST_F(CmRevocationCacheEngineTest, ResaveBillsOnceNeverEvictsOthers)
     /* DATA_SIZE holds the accounted size: one active row, nothing excluded */
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
-    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+    EXPECT_EQ(total, accountedTwoBlocks);
 
     /* a fake peer sized to exactly fill the rest of the budget: the store is
      * at capacity, so double-billing the self row would evict the peer */
@@ -804,7 +806,7 @@ TEST_F(CmRevocationCacheEngineTest, ResaveBillsOnceNeverEvictsOthers)
     (void)strncpy_s(peer.key, sizeof(peer.key), "70656572", strlen("70656572"));
     (void)strncpy_s(peer.type, sizeof(peer.type), "ocsp", strlen("ocsp"));
     (void)strncpy_s(peer.filePath, sizeof(peer.filePath), peerRel, strlen(peerRel));
-    peer.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES) - ACCOUNTED_TWO_BLOCKS;
+    peer.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES) - accountedTwoBlocks;
     ASSERT_EQ(InsertRevocationCacheRecord(&peer), CM_SUCCESS);
 
     /* the re-save succeeds and the peer survives: the self row is replaced by
@@ -822,7 +824,7 @@ TEST_F(CmRevocationCacheEngineTest, LogicalEvictionKeepsFile)
 {
     /* an unexpired oversized row is logically evicted: the row leaves the
      * active accounting but the file stays on disk for late readers */
-    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    constexpr uint64_t accountedTwoBlocks = 8192; /* 9-byte payload, aligned */
     const char *bigRel = "ocsp/6c6f6769.cache"; /* hex("logi") */
     struct RevocationCacheRecord big = { 0 };
     big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC; /* unexpired */
@@ -845,7 +847,7 @@ TEST_F(CmRevocationCacheEngineTest, LogicalEvictionKeepsFile)
     /* the row no longer bills capacity ... */
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
-    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+    EXPECT_EQ(total, accountedTwoBlocks);
     /* ... but the path stays queryable and the file stays on disk */
     const auto paths = QueryCacheFilePaths();
     ASSERT_NE(paths, std::nullopt);
@@ -857,7 +859,7 @@ TEST_F(CmRevocationCacheEngineTest, ResaveResurrectsDeletedRow)
 {
     /* a re-save after logical deletion resurrects the row: the REPLACE insert
      * writes IS_DELETED = 0 and the new accounted size bills again */
-    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    constexpr uint64_t accountedTwoBlocks = 8192; /* 9-byte payload, aligned */
     uint8_t keyBuf[] = "rsrkey1";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
@@ -877,7 +879,7 @@ TEST_F(CmRevocationCacheEngineTest, ResaveResurrectsDeletedRow)
     ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
         static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
     ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
-    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+    EXPECT_EQ(total, accountedTwoBlocks);
     /* and the entry reads back */
     struct CmBlob out = { 0, nullptr };
     ASSERT_EQ(CmGetRevocationCache(key, CM_REVOCATION_TYPE_OCSP, &out), CM_SUCCESS);
@@ -889,7 +891,7 @@ TEST_F(CmRevocationCacheEngineTest, RaceRegressionExpiredSelfRowSurvives)
     /* race regression: an expired row for the very key being re-saved must
      * never be an eviction candidate, or the physical branch would unlink
      * the just-renamed new file at the same path */
-    constexpr uint64_t ACCOUNTED_TWO_BLOCKS = 8192; /* 9-byte payload, aligned */
+    constexpr uint64_t accountedTwoBlocks = 8192; /* 9-byte payload, aligned */
     uint8_t keyBuf[] = "racekey1";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     char selfRel[REL_PATH_BUF_SIZE] = { 0 };
@@ -922,7 +924,8 @@ TEST_F(CmRevocationCacheEngineTest, RaceRegressionExpiredSelfRowSurvives)
 
     /* the periodic cleanup must NOT run first: it would mask the race by
      * reaping the expired row before the eviction could see it */
-    ASSERT_EQ(SetRevocationCacheMeta(static_cast<int64_t>(time(nullptr))), CM_SUCCESS);
+    int64_t nowSec = static_cast<int64_t>(time(nullptr));
+    ASSERT_EQ(SetRevocationCacheMeta(nowSec), CM_SUCCESS);
 
     /* re-save: the new file lands on the very path the expired row points to */
     uint8_t newBody[] = "NEWFILE";
@@ -943,7 +946,7 @@ TEST_F(CmRevocationCacheEngineTest, RaceRegressionExpiredSelfRowSurvives)
     EXPECT_NE(std::find(paths->begin(), paths->end(), selfRel), paths->end());
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
-    EXPECT_EQ(total, ACCOUNTED_TWO_BLOCKS);
+    EXPECT_EQ(total, accountedTwoBlocks);
 }
 
 TEST_F(CmRevocationCacheEngineTest, EvictBoundaryExpireEqualsNow)
@@ -964,7 +967,8 @@ TEST_F(CmRevocationCacheEngineTest, EvictBoundaryExpireEqualsNow)
 
     /* keep the periodic cleanup out: it spares expire == now, the eviction
      * branch under test must not */
-    ASSERT_EQ(SetRevocationCacheMeta(static_cast<int64_t>(time(nullptr))), CM_SUCCESS);
+    int64_t nowSec = static_cast<int64_t>(time(nullptr));
+    ASSERT_EQ(SetRevocationCacheMeta(nowSec), CM_SUCCESS);
     uint8_t keyBuf[] = "edgkey1";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
     uint8_t dataBuf[] = "D";
