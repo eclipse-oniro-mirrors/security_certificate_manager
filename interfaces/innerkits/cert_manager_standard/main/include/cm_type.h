@@ -108,6 +108,8 @@ extern "C" {
 #define REVOCATION_CACHE_SANDBOX_BASE  "/data/certificates/revocation_cache/"
 #define REVOCATION_CACHE_SERVICE_BASE  "/data/service/el1/public/cert_manager_service/certificates/revocation_cache/"
 #define CM_REVOCATION_CACHE_KEY_MAX_LEN    64
+/* hex-encoded key length: two chars per key byte, used for file names and RDB rows */
+#define CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN (CM_REVOCATION_CACHE_KEY_MAX_LEN * 2)
 #define CM_REVOCATION_CACHE_DATA_MAX_LEN   (300 * 1024)
 #define CM_REVOCATION_CACHE_MAX_VALID_SEC  (30 * 24 * 60 * 60)
 

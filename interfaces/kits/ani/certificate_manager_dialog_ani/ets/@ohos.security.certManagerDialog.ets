@@ -34,6 +34,7 @@ interface InstallDialogParams {
   certType: certificateManagerDialog.CertificateType;
   certScope: certificateManagerDialog.CertificateScope;
   certStr: string;
+  keystorePwd?: string;
 }
 
 native function openUninstallCertificateDialogNative(
@@ -147,6 +148,7 @@ export namespace certificateManagerDialog {
     ERROR_NOT_COMPLY_SECURITY_POLICY = 29700005,
     ERROR_PARAMETER_VALIDATION_FAILED = 29700006,
     ERROR_NO_AVAILABLE_CERTIFICATE = 29700007,
+    ERROR_PASSWORD_IS_INCORRECT = 29700008,
     ERROR_OPERATION_TIMEOUT = 29700009,
     ERROR_NOT_CONCURRENT_SUPPORT = 29700010,
   }
@@ -174,13 +176,23 @@ export namespace certificateManagerDialog {
 
   const MIN_DATA_LEN: double = 1;
   const MAX_DATA_LEN: double = 0x6400000;
+  const KEYSTORE_PWD_MAX_LEN: double = 128;
+  /* wrong parameter types -> 401; value range or length violations -> 29700006 */
+  const PARAM_TYPE_INVALID: int = 401;
+  const PARAM_VALIDATION_FAILED: int = 29700006;
 
-  function checkBufferLen(buffer: Uint8Array, minLen: double, maxLen: double): void {
+  function throwParamError(errCode: int): void {
+    let error = new BusinessError();
+    error.code = errCode;
+    error.message = errCode === PARAM_TYPE_INVALID ? 'the input parameters is invalid.' :
+      'the input parameters validation failed.';
+    throw error;
+  }
+
+  function checkBufferLen(buffer: Uint8Array, minLen: double, maxLen: double,
+    errCode: int = PARAM_TYPE_INVALID): void {
     if (buffer.length < minLen || buffer.length > maxLen) {
-      let error = new BusinessError();
-      error.code = 401;
-      error.message = 'the input parameters is invalid.';
-      throw error;
+      throwParamError(errCode);
     }
   }
 
@@ -193,13 +205,32 @@ export namespace certificateManagerDialog {
     }
   }
 
-  function checkInstallCertType(certType: CertificateType): void {
+  /* UTF-8 encoded byte length of str; keystorePwd is limited to KEYSTORE_PWD_MAX_LEN
+   * bytes rather than UTF-16 code units, and the check allocates no extra copy
+   * of the sensitive string */
+  function getUtf8ByteLen(str: string): number {
+    let byteLen = 0;
+    for (let i = 0; i < str.length; i++) {
+      const code: number = str.charCodeAt(i);
+      if (code < 0x80) {
+        byteLen += 1;
+      } else if (code < 0x800) {
+        byteLen += 2;
+      } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length &&
+        str.charCodeAt(i + 1) >= 0xdc00 && str.charCodeAt(i + 1) <= 0xdfff) {
+        byteLen += 4;
+        i++;
+      } else {
+        byteLen += 3;
+      }
+    }
+    return byteLen;
+  }
+
+  function checkInstallCertType(certType: CertificateType, errCode: int = PARAM_TYPE_INVALID): void {
     if (certType !== CertificateType.CA_CERT && certType !== CertificateType.CREDENTIAL_USER &&
       certType !== CertificateType.CREDENTIAL_SYSTEM) {
-      let error = new BusinessError();
-      error.code = 401;
-      error.message = 'the input parameters is invalid.';
-      throw error;
+      throwParamError(errCode);
     }
   }
 
@@ -241,6 +272,56 @@ export namespace certificateManagerDialog {
           certScope: certScope,
           certStr: certStringBase64
         }, callback);
+        if (result.code !== 0) {
+          let err = new BusinessError();
+          err.code = result.code;
+          err.message = result.message;
+          reject(err);
+        }
+    });
+  }
+
+  export interface InstallCertificateRequest {
+    certType: certificateManagerDialog.CertificateType;
+    certScope: certificateManagerDialog.CertificateScope;
+    cert: Uint8Array;
+    keystorePwd?: string;
+  }
+
+  export function openInstallCertificateDialog(context: common.Context,
+    request: InstallCertificateRequest): Promise<string> {
+    if (request.certType === undefined || request.certScope === undefined || request.cert === undefined) {
+      throwParamError(PARAM_TYPE_INVALID);
+    }
+    /* range or length violations of the request overload throw 29700006 */
+    checkInstallCertType(request.certType, PARAM_VALIDATION_FAILED);
+    checkBufferLen(request.cert, MIN_DATA_LEN, MAX_DATA_LEN, PARAM_VALIDATION_FAILED);
+    let keystorePwd: string | undefined = request.keystorePwd;
+    if (keystorePwd !== undefined && getUtf8ByteLen(keystorePwd) > KEYSTORE_PWD_MAX_LEN) {
+      throwParamError(PARAM_VALIDATION_FAILED);
+    }
+    return new Promise<string>((resolve, reject: (error: BusinessError) => void) => {
+        let callback = new AsyncCallbackWrapper<string>((err: BusinessError | null, data: string | undefined) => {
+            if (err?.code !== 0) {
+                reject(err as BusinessError);
+            } else {
+                resolve(data?? '');
+            }
+        });
+        // convert cert data to base64 string
+        let base64Helper = new util.Base64Helper();
+        let certStringBase64 = base64Helper.encodeToStringSync(request.cert, util.Type.BASIC);
+        let params: InstallDialogParams = {
+          certType: request.certType,
+          certScope: request.certScope,
+          certStr: certStringBase64
+        };
+        // an empty keystorePwd is a valid provided password; only absence
+        // (undefined) means "not provided"
+        if (keystorePwd !== undefined) {
+          params.keystorePwd = keystorePwd;
+        }
+        let result: NativeResult<void> = openInstallCertificateDialogNative(context, params, callback);
         if (result.code !== 0) {
           let err = new BusinessError();
           err.code = result.code;

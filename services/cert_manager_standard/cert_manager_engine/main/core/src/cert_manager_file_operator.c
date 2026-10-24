@@ -30,6 +30,7 @@
 #include "cert_manager_storage.h"
 #include "cert_manager_updateflag.h"
 #include "cm_log.h"
+#include "cm_revocation_cache.h"
 
 static int32_t GetFileName(const char *path, const char *fileName, char *fullFileName, uint32_t fullFileNameLen)
 {
@@ -633,31 +634,53 @@ int32_t CmDirRemove(const char *path)
     return DirRemove(path);
 }
 
-static int32_t WriteAllToFd(int fd, const uint8_t *buf, uint32_t len)
+/*
+ * Writes the payload to the tmp file through stdio and pushes it to disk.
+ * fileno() is used only to pin the file mode and to fsync: the mode must stay
+ * 0644 regardless of the umask, and crash consistency after the rename needs
+ * the data on disk, not just inside the stdio buffer.
+ */
+static int32_t WriteTmpFile(const char *tmpPath, const uint8_t *buf, uint32_t len)
 {
-    uint32_t written = 0;
-    while (written < len) {
-        ssize_t n = write(fd, buf + written, len - written);
-        if (n < 0) {
-            if (errno != EINTR) {
-                CM_LOG_E("write tmp file failed, errno = 0x%x", errno);
-                return CMR_ERROR_WRITE_FILE_FAIL;
-            }
-            continue;
-        }
-        if (n == 0) {
-            CM_LOG_E("write tmp file made no progress");
-            return CMR_ERROR_WRITE_FILE_FAIL;
-        }
-        written += (uint32_t)n;
+    FILE *fp = fopen(tmpPath, "wb");
+    if (fp == NULL) {
+        CM_LOG_E("open tmp file failed, errno = 0x%x", errno);
+        return CMR_ERROR_OPEN_FILE_FAIL;
     }
-    while (fsync(fd) < 0) {
+    /* pin the mode regardless of the process umask: a cache file must never
+     * become group/world writable, or readers could be fed tampered data */
+    if (fchmod(fileno(fp), S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) != 0) {
+        CM_LOG_E("set tmp file mode failed, errno = 0x%x", errno);
+        (void)fclose(fp);
+        (void)unlink(tmpPath);
+        return CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    int32_t ret = CMR_OK;
+    if (fwrite(buf, 1, len, fp) != (size_t)len) {
+        CM_LOG_E("write tmp file failed, errno = 0x%x", errno);
+        ret = CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    if ((ret == CMR_OK) && (fflush(fp) != 0)) {
+        CM_LOG_E("flush tmp file failed, errno = 0x%x", errno);
+        ret = CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    while (ret == CMR_OK) {
+        if (fsync(fileno(fp)) == 0) {
+            break;
+        }
         if (errno != EINTR) {
-            CM_LOG_E("sync file failed, errno = 0x%x", errno);
-            return CMR_ERROR_WRITE_FILE_FAIL;
+            CM_LOG_E("sync tmp file failed, errno = 0x%x", errno);
+            ret = CMR_ERROR_WRITE_FILE_FAIL;
         }
     }
-    return CMR_OK;
+    if ((fclose(fp) != 0) && (ret == CMR_OK)) {
+        CM_LOG_E("close tmp file failed, errno = 0x%x", errno);
+        ret = CMR_ERROR_WRITE_FILE_FAIL;
+    }
+    if (ret != CMR_OK) {
+        (void)unlink(tmpPath);
+    }
+    return ret;
 }
 
 static void SyncParentDir(const char *fullPath)
@@ -678,12 +701,35 @@ static void SyncParentDir(const char *fullPath)
     }
 }
 
+/*
+ * The parent directory of the cache file must resolve inside the cache root;
+ * this also fails closed when the directory is missing or symlinked.
+ */
+static int32_t CheckParentDirUnderRoot(const char *fullPath)
+{
+    char parentDir[PATH_MAX] = {0};
+    if (strcpy_s(parentDir, sizeof(parentDir), fullPath) != EOK) {
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+    char *lastSlash = strrchr(parentDir, '/');
+    if (lastSlash == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    *lastSlash = '\0';
+    if (CmRevocationCacheCheckPathUnderRoot(REVOCATION_CACHE_DIR, parentDir) != CM_SUCCESS) {
+        return CMR_ERROR_OPEN_FILE_FAIL;
+    }
+    return CMR_OK;
+}
+
 int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len)
 {
     if (relPath == NULL || buf == NULL || len == 0) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    if (relPath[0] == '/' || strstr(relPath, "..") != NULL) {
+    /* validate before use: only the strict cache sub-path grammar is
+     * accepted, so the write can never escape the cache root */
+    if (CmRevocationCacheValidateRelPath(relPath) != CM_SUCCESS) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     char fullPath[PATH_MAX] = {0};
@@ -692,24 +738,21 @@ int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, ui
     if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
+    ret = CheckParentDirUnderRoot(fullPath);
+    if (ret != CMR_OK) {
+        return ret;
+    }
     char tmpPath[PATH_MAX] = {0};
     ret = snprintf_s(tmpPath, sizeof(tmpPath), sizeof(tmpPath) - 1, "%s.tmp", fullPath);
     if (ret < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
-    int fd = open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
-        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    if (fd < 0) {
-        CM_LOG_E("open tmp file failed, errno = 0x%x", errno);
-        return CMR_ERROR_OPEN_FILE_FAIL;
-    }
-    uint64_t newTag = CreateFdsanOwnTag(&fd);
-    fdsan_exchange_owner_tag(fd, 0, newTag);
-    int32_t writeRet = WriteAllToFd(fd, buf, len);
-    fdsan_close_with_tag(fd, newTag);
-    if (writeRet != CMR_OK) {
-        (void)unlink(tmpPath);
-        return writeRet;
+    /* a leftover tmp must never be followed: remove it so the write always
+     * starts from a fresh regular file (the save lock keeps this race-free) */
+    (void)unlink(tmpPath);
+    ret = WriteTmpFile(tmpPath, buf, len);
+    if (ret != CMR_OK) {
+        return ret;
     }
     if (rename(tmpPath, fullPath) != 0) {
         CM_LOG_E("rename tmp file failed, errno = 0x%x", errno);

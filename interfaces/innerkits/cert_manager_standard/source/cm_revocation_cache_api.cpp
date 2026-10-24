@@ -68,44 +68,46 @@ extern "C" CM_API_EXPORT int32_t CmRevocationCacheBuildBasePath(int32_t tokenTyp
     return CM_SUCCESS;
 }
 
-static int32_t CmReadRevocationCacheFile(const char *fullPath, struct CmBlob *data)
+/* sizes the open cache file and rewinds it; the expire header must fit */
+static int32_t GetCacheFileSize(FILE *fp, long *fileSize)
 {
-    int fd = open(fullPath, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) {
+    if (fseek(fp, 0, SEEK_END) != 0) {
         return CMR_ERROR_NOT_EXIST;
     }
-
-    struct stat st;
-    if (fstat(fd, &st) != 0 || st.st_size < static_cast<off_t>(sizeof(int64_t))) {
-        (void)close(fd);
+    long size = ftell(fp);
+    if (size < static_cast<long>(sizeof(int64_t))) {
         return CMR_ERROR_NOT_EXIST;
     }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        return CMR_ERROR_NOT_EXIST;
+    }
+    *fileSize = size;
+    return CM_SUCCESS;
+}
 
+/* reads the expire header and the DER body; data is allocated only on success */
+static int32_t ReadCacheContent(FILE *fp, long fileSize, struct CmBlob *data)
+{
     uint8_t buf8[sizeof(int64_t)] = { 0 };
-    if (pread(fd, buf8, sizeof(buf8), 0) != static_cast<ssize_t>(sizeof(buf8))) {
-        (void)close(fd);
+    if (fread(buf8, 1, sizeof(buf8), fp) != sizeof(buf8)) {
         return CMR_ERROR_READ_FILE_ERROR;
     }
-    int64_t expire = CmRevocationCacheDecodeInt64Be(buf8);
-    if (expire <= static_cast<int64_t>(time(nullptr))) {
-        (void)close(fd);
+    struct CmBlob expireBlob = { sizeof(buf8), buf8 };
+    if (CmRevocationCacheDecodeInt64Be(&expireBlob) <= static_cast<int64_t>(time(nullptr))) {
         return CMR_ERROR_NOT_EXIST;
     }
 
-    int64_t derLen = static_cast<int64_t>(st.st_size) - static_cast<int64_t>(sizeof(int64_t));
-    if (derLen <= 0 || derLen > MAX_OUT_BLOB_SIZE) {
-        (void)close(fd);
+    long derLen = fileSize - static_cast<long>(sizeof(int64_t));
+    if (derLen <= 0 || derLen > static_cast<long>(MAX_OUT_BLOB_SIZE)) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
     data->data = static_cast<uint8_t *>(CmMalloc(static_cast<size_t>(derLen)));
     if (data->data == nullptr) {
-        (void)close(fd);
         return CMR_ERROR_MALLOC_FAIL;
     }
     data->size = static_cast<uint32_t>(derLen);
-    ssize_t rd = pread(fd, data->data, static_cast<size_t>(derLen), static_cast<off_t>(sizeof(int64_t)));
-    (void)close(fd);
-    if (rd != static_cast<ssize_t>(derLen)) {
+    size_t rd = fread(data->data, 1, static_cast<size_t>(derLen), fp);
+    if (rd != static_cast<size_t>(derLen)) {
         (void)memset_s(data->data, data->size, 0, data->size);
         CmFree(data->data);
         data->data = nullptr;
@@ -113,6 +115,26 @@ static int32_t CmReadRevocationCacheFile(const char *fullPath, struct CmBlob *da
         return CMR_ERROR_READ_FILE_ERROR;
     }
     return CM_SUCCESS;
+}
+
+static int32_t CmReadRevocationCacheFile(const char *basePath, const char *fullPath, struct CmBlob *data)
+{
+    /* normalize before use: a cache entry must never resolve outside its root,
+     * which blocks symlinked entries planted in the shared directory */
+    if (CmRevocationCacheCheckPathUnderRoot(basePath, fullPath) != CM_SUCCESS) {
+        return CMR_ERROR_NOT_EXIST;
+    }
+    FILE *fp = fopen(fullPath, "rb");
+    if (fp == nullptr) {
+        return CMR_ERROR_NOT_EXIST;
+    }
+    long fileSize = 0;
+    int32_t ret = GetCacheFileSize(fp, &fileSize);
+    if (ret == CM_SUCCESS) {
+        ret = ReadCacheContent(fp, fileSize, data);
+    }
+    (void)fclose(fp);
+    return ret;
 }
 
 extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, enum CmRevocationType type,
@@ -145,12 +167,16 @@ extern "C" CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, e
         return ret;
     }
 
+    if (CmRevocationCacheValidateRelPath(relPath) != CM_SUCCESS) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
     char fullPath[CERT_MAX_PATH_LEN] = { 0 };
     int n = snprintf_s(fullPath, sizeof(fullPath), sizeof(fullPath) - 1, "%s%s", basePath, relPath);
     if (n < 0) {
         return CMR_ERROR_BUFFER_TOO_SMALL;
     }
-    return CmReadRevocationCacheFile(fullPath, data);
+    return CmReadRevocationCacheFile(basePath, fullPath, data);
 }
 
 extern "C" CM_API_EXPORT void CmFreeRevocationCache(struct CmBlob *data)

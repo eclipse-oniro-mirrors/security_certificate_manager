@@ -20,6 +20,8 @@
 #include "cm_log.h"
 #include "cm_dialog_api_common.h"
 
+#include "securec.h"
+
 namespace OHOS::Security::CertManager::Ani {
 using namespace Dialog;
 CmOpenInstallDialog::CmOpenInstallDialog(ani_env *env, ani_object aniContext, ani_object callback,
@@ -41,14 +43,21 @@ CmOpenInstallDialog::CmOpenInstallDialog(ani_env *env, ani_object aniContext, an
     if (status != ANI_OK) {
         CM_LOG_E("get param certStr error. status = %d", static_cast<int32_t>(status));
     }
+    /* keystorePwd is optional since 26.2.0; absence or undefined (historical
+     * callers) is normal, keep the ref nullptr and skip the parse below. */
+    status = env->Object_GetPropertyByName_Ref(params, "keystorePwd",
+        reinterpret_cast<ani_ref *>(&this->aniKeystorePwd));
+    if (status != ANI_OK) {
+        this->aniKeystorePwd = nullptr;
+    }
 }
 
-int32_t CmOpenInstallDialog::GetParamsFromEnv()
+int32_t CmOpenInstallDialog::ParseCertType()
 {
     int32_t aniCertType = 0;
     if (env->EnumItem_GetValue_Int(this->aniCertType, (ani_int *)&aniCertType) != ANI_OK) {
         CM_LOG_E("get certType value failed.");
-        return CMR_ERROR_INVALID_ARGUMENT;
+        return CMR_DIALOG_ERROR_PARAM_INVALID; /* wrong type -> 401 */
     }
     certType = static_cast<CmCertificateType>(aniCertType);
     if (certType == CA_CERT && !IsEnableCACertDialog()) {
@@ -67,19 +76,56 @@ int32_t CmOpenInstallDialog::GetParamsFromEnv()
             this->pageType = CmDialogPageType::PAGE_INSTALL_CA_GUIDE;
             break;
         default:
-            return CMR_ERROR_INVALID_ARGUMENT;
+            /* value out of the supported range -> 29700006 */
+            return CMR_DIALOG_ERROR_PARAMETER_VALIDATION_FAILED;
+    }
+    return CM_SUCCESS;
+}
+
+int32_t CmOpenInstallDialog::ParseKeystorePwdParam()
+{
+    if (this->aniKeystorePwd == nullptr || AniUtils::IsUndefined(env,
+        reinterpret_cast<ani_object>(this->aniKeystorePwd))) {
+        return CM_SUCCESS; /* not provided */
+    }
+    int32_t ret = AniUtils::ParseString(env, reinterpret_cast<ani_string>(this->aniKeystorePwd), this->keystorePwd);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("parse keystorePwd failed, ret = %d", ret);
+        return CMR_DIALOG_ERROR_PARAM_INVALID;
+    }
+    /* the blob carries the terminating NUL; size == 1 is a valid empty
+     * password, which still counts as provided */
+    if (this->keystorePwd.size > static_cast<uint32_t>(KEYSTORE_PWD_MAX_LEN) + 1) {
+        CM_LOG_E("keystorePwd is too long");
+        /* over-length -> 29700006 */
+        return CMR_DIALOG_ERROR_PARAMETER_VALIDATION_FAILED;
+    }
+    this->hasKeystorePwd = true;
+    return CM_SUCCESS;
+}
+
+int32_t CmOpenInstallDialog::GetParamsFromEnv()
+{
+    int32_t ret = ParseCertType();
+    if (ret != CM_SUCCESS) {
+        return ret;
     }
 
     int32_t aniCertScope = 0;
     if (env->EnumItem_GetValue_Int(this->aniCertScope, (ani_int *)&aniCertScope) != ANI_OK) {
         CM_LOG_E("get certScope value failed.");
-        return CMR_ERROR_INVALID_ARGUMENT;
+        return CMR_DIALOG_ERROR_PARAM_INVALID; /* wrong type -> 401 */
     }
     this->certScope = static_cast<CertificateScope>(aniCertScope);
 
-    int32_t ret = AniUtils::ParseString(env, this->aniCert, this->cert);
+    ret = AniUtils::ParseString(env, this->aniCert, this->cert);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("parse cert failed, ret = %d", ret);
+        return ret;
+    }
+
+    ret = ParseKeystorePwdParam();
+    if (ret != CM_SUCCESS) {
         return ret;
     }
 
@@ -112,6 +158,16 @@ int32_t CmOpenInstallDialog::InvokeAsyncWork()
     want.SetParam(CERT_MANAGER_CALLER_BUNDLENAME, labelName);
     want.SetParam(PARAM_UI_EXTENSION_TYPE, SYS_COMMON_UI);
     want.SetParam(CERT_MANAGER_OPERATION_TYPE, static_cast<int32_t>(DIALOG_OPERATION_INSTALL));
+    if (this->hasKeystorePwd && this->keystorePwd.data != nullptr) {
+        /* delivered to CertPickerUIExtAbility when the caller provides the keystore
+         * password; an empty string is a valid provided password */
+        std::string keystorePwd(reinterpret_cast<char *>(this->keystorePwd.data), this->keystorePwd.size - 1);
+        want.SetParam(CERT_MANAGER_KEYSTORE_PWD, keystorePwd);
+        /* scrub the local copy; the member blob is scrubbed in OnFinish */
+        if (!keystorePwd.empty()) {
+            (void)memset_s(&keystorePwd[0], keystorePwd.size(), 0, keystorePwd.size());
+        }
+    }
 
     auto uiExtensionCallback = std::make_shared<CmAniUIExtensionCallbackString>(this->vm, this->abilityContext,
         this->globalCallback, this->metricsReport_);
@@ -126,6 +182,11 @@ int32_t CmOpenInstallDialog::UnpackResult()
 
 void CmOpenInstallDialog::OnFinish()
 {
+    if (this->keystorePwd.data != nullptr && this->keystorePwd.size > 0) {
+        /* keystore password is sensitive; scrub before free */
+        (void)memset_s(this->keystorePwd.data, this->keystorePwd.size, 0, this->keystorePwd.size);
+    }
+    CM_FREE_BLOB(this->keystorePwd);
     CM_FREE_BLOB(this->cert);
     return;
 }

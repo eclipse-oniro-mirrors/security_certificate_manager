@@ -28,11 +28,17 @@ private:
     ani_enum_item aniCertType = nullptr;
     ani_enum_item aniCertScope = nullptr;
     ani_string aniCert = nullptr;
+    ani_ref aniKeystorePwd = nullptr; /* optional since 26.2.0, absent for historical callers */
     /* parsed params */
     CmDialogPageType pageType = PAGE_MAIN;
     CmCertificateType certType = CREDENTIAL_INVALID_TYPE;
     CertificateScope certScope = NOT_SPECIFIED;
     CmBlob cert = { 0 };
+    CmBlob keystorePwd = { 0 }; /* carries the terminating NUL; scrubbed in OnFinish */
+    bool hasKeystorePwd = false;
+
+    int32_t ParseCertType();
+    int32_t ParseKeystorePwdParam();
 public:
     CmOpenInstallDialog(ani_env *env, ani_object aniContext, ani_object callback, ani_object params);
     ~CmOpenInstallDialog() {};
