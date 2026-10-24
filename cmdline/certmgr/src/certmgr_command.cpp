@@ -644,6 +644,7 @@ std::unique_ptr<CertMgrCommand> CertMgrCommand::Create(const std::string &name)
         SetCommandName("installUserCA");
         return std::make_unique<InstallUserCACommand>();
     } else if (name == "findUserCA") {
+        SetCommandName("findUserCA");
         return std::make_unique<FindUserCACommand>();
     }
     return nullptr;

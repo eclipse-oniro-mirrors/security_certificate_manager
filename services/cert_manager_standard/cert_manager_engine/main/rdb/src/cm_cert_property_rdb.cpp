@@ -239,7 +239,7 @@ int32_t QueryCertProperty(const char *uri, struct CertProperty *certProperty)
         return CMR_ERROR_QUERY_RDB_DATA_FAIL;
     }
 
-    CmScoprGuard stateGuard([&] { absSharedResultSet->Close(); });
+    CmScoprGuard stateGuard([&absSharedResultSet] { absSharedResultSet->Close(); });
     int rowCount = 0;
     int ret = absSharedResultSet->GetRowCount(rowCount);
     if (ret != NativeRdb::E_OK) {
@@ -371,7 +371,7 @@ int32_t QueryCertPropertyByCondition(const struct CmFindCertCondition *condition
         return CMR_ERROR_QUERY_RDB_DATA_FAIL;
     }
 
-    CmScoprGuard stateGuard([&] { absSharedResultSet->Close(); });
+    CmScoprGuard stateGuard([&absSharedResultSet] { absSharedResultSet->Close(); });
     return ReadCertPropertiesFromResultSet(absSharedResultSet, results, resultCount);
 }
  
