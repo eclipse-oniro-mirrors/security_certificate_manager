@@ -39,17 +39,25 @@ static const char *SUPPORTED_KEY_DEFAULT_CONFIG = "installGlobalUserCA_defaultCo
 static const char *SUPPORTED_KEY_ENABLE_LIST = "enableInstallGlobalUserCA_userList";
 static const char *SUPPORTED_KEY_DISABLE_LIST = "disableInstallGlobalUserCA_userList";
 
-static struct CmConfigItem g_setItems[3];
+static constexpr uint32_t SET_ITEM_COUNT = 3;
+static constexpr uint32_t INDEX_DEFAULT_CONFIG = 0;
+static constexpr uint32_t INDEX_ENABLE_LIST = 1;
+static constexpr uint32_t INDEX_DISABLE_LIST = 2;
+static constexpr const char *CONFIG_VALUE_DISABLE = "disable";
+static constexpr const char *CONFIG_VALUE_ENABLE_LIST = "100,200";
+static constexpr const char *CONFIG_VALUE_DISABLE_LIST = "300";
+
+static struct CmConfigItem g_setItems[SET_ITEM_COUNT];
 
 static void InitSetItems()
 {
     (void)memset_s(g_setItems, sizeof(g_setItems), 0, sizeof(g_setItems));
-    (void)strcpy_s(g_setItems[0].key, MAX_LEN_CONFIG_KEY, SUPPORTED_KEY_DEFAULT_CONFIG);
-    (void)strcpy_s(g_setItems[0].value, MAX_LEN_CONFIG_VALUE, "disable");
-    (void)strcpy_s(g_setItems[1].key, MAX_LEN_CONFIG_KEY, SUPPORTED_KEY_ENABLE_LIST);
-    (void)strcpy_s(g_setItems[1].value, MAX_LEN_CONFIG_VALUE, "100,200");
-    (void)strcpy_s(g_setItems[2].key, MAX_LEN_CONFIG_KEY, SUPPORTED_KEY_DISABLE_LIST);
-    (void)strcpy_s(g_setItems[2].value, MAX_LEN_CONFIG_VALUE, "300");
+    (void)strcpy_s(g_setItems[INDEX_DEFAULT_CONFIG].key, MAX_LEN_CONFIG_KEY, SUPPORTED_KEY_DEFAULT_CONFIG);
+    (void)strcpy_s(g_setItems[INDEX_DEFAULT_CONFIG].value, MAX_LEN_CONFIG_VALUE, CONFIG_VALUE_DISABLE);
+    (void)strcpy_s(g_setItems[INDEX_ENABLE_LIST].key, MAX_LEN_CONFIG_KEY, SUPPORTED_KEY_ENABLE_LIST);
+    (void)strcpy_s(g_setItems[INDEX_ENABLE_LIST].value, MAX_LEN_CONFIG_VALUE, CONFIG_VALUE_ENABLE_LIST);
+    (void)strcpy_s(g_setItems[INDEX_DISABLE_LIST].key, MAX_LEN_CONFIG_KEY, SUPPORTED_KEY_DISABLE_LIST);
+    (void)strcpy_s(g_setItems[INDEX_DISABLE_LIST].value, MAX_LEN_CONFIG_VALUE, CONFIG_VALUE_DISABLE_LIST);
 }
 
 class CmCertManagerConfigTest : public testing::Test {
