@@ -34,6 +34,7 @@
 #include "cm_napi_get_ukey_cert_list.h"
 #include "cm_napi_get_ukey_cert.h"
 #include "cm_napi_import_ukey_cert.h"
+#include "cm_napi_get_cert_manager_config.h"
 
 namespace CMNapi {
     inline void AddInt32Property(napi_env env, napi_value object, const char *name, int32_t value)
@@ -216,6 +217,8 @@ extern "C" {
         DECLARE_NAPI_FUNCTION("getSystemAppCertificate", CMNapiGetSystemAppCertInfo),
         /* get store path */
         DECLARE_NAPI_FUNCTION("getCertificateStorePath", CMNapiGetCertStorePath),
+        /* cert manager config */
+        DECLARE_NAPI_FUNCTION("getCertManagerConfig", CMNapiGetCertManagerConfig),
         /* ukey cred */
         DECLARE_NAPI_FUNCTION("getUkeyCertificateList", CMNapiGetUkeyCertList),
         DECLARE_NAPI_FUNCTION("getUkeyCertificate", CMNapiGetUkeyCert),

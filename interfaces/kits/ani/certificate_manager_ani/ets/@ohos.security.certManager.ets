@@ -93,6 +93,10 @@ native function importUkeyCertificateNative(
   ukeyInfo: certificateManager.UkeyInfo
 ): NativeResult<void>;
 
+native function getCertManagerConfigNative(
+  keys: Array<string>
+): NativeResult<Array<certificateManager.ConfigItem>>;
+
 export class NativeResult<T> {
   code: int;
   message: string = "";
@@ -211,6 +215,11 @@ export namespace certificateManager {
 
   export interface UkeyInfo {
     certPurpose?: CertificatePurpose;
+  }
+
+  export interface ConfigItem {
+    name: string;
+    value: string;
   }
 
   export interface CMResult {
@@ -619,4 +628,18 @@ export namespace certificateManager {
       undefined
     );
   }
+
+  export function getCertManagerConfig(keys: Array<string>): Promise<Array<certificateManager.ConfigItem>> {
+    if (keys === undefined) {
+      let error = new BusinessError();
+      error.code = CMErrorCode.CM_ERROR_INVALID_PARAMS;
+      error.message = 'the input parameters is invalid.';
+      throw error;
+    }
+    return createPromise<Array<certificateManager.ConfigItem>>(
+      () => getCertManagerConfigNative(keys),
+      []
+    );
+  }
+
 }
