@@ -288,14 +288,14 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigNullParam007, TestSize.Level0)
     CmFreeCertManagerConfig(&outConfig);
 
     // keysBlob has null data
-    struct CmBlob emptyBlob = { nullptr, 0 };
+    struct CmBlob emptyBlob = { 0, nullptr };
     ret = CmServiceGetCertManagerConfig(&emptyBlob, &outConfig);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "null keysBlob data should return invalid argument";
     CmFreeCertManagerConfig(&outConfig);
 
     // keysBlob has zero size
     uint8_t dummy = 0;
-    struct CmBlob zeroBlob = { &dummy, 0 };
+    struct CmBlob zeroBlob = { 0, &dummy };
     ret = CmServiceGetCertManagerConfig(&zeroBlob, &outConfig);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "zero-size keysBlob should return invalid argument";
     CmFreeCertManagerConfig(&outConfig);
