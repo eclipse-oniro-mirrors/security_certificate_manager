@@ -78,7 +78,7 @@ static void DeleteGetConfigAsyncContext(napi_env env, GetCertManagerConfigAsyncC
     context = nullptr;
 }
 
-static int32_t ParseKeysArray(napi_env env, napi_value arrayValue, GetCertManagerConfigAsyncContext context)
+static int32_t ValidateKeysArray(napi_env env, napi_value arrayValue, uint32_t &arrayLen)
 {
     bool isArray = false;
     napi_status status = napi_is_array(env, arrayValue, &isArray);
@@ -87,7 +87,6 @@ static int32_t ParseKeysArray(napi_env env, napi_value arrayValue, GetCertManage
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
-    uint32_t arrayLen = 0;
     status = napi_get_array_length(env, arrayValue, &arrayLen);
     if (status != napi_ok) {
         CM_LOG_E("get array length failed");
@@ -103,12 +102,16 @@ static int32_t ParseKeysArray(napi_env env, napi_value arrayValue, GetCertManage
         CM_LOG_E("configNames array length %u exceeds max %u", arrayLen, MAX_KEY_COUNT);
         return CMR_ERROR_INVALID_ARGUMENT;
     }
+    return CM_SUCCESS;
+}
 
-    std::vector<std::string> keys;
+static int32_t ExtractKeysFromNapiArray(napi_env env, napi_value arrayValue, uint32_t arrayLen,
+    std::vector<std::string> &keys)
+{
     keys.reserve(arrayLen);
     for (uint32_t i = 0; i < arrayLen; i++) {
         napi_value element = nullptr;
-        status = napi_get_element(env, arrayValue, i, &element);
+        napi_status status = napi_get_element(env, arrayValue, i, &element);
         if (status != napi_ok || element == nullptr) {
             CM_LOG_E("get array element %u failed", i);
             return CMR_ERROR_INVALID_ARGUMENT;
@@ -130,7 +133,11 @@ static int32_t ParseKeysArray(napi_env env, napi_value arrayValue, GetCertManage
         key.resize(strLen);
         keys.push_back(std::move(key));
     }
+    return CM_SUCCESS;
+}
 
+static int32_t PackKeysIntoBlob(const std::vector<std::string> &keys, struct CmBlob *blob)
+{
     /* pack keys into a CmBlob: "keyA\0keyB\0\0" (each key null-terminated, block ends with extra \0) */
     uint32_t totalSize = 1; /* trailing \0 */
     for (const auto &k : keys) {
@@ -153,16 +160,36 @@ static int32_t ParseKeysArray(napi_env env, napi_value arrayValue, GetCertManage
         }
         offset += static_cast<uint32_t>(k.size()) + 1;
     }
-    /* buf is already zero-terminated at the end by memset_s */
+
+    blob->data = buf;
+    blob->size = totalSize;
+    return CM_SUCCESS;
+}
+
+static int32_t ParseKeysArray(napi_env env, napi_value arrayValue, GetCertManagerConfigAsyncContext context)
+{
+    uint32_t arrayLen = 0;
+    int32_t ret = ValidateKeysArray(env, arrayValue, arrayLen);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    std::vector<std::string> keys;
+    ret = ExtractKeysFromNapiArray(env, arrayValue, arrayLen, keys);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
 
     context->keysBlob = static_cast<struct CmBlob *>(CmMalloc(sizeof(struct CmBlob)));
     if (context->keysBlob == nullptr) {
-        CM_FREE_PTR(buf);
         CM_LOG_E("malloc keysBlob struct failed");
         return CMR_ERROR_MALLOC_FAIL;
     }
-    context->keysBlob->data = buf;
-    context->keysBlob->size = totalSize;
+    ret = PackKeysIntoBlob(keys, context->keysBlob);
+    if (ret != CM_SUCCESS) {
+        CM_FREE_PTR(context->keysBlob);
+        return ret;
+    }
     return CM_SUCCESS;
 }
 
