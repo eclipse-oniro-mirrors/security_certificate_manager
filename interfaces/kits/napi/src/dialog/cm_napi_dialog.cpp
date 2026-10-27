@@ -54,9 +54,9 @@ static napi_value CreateCmErrorCode(napi_env env)
     AddInt32Property(env, dialogErrorCode, "ERROR_PASSWORD_IS_INCORRECT",
         DIALOG_ERROR_KEYSTORE_PWD_INCORRECT);
     /* ukey dialog dedicated codes (spec D8 v4: unfolded on ForProvider) */
-    AddInt32Property(env, dialogErrorCode, "ERROR_UKEY_AUTH_REPORT_TIMEOUT",
+    AddInt32Property(env, dialogErrorCode, "ERROR_OPERATION_TIMEOUT",
         DIALOG_ERROR_UKEY_AUTH_REPORT_TIMEOUT);
-    AddInt32Property(env, dialogErrorCode, "ERROR_UKEY_DIALOG_IN_PROGRESS",
+    AddInt32Property(env, dialogErrorCode, "ERROR_NOT_CONCURRENT_SUPPORT",
         DIALOG_ERROR_UKEY_DIALOG_IN_PROGRESS);
 
     return dialogErrorCode;
