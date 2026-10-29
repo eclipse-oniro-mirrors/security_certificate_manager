@@ -30,7 +30,6 @@ using namespace testing::ext;
 
 namespace {
 constexpr uint32_t INVALID_REVOCATION_TYPE = 99;
-constexpr uint32_t ENCODED_PREFIX_LEN = 2;   /* sub dir prefix = first two encoded-name chars */
 constexpr int64_t ONE_HOUR_SEC = 3600;     /* expire offset: one hour in the future */
 constexpr uint32_t PATH_BUF_SIZE = 300;    /* comfortably above any built base/rel path */
 constexpr uint32_t TOO_SMALL_BUF_SIZE = 8; /* deliberately smaller than any built path */
@@ -54,7 +53,7 @@ TEST_F(CmRevocationCacheTest, BuildRelPathRejectsInvalidType)
     EXPECT_EQ(strncmp(rel, "crl/", strlen("crl/")), 0);
 }
 
-TEST_F(CmRevocationCacheTest, BuildRelPathStableEncodingAndPrefix)
+TEST_F(CmRevocationCacheTest, BuildRelPathStableEncoding)
 {
     uint8_t keyBuf[] = "abc";
     struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
@@ -64,9 +63,6 @@ TEST_F(CmRevocationCacheTest, BuildRelPathStableEncodingAndPrefix)
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key, rel2, sizeof(rel2)), CM_SUCCESS);
     EXPECT_STREQ(rel1, rel2);
     EXPECT_EQ(strncmp(rel1, "ocsp/", strlen("ocsp/")), 0);
-    /* sub dir prefix equals the first 2 chars of the encoded name */
-    const uint32_t prefixOff = strlen("ocsp/");
-    EXPECT_EQ(strncmp(rel1 + prefixOff, rel1 + prefixOff + 1 + ENCODED_PREFIX_LEN, ENCODED_PREFIX_LEN), 0);
 }
 
 TEST_F(CmRevocationCacheTest, BuildRelPathHexKnownVectors)
@@ -77,34 +73,36 @@ TEST_F(CmRevocationCacheTest, BuildRelPathHexKnownVectors)
     uint8_t key3Buf[] = "abc";
     struct CmBlob key3 = { sizeof(key3Buf) - 1, key3Buf };
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key3, rel, sizeof(rel)), CM_SUCCESS);
-    EXPECT_STREQ(rel, "ocsp/61/616263.cache");
+    EXPECT_STREQ(rel, "ocsp/616263.cache");
 
     /* 2-byte key: "ab" -> "6162" */
     uint8_t key2Buf[] = "ab";
     struct CmBlob key2 = { sizeof(key2Buf) - 1, key2Buf };
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_CRL, &key2, rel, sizeof(rel)), CM_SUCCESS);
-    EXPECT_STREQ(rel, "crl/61/6162.cache");
+    EXPECT_STREQ(rel, "crl/6162.cache");
 
-    /* 1-byte key: "a" -> "61": the shortest name still yields the two-char prefix */
+    /* 1-byte key: "a" -> "61": the shortest name still yields a well-formed path */
     uint8_t key1Buf[] = "a";
     struct CmBlob key1 = { sizeof(key1Buf) - 1, key1Buf };
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &key1, rel, sizeof(rel)), CM_SUCCESS);
-    EXPECT_STREQ(rel, "ocsp/61/61.cache");
+    EXPECT_STREQ(rel, "ocsp/61.cache");
 
     /* raw bytes map to lowercase hex: no alphabet char can break out of the file name */
     uint8_t keyRaw[] = { 0xFF, 0xEF, 0xFF };
     struct CmBlob keyRawBlob = { sizeof(keyRaw), keyRaw };
     EXPECT_EQ(CmRevocationCacheBuildRelPath(CM_REVOCATION_TYPE_OCSP, &keyRawBlob, rel, sizeof(rel)), CM_SUCCESS);
-    EXPECT_STREQ(rel, "ocsp/ff/ffefff.cache");
+    EXPECT_STREQ(rel, "ocsp/ffefff.cache");
 }
 
 TEST_F(CmRevocationCacheTest, BuildBasePathTokenMapping)
 {
     char base[PATH_BUF_SIZE] = {0};
+    /* one shared base for every allowed caller: HAP and native read the same
+     * for-all-app location, only shell/unknown tokens stay rejected */
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_HAP, base, sizeof(base)), CM_SUCCESS);
-    EXPECT_STREQ(base, REVOCATION_CACHE_SANDBOX_BASE);
+    EXPECT_STREQ(base, REVOCATION_CACHE_BASE);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_NATIVE, base, sizeof(base)), CM_SUCCESS);
-    EXPECT_STREQ(base, REVOCATION_CACHE_SERVICE_BASE);
+    EXPECT_STREQ(base, REVOCATION_CACHE_BASE);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(CM_REVOCATION_TOKEN_TYPE_SHELL, base, sizeof(base)),
         CMR_ERROR_REVOCATION_CACHE_CALLER_INVALID);
     EXPECT_EQ(CmRevocationCacheBuildBasePath(INVALID_REVOCATION_TYPE, base, sizeof(base)),
@@ -268,12 +266,12 @@ TEST_F(CmRevocationCacheTest, Int64BeRoundTrip)
 
 TEST_F(CmRevocationCacheTest, ValidateRelPathAcceptsStrictWhitelist)
 {
-    /* known-good shapes: both stores, hex prefix dir, hex name, .cache suffix */
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/6162/616263.cache"), CM_SUCCESS);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("crl/ff/647570.cache"), CM_SUCCESS);
+    /* known-good shapes: both stores, hex name, .cache suffix, no deeper hierarchy */
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/616263.cache"), CM_SUCCESS);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("crl/647570.cache"), CM_SUCCESS);
     /* boundaries: the shortest name and the longest legal name */
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/ab/a.cache"), CM_SUCCESS);
-    std::string longest = "ocsp/ab/" + std::string(CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN, 'f') + ".cache";
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/a.cache"), CM_SUCCESS);
+    std::string longest = "ocsp/" + std::string(CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN, 'f') + ".cache";
     EXPECT_EQ(CmRevocationCacheValidateRelPath(longest.c_str()), CM_SUCCESS);
 }
 
@@ -283,21 +281,24 @@ TEST_F(CmRevocationCacheTest, ValidateRelPathRejectsTraversalAndMalformed)
     EXPECT_EQ(CmRevocationCacheValidateRelPath(""), CMR_ERROR_INVALID_ARGUMENT);
     /* traversal payloads must never pass */
     EXPECT_EQ(CmRevocationCacheValidateRelPath("/etc/passwd"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/aa/../../escape.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/../../escape.cache"), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/../crl/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("../ocsp/aa/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/aa//616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/aa/616263.cache/"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("../ocsp/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp//616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/616263.cache/"), CMR_ERROR_INVALID_ARGUMENT);
     /* malformed shapes */
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("x509/aa/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("OCSP/aa/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/zz/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/AB/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/aa/61626G.cache"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/aa/616263.cach"), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/aa/.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("x509/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("OCSP/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/zz616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/ABCD.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    /* the retired three-level layout must be rejected: the store dir holds files only */
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/61/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("crl/61/616263.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/61626G.cache"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/616263.cach"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmRevocationCacheValidateRelPath("ocsp/.cache"), CMR_ERROR_INVALID_ARGUMENT);
     /* one hex char beyond the longest legal name */
-    std::string overlong = "ocsp/ab/" + std::string(CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN + 1, 'f') + ".cache";
+    std::string overlong = "ocsp/" + std::string(CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN + 1, 'f') + ".cache";
     EXPECT_EQ(CmRevocationCacheValidateRelPath(overlong.c_str()), CMR_ERROR_INVALID_ARGUMENT);
 }
 

@@ -24,7 +24,7 @@ extern "C" {
 
 /* type string buffer: "ocsp" / "crl" plus headroom */
 #define CM_REVOCATION_CACHE_TYPE_LEN 8
-/* rel-path buffer: <type>/<prefix>/<encoded>.cache with the 128-char encoded name */
+/* rel-path buffer: <type>/<encoded>.cache with the 128-char encoded name */
 #define CM_REVOCATION_CACHE_FILE_PATH_LEN 256
 
 /* expireTimeUtc stays first: scalar-led aggregates keep the "= { 0 }" idiom warning-free */
@@ -42,9 +42,18 @@ int32_t InsertRevocationCacheRecord(const struct RevocationCacheRecord *record);
 
 int32_t DeleteRevocationCacheRecord(const char *filePath);
 
-int32_t QueryRevocationCacheSumSize(uint64_t *totalSize);
+/* sum of DATA_SIZE over active (IS_DELETED = 0) rows, excluding the given (key, type)
+ * row: the exclusion keeps a re-save from billing its own old row twice */
+int32_t QueryRevocationCacheActiveSumSize(const char *key, const char *type, uint64_t *totalSize);
 
-int32_t QueryRevocationCacheRecordByExpireAsc(struct RevocationCacheRecord *record);
+/* oldest active (IS_DELETED = 0) row excluding the given (key, type) row: the next
+ * eviction candidate, ordered by expire then write time */
+int32_t QueryRevocationCacheEvictCandidate(const char *key, const char *type,
+    struct RevocationCacheRecord *record);
+
+/* logical delete: mark the row IS_DELETED = 1, the cache file stays on disk until
+ * the row expires and the periodic cleanup reclaims it */
+int32_t MarkRevocationCacheRecordDeleted(const char *filePath);
 
 int32_t QueryExpiredRevocationCacheRecord(int64_t nowUtc, struct RevocationCacheRecord *record);
 

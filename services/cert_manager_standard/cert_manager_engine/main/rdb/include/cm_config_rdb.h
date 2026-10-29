@@ -30,6 +30,8 @@ int32_t QueryConfigByKey(const char *key, char *value, uint32_t valueLen);
 
 int32_t QueryAllConfig(struct CertManagerConfig *config);
 
+int32_t DeleteConfigByKey(const char *key);
+
 #ifdef __cplusplus
 }
 #endif

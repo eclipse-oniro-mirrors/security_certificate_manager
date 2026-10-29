@@ -74,7 +74,12 @@ int32_t CmUidLayerGetFileCountAndNames(const char *path, struct CmBlob *fileName
 int32_t CmGetSubDir(void *dirp, struct CmFileDirentInfo *direntInfo);
 
 int32_t CmDirRemove(const char *path);
-int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len);
+/* atomically writes buf to "<cache-root>/<relPath>" through a tmp file and
+ * rename; accountedSizeOut receives the accounting size of the written file:
+ * the payload plus one 4 KiB metadata page, rounded up to the 4 KiB block
+ * size, measured with fstat before the rename */
+int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len,
+    uint64_t *accountedSizeOut);
 
 #ifdef __cplusplus
 }

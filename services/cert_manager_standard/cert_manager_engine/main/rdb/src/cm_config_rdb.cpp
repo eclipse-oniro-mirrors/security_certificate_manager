@@ -277,6 +277,25 @@ int32_t QueryAllConfig(struct CertManagerConfig *config)
     return CM_SUCCESS;
 }
 
+int32_t DeleteConfigByKey(const char *key)
+{
+    CM_LOG_D("enter DeleteConfigByKey");
+    if (key == nullptr) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (cmConfigRdbDataManager == nullptr) {
+        CM_LOG_E("cmConfigRdbDataManager is nullptr");
+        return CMR_ERROR_NULL_POINTER;
+    }
+
+    if (!cmConfigRdbDataManager->DeleteData(std::string(key), COLUMN_CONFIG_KEY)) {
+        CM_LOG_E("Failed to delete config:%s", key);
+        return CMR_ERROR_DELETE_RDB_DATA_FAIL;
+    }
+    return CM_SUCCESS;
+}
+
 #ifdef __cplusplus
 }
 #endif

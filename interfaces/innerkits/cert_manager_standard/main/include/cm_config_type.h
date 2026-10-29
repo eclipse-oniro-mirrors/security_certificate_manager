@@ -24,7 +24,7 @@ extern "C" {
 
 #define MAX_LEN_CONFIG_KEY       64
 #define MAX_LEN_CONFIG_VALUE     1024
-#define MAX_COUNT_CONFIG_ITEM    3
+#define MAX_COUNT_CONFIG_ITEM    4
 
 struct CmConfigItem {
     char key[MAX_LEN_CONFIG_KEY];

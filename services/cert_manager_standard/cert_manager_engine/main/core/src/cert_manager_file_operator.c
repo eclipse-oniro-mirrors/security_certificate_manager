@@ -634,13 +634,26 @@ int32_t CmDirRemove(const char *path)
     return DirRemove(path);
 }
 
+/* one metadata page is billed on top of the payload: the file system charges
+ * an inode page per file */
+#define REVOCATION_CACHE_BLOCK_ALIGN_BYTES 4096UL
+
+/* accounting size: the file size plus one 4 KiB metadata page, rounded up to
+ * the next 4 KiB block boundary — equivalent to the earlier wording of
+ * "round the file size to KiB, add 4 KiB, then align to 4 KiB" */
+static uint64_t AccountedSize(uint64_t fileSize)
+{
+    return ((fileSize + REVOCATION_CACHE_BLOCK_ALIGN_BYTES + (REVOCATION_CACHE_BLOCK_ALIGN_BYTES - 1)) /
+        REVOCATION_CACHE_BLOCK_ALIGN_BYTES) * REVOCATION_CACHE_BLOCK_ALIGN_BYTES;
+}
+
 /*
  * Writes the payload to the tmp file through stdio and pushes it to disk.
  * fileno() is used only to pin the file mode and to fsync: the mode must stay
  * 0644 regardless of the umask, and crash consistency after the rename needs
  * the data on disk, not just inside the stdio buffer.
  */
-static int32_t WriteTmpFile(const char *tmpPath, const uint8_t *buf, uint32_t len)
+static int32_t WriteTmpFile(const char *tmpPath, const uint8_t *buf, uint32_t len, uint64_t *fileSizeOut)
 {
     FILE *fp = fopen(tmpPath, "wb");
     if (fp == NULL) {
@@ -673,6 +686,18 @@ static int32_t WriteTmpFile(const char *tmpPath, const uint8_t *buf, uint32_t le
             ret = CMR_ERROR_WRITE_FILE_FAIL;
         }
     }
+    /* size the tmp inode while it is still open: capacity is billed before
+     * the rename makes the entry visible, so a failed stat leaves the final
+     * path and any previous row untouched */
+    if (ret == CMR_OK) {
+        struct stat st = { 0 };
+        if (fstat(fileno(fp), &st) != 0 || !S_ISREG(st.st_mode)) {
+            CM_LOG_E("stat tmp file failed, errno = 0x%x", errno);
+            ret = CMR_ERROR_FILE_STAT;
+        } else {
+            *fileSizeOut = (uint64_t)st.st_size;
+        }
+    }
     if ((fclose(fp) != 0) && (ret == CMR_OK)) {
         CM_LOG_E("close tmp file failed, errno = 0x%x", errno);
         ret = CMR_ERROR_WRITE_FILE_FAIL;
@@ -683,22 +708,33 @@ static int32_t WriteTmpFile(const char *tmpPath, const uint8_t *buf, uint32_t le
     return ret;
 }
 
-static void SyncParentDir(const char *fullPath)
+static int32_t SyncParentDir(const char *fullPath)
 {
     char dirPath[PATH_MAX] = {0};
     if (strcpy_s(dirPath, sizeof(dirPath), fullPath) != EOK) {
-        return;
+        return CMR_ERROR_BUFFER_TOO_SMALL;
     }
     char *slash = strrchr(dirPath, '/');
     if (slash == NULL) {
-        return;
+        return CMR_ERROR_INVALID_ARGUMENT;
     }
     *slash = '\0';
-    int dirFd = open(dirPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (dirFd >= 0) {
-        (void)fsync(dirFd);
-        (void)close(dirFd);
+    /* validate before open: only a directory inside the cache root may ever
+     * be opened, a symlinked or escaped path fails closed */
+    if (CmRevocationCacheCheckPathUnderRoot(REVOCATION_CACHE_DIR, dirPath) != CM_SUCCESS) {
+        return CMR_ERROR_NOT_EXIST;
     }
+    int dirFd = open(dirPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd < 0) {
+        /* the entry itself is durable, the dir sync is advisory */
+        CM_LOG_W("open parent dir failed, errno = 0x%x", errno);
+        return CMR_OK;
+    }
+    uint64_t tag = CreateFdsanOwnTag(&dirFd);
+    fdsan_exchange_owner_tag(dirFd, 0, tag);
+    (void)fsync(dirFd);
+    fdsan_close_with_tag(dirFd, tag);
+    return CMR_OK;
 }
 
 /*
@@ -722,9 +758,10 @@ static int32_t CheckParentDirUnderRoot(const char *fullPath)
     return CMR_OK;
 }
 
-int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len)
+int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, uint32_t len,
+    uint64_t *accountedSizeOut)
 {
-    if (relPath == NULL || buf == NULL || len == 0) {
+    if (relPath == NULL || buf == NULL || len == 0 || accountedSizeOut == NULL) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
     /* validate before use: only the strict cache sub-path grammar is
@@ -750,7 +787,8 @@ int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, ui
     /* a leftover tmp must never be followed: remove it so the write always
      * starts from a fresh regular file (the save lock keeps this race-free) */
     (void)unlink(tmpPath);
-    ret = WriteTmpFile(tmpPath, buf, len);
+    uint64_t fileSize = 0;
+    ret = WriteTmpFile(tmpPath, buf, len, &fileSize);
     if (ret != CMR_OK) {
         return ret;
     }
@@ -759,7 +797,14 @@ int32_t CmRevocationCacheWriteAtomic(const char *relPath, const uint8_t *buf, ui
         (void)unlink(tmpPath);
         return CMR_ERROR_WRITE_FILE_FAIL;
     }
-    /* fsync the parent directory so the rename survives a power loss */
-    SyncParentDir(fullPath);
+    /* fsync the parent directory so the rename survives a power loss; a
+     * validation failure here fails the save — for a fresh key the orphan
+     * cleanup reclaims the renamed file, on a re-save the old row still
+     * references it and the expiry cleanup does the reaping */
+    ret = SyncParentDir(fullPath);
+    if (ret != CMR_OK) {
+        return ret;
+    }
+    *accountedSizeOut = AccountedSize(fileSize);
     return CMR_OK;
 }
