@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -16,7 +16,6 @@
 #include "hisysevent_wrapper.h"
 
 #include "cm_log.h"
-#include "cm_report_wrapper.h"
 
 #include "accesstoken_kit.h"
 #include "hap_token_info.h"
@@ -36,8 +35,6 @@ static constexpr char CM_TAG_CERT_NAME[] = "CERT_NAME";
 static constexpr char CM_TAG_ERROR_CODE[] = "ERROR_CODE";
 static constexpr char CM_TAG_ERROR_MESSAGE[] = "ERROR_MESSAGE";
 static constexpr char CM_TAG_CALLER[] = "CALLER";
-static constexpr char CM_EVENT_REVOCATION_EVICT[] = "CERT_REVOCATION_EVICT";
-static constexpr char CM_TAG_DELETED_TOTAL_SIZE[] = "DELETED_TOTAL_SIZE";
 
 static const std::string CALLER_UID_NAME = "ipc_calling_uid: ";
 
@@ -280,16 +277,4 @@ int WriteEvent(const char *functionName, const struct EventValues *eventValues)
         return ret;
     }
     return ret;
-}
-
-void WriteRevocationEvictEvent(uint64_t deletedTotalSize)
-{
-    /* the sum is bounded by the cache budget; the clamp keeps the cast honest */
-    int64_t reported = (deletedTotalSize <= static_cast<uint64_t>(INT64_MAX))
-        ? static_cast<int64_t>(deletedTotalSize) : INT64_MAX;
-    int32_t ret = HiSysEventWrite(CM_DOMAIN, CM_EVENT_REVOCATION_EVICT, HiSysEvent::EventType::STATISTIC,
-        CM_TAG_DELETED_TOTAL_SIZE, reported);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("WriteRevocationEvictEvent failed, ret = %d", ret);
-    }
 }

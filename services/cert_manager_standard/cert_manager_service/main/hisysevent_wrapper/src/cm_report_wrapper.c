@@ -81,3 +81,14 @@ void CmReportBehavior(const char *funcName, const struct CmContext *cmContext,
 
     (void)ReportFaultEvent(funcName, cmContext, (char *)certName->data, errorCode);
 }
+
+void WriteRevocationEvictEvent(uint64_t deletedTotalSize)
+{
+    /* reuse the CERT_FAULT point: the platform tracks revocation cache
+     * pressure through the existing event; ERROR_CODE carries the evicted
+     * bytes (bounded by the cache budget, always fits int32). The eviction
+     * is a global cache behavior, so no userId/uid applies. */
+    struct EventValues eventValues = { 0, 0, "revocation_cache",
+        (int32_t)deletedTotalSize };
+    (void)WriteEvent("EvictUntilCapacity", &eventValues);
+}
