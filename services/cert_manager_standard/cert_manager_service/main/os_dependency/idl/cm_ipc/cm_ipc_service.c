@@ -1668,10 +1668,8 @@ static int32_t PackConfigToBuffer(const struct CertManagerConfig *config, struct
         return ret;
     }
     for (uint32_t i = 0; i < config->count; i++) {
-        struct CmBlob keyBlob = { strlen(config->configItems[i].key) + 1,
-            (uint8_t *)config->configItems[i].key };
-        struct CmBlob valueBlob = { strlen(config->configItems[i].value) + 1,
-            (uint8_t *)config->configItems[i].value };
+        struct CmBlob keyBlob = { MAX_LEN_CONFIG_KEY, (uint8_t *)config->configItems[i].key };
+        struct CmBlob valueBlob = { MAX_LEN_CONFIG_VALUE, (uint8_t *)config->configItems[i].value };
         ret = CopyBlobToBuffer(&keyBlob, outData, &outOffset);
         if (ret != CM_SUCCESS) {
             return ret;
@@ -1681,6 +1679,7 @@ static int32_t PackConfigToBuffer(const struct CertManagerConfig *config, struct
             return ret;
         }
     }
+    outData->size = outOffset;
     return CM_SUCCESS;
 }
 
