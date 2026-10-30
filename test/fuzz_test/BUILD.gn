@@ -75,6 +75,8 @@ group("fuzztest") {
       "./cmipcserviceremovegrantedapp_fuzzer:fuzztest",
       "./cmipcservicesetcertstatus_fuzzer:fuzztest",
       "./cmipcservicesetusercertstatus_fuzzer:fuzztest",
+      "./cmipcservicegetcertmanagerconfig_fuzzer:fuzztest",
+      "./cmipcservicesetcertmanagerconfig_fuzzer:fuzztest",
       "./cmipcserviceuninstallallappcert_fuzzer:fuzztest",
       "./cmipcserviceuninstallallusercert_fuzzer:fuzztest",
       "./cmipcserviceuninstallappcert_fuzzer:fuzztest",
