@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Huawei Device Co., Ltd.
+# Copyright (c) 2025-2026 Huawei Device Co., Ltd.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -25,6 +25,7 @@ ohos_static_library("libcert_manager_fuzz_test_common_static") {
   subsystem_name = "security"
   part_name = "certificate_manager"
   branch_protector_ret = "pac_ret"
+  stack_protector_ret = true
   sanitize = {
     cfi = true
     cfi_cross_dso = true
@@ -32,7 +33,6 @@ ohos_static_library("libcert_manager_fuzz_test_common_static") {
     debug = false
     integer_overflow = true
     ubsan = true
-    stack_protector_ret = true
   }
   public_configs = [ ":cert_manager_config" ]
 
