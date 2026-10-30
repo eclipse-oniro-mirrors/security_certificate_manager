@@ -728,7 +728,7 @@ TEST_F(CmRevocationCacheEngineTest, EvictOldestWhenOverCapacity)
 {
     /* an expired record claiming the whole 2 MiB budget pushes the next save
      * over the accounted capacity limit and is reaped physically; the
-     * unexpired logical branch has its own case (LogicalEvictionKeepsFile) */
+     * unexpired logical branch has its own case (LogicalEvictionDeletesFile) */
     constexpr uint64_t accountedTwoBlocks = 8192; /* 9-byte payload: page + 8 bytes, aligned */
     struct RevocationCacheRecord big = { 0 };
     big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) - ALREADY_EXPIRED_SEC; /* expired */
@@ -803,10 +803,11 @@ TEST_F(CmRevocationCacheEngineTest, ResaveBillsOnceNeverEvictsOthers)
     EXPECT_EQ(total, static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES));
 }
 
-TEST_F(CmRevocationCacheEngineTest, LogicalEvictionKeepsFile)
+TEST_F(CmRevocationCacheEngineTest, LogicalEvictionDeletesFile)
 {
     /* an unexpired oversized row is logically evicted: the row leaves the
-     * active accounting but the file stays on disk for late readers */
+     * active accounting and the data file leaves the disk at once, because
+     * capacity eviction exists to reclaim real space, not just accounting */
     constexpr uint64_t accountedTwoBlocks = 8192; /* 9-byte payload, aligned */
     const char *bigRel = "ocsp/6c6f6769.cache"; /* hex("logi") */
     struct RevocationCacheRecord big = { 0 };
@@ -817,7 +818,7 @@ TEST_F(CmRevocationCacheEngineTest, LogicalEvictionKeepsFile)
     big.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
     ASSERT_EQ(InsertRevocationCacheRecord(&big), CM_SUCCESS);
     std::string bigFull = std::string(REVOCATION_CACHE_DIR) + bigRel;
-    const uint8_t body[] = "KEEPME";
+    const uint8_t body[] = "EVICTED";
     ASSERT_EQ(WriteTestFile(bigFull.c_str(), body, sizeof(body) - 1), 0);
 
     uint8_t keyBuf[] = "lgckey1";
@@ -831,11 +832,62 @@ TEST_F(CmRevocationCacheEngineTest, LogicalEvictionKeepsFile)
     uint64_t total = 0;
     ASSERT_EQ(QueryRevocationCacheActiveSumSize("none", "none", &total), CM_SUCCESS);
     EXPECT_EQ(total, accountedTwoBlocks);
-    /* ... but the path stays queryable and the file stays on disk */
+    /* ... the marked row itself stays until the periodic expiry pass ... */
     const auto paths = QueryCacheFilePaths();
     ASSERT_NE(paths, std::nullopt);
     EXPECT_NE(std::find(paths->begin(), paths->end(), bigRel), paths->end());
-    EXPECT_EQ(access(bigFull.c_str(), F_OK), 0);
+    /* ... while the data file is gone right away */
+    EXPECT_NE(access(bigFull.c_str(), F_OK), 0);
+}
+
+/* telemetry probe: the SA registers the hisysevent adapter, tests register
+ * this probe and read back what the engine would have reported */
+static uint32_t g_evictReportCount = 0;
+static uint64_t g_evictReportedSum = 0;
+
+static void TestEvictReporter(uint64_t deletedTotalSize)
+{
+    g_evictReportCount++;
+    g_evictReportedSum = deletedTotalSize;
+}
+
+TEST_F(CmRevocationCacheEngineTest, EvictReportsDeletedSum)
+{
+    /* an unexpired capacity eviction reports the total DATA_SIZE of the
+     * IS_DELETED=1 rows through the registered reporter, so the platform
+     * can track cache pressure */
+    g_evictReportCount = 0;
+    g_evictReportedSum = 0;
+    CmSetRevocationEvictReporter(TestEvictReporter);
+
+    const char *bigRel = "ocsp/65766931.cache"; /* hex("evi1") */
+    struct RevocationCacheRecord big = { 0 };
+    big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC; /* unexpired */
+    (void)strncpy_s(big.key, sizeof(big.key), "65766931", strlen("65766931"));
+    (void)strncpy_s(big.type, sizeof(big.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(big.filePath, sizeof(big.filePath), bigRel, strlen(bigRel));
+    big.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
+    ASSERT_EQ(InsertRevocationCacheRecord(&big), CM_SUCCESS);
+    std::string bigFull = std::string(REVOCATION_CACHE_DIR) + bigRel;
+    const uint8_t body[] = "EVICT";
+    ASSERT_EQ(WriteTestFile(bigFull.c_str(), body, sizeof(body) - 1), 0);
+
+    uint8_t keyBuf[] = "evkey11";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    CmSetRevocationEvictReporter(nullptr); /* never leak the probe into other cases */
+
+    EXPECT_EQ(g_evictReportCount, 1u);
+    EXPECT_EQ(g_evictReportedSum, static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES));
+
+    /* the query behind the report is verifiable directly as well */
+    uint64_t deletedSum = 0;
+    ASSERT_EQ(QueryRevocationCacheDeletedSumSize(&deletedSum), CM_SUCCESS);
+    EXPECT_EQ(deletedSum, static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES));
 }
 
 TEST_F(CmRevocationCacheEngineTest, ResaveResurrectsDeletedRow)

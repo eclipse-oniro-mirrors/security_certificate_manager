@@ -31,6 +31,10 @@ void CmReport(const char *funcName, const struct CmContext *cmContext,
 void CmReportBehavior(const char *funcName, const struct CmContext *cmContext,
     const struct CmBlob *certName, int32_t errorCode);
 
+/* revocation cache capacity eviction statistic: total DATA_SIZE bytes of the
+ * IS_DELETED = 1 rows at the moment an unexpired eviction completed */
+void WriteRevocationEvictEvent(uint64_t deletedTotalSize);
+
 #ifdef __cplusplus
 }
 #endif

@@ -269,6 +269,53 @@ int32_t QueryRevocationCacheActiveSumSize(const char *key, const char *type, uin
     return CM_SUCCESS;
 }
 
+int32_t QueryRevocationCacheDeletedSumSize(uint64_t *totalSize)
+{
+    if (totalSize == nullptr) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (revocationCacheRdbDataManager == nullptr) {
+        CM_LOG_E("revocationCacheRdbDataManager is nullptr");
+        return CMR_ERROR_NULL_POINTER;
+    }
+    *totalSize = 0;
+
+    /* every logically deleted row bills: the eviction reporter wants the
+     * evicted-but-unreaped bytes */
+    std::string sql = std::string("SELECT SUM(") + COLUMN_DATA_SIZE + ") AS total_size FROM " +
+        REVOCATION_CACHE_TABLE_NAME + " WHERE " + COLUMN_IS_DELETED + " = 1";
+    std::vector<NativeRdb::ValueObject> args;
+    auto resultSet = revocationCacheRdbDataManager->QueryBySql(sql, args);
+    if (resultSet == nullptr) {
+        CM_LOG_E("query deleted sum size failed");
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+
+    int32_t rowCount = 0;
+    if (resultSet->GetRowCount(rowCount) != NativeRdb::E_OK) {
+        CM_LOG_E("GetRowCount failed");
+        resultSet->Close();
+        return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+    }
+    if (rowCount <= 0 || resultSet->GoToFirstRow() != NativeRdb::E_OK) {
+        resultSet->Close();
+        return CM_SUCCESS;
+    }
+
+    bool isNull = false;
+    int64_t sum = 0;
+    if (resultSet->IsColumnNull(0, isNull) == NativeRdb::E_OK && !isNull) {
+        if (resultSet->GetLong(0, sum) != NativeRdb::E_OK) {
+            CM_LOG_E("GetLong for deleted sum failed");
+            resultSet->Close();
+            return CMR_ERROR_QUERY_RDB_DATA_FAIL;
+        }
+    }
+    resultSet->Close();
+    *totalSize = sum < 0 ? 0 : static_cast<uint64_t>(sum);
+    return CM_SUCCESS;
+}
+
 /* fetch one TEXT column into value; logs the column name on failure */
 static int32_t ReadStringColumn(const std::shared_ptr<NativeRdb::AbsSharedResultSet> &resultSet,
     const std::string &column, std::string &value)

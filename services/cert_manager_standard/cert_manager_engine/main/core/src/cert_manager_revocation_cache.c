@@ -209,9 +209,19 @@ static void UnlinkCacheFileForPath(const char *relPath)
     }
 }
 
+/* set once by the SA before the first save; no lock needed: registration
+ * precedes any concurrent save, tests keep it NULL */
+static CmRevocationEvictReporter g_revocationEvictReporter;
+
+void CmSetRevocationEvictReporter(CmRevocationEvictReporter reporter)
+{
+    g_revocationEvictReporter = reporter;
+}
+
 static void EvictUntilCapacity(const char *selfKey, const char *selfType, uint64_t newSize,
     uint64_t *totalSize)
 {
+    bool evictedUnexpired = false;
     while (*totalSize + newSize > (uint64_t)REVOCATION_CACHE_MAX_TOTAL_BYTES) {
         struct RevocationCacheRecord cand;
         if (QueryRevocationCacheEvictCandidate(selfKey, selfType, &cand) != CM_SUCCESS) {
@@ -226,14 +236,24 @@ static void EvictUntilCapacity(const char *selfKey, const char *selfType, uint64
                 break;
             }
         } else {
-            /* unexpired: mark deleted and keep the file, the periodic cleanup
-             * reaps the row and file once the expire time passes */
+            /* unexpired: mark the row deleted so its bytes leave the accounting
+             * at once, then unlink the file too: capacity eviction exists to
+             * reclaim real space, not just accounting; the periodic expiry pass
+             * reaps the remaining row once the expire time passes */
             if (MarkRevocationCacheRecordDeleted(cand.filePath) != CM_SUCCESS) {
                 CM_LOG_W("mark revocation cache record deleted for capacity failed");
                 break;
             }
+            UnlinkCacheFileForPath(cand.filePath);
+            evictedUnexpired = true;
         }
         *totalSize = (*totalSize >= cand.dataSize) ? (*totalSize - cand.dataSize) : 0;
+    }
+    if (evictedUnexpired && g_revocationEvictReporter != NULL) {
+        uint64_t deletedTotalSize = 0;
+        if (QueryRevocationCacheDeletedSumSize(&deletedTotalSize) == CM_SUCCESS) {
+            g_revocationEvictReporter(deletedTotalSize);
+        }
     }
 }
 
