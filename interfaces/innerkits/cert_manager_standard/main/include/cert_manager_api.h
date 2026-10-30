@@ -163,6 +163,11 @@ CM_API_EXPORT int32_t CmGetRevocationCache(const struct CmBlob key, enum CmRevoc
 
 CM_API_EXPORT void CmFreeRevocationCache(struct CmBlob *data);
 
+CM_API_EXPORT int32_t CmFindCertificate(const struct FindCertRequest *request,
+    struct FindCertResult *result);
+
+CM_API_EXPORT void CmFreeFindCertResult(struct FindCertResult *result);
+
 #ifdef __cplusplus
 }
 #endif

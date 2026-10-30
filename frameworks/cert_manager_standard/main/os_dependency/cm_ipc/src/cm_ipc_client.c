@@ -20,6 +20,7 @@
 #include "cm_param.h"
 #include "cm_request.h"
 #include "cm_revocation_cache.h"
+#include <string.h>
 
 static int32_t CmSendParcelInit(struct CmParam *params, uint32_t paramCount,
     struct CmBlob *parcelBlob, struct CmParamSet **sendParamSet)
@@ -1541,5 +1542,289 @@ int32_t CmClientSaveRevocationCache(const struct CmBlob *key, uint32_t type, con
         }
     } while (0);
     CmFreeParamSet(&sendParamSet);
+    return ret;
+}
+
+static int32_t FindCertInitOutData(struct CmBlob *outBlob)
+{
+    /* count + MAX items * (uriBlob + type + aliasBlob + state + subjectBlob + scope + certDataBlob) */
+    uint32_t buffSize = sizeof(uint32_t) +
+        MAX_COUNT_FIND_CERT_RESULT * (sizeof(uint32_t) + MAX_LEN_URI +
+        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_CERT_ALIAS +
+        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_SUBJECT_NAME +
+        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_CERTIFICATE);
+    outBlob->data = (uint8_t *)CmMalloc(buffSize);
+    if (outBlob->data == NULL) {
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    outBlob->size = buffSize;
+    return CM_SUCCESS;
+}
+
+/* serialize all FindCertRequest fields into requestBuf (already zero'd).
+   writes certTypesCount, certTypes[], scope, nameLen+name, countLimit,
+   certIdLen+certId. Returns the number of bytes written via *outOffset. */
+static int32_t SerializeFindCertFields(const struct FindCertRequest *request,
+    uint8_t *requestBuf, uint32_t nameLen, uint32_t certIdLen, uint32_t *outOffset)
+{
+    uint32_t offset = 0;
+    *(uint32_t *)(requestBuf + offset) = request->certTypesCount;
+    offset += sizeof(uint32_t);
+    if (request->certTypesCount > 0 && request->certTypes != NULL) {
+        uint32_t typesSize = sizeof(enum CmFindCertType) * request->certTypesCount;
+        if (memcpy_s(requestBuf + offset, typesSize, request->certTypes, typesSize) != EOK) {
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += typesSize;
+    }
+    *(uint32_t *)(requestBuf + offset) = request->scope;
+    offset += sizeof(uint32_t);
+    *(uint32_t *)(requestBuf + offset) = nameLen;
+    offset += sizeof(uint32_t);
+    if (nameLen > 0) {
+        if (memcpy_s(requestBuf + offset, nameLen, request->name, nameLen) != EOK) {
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += nameLen;
+    }
+    *(uint32_t *)(requestBuf + offset) = request->countLimit;
+    offset += sizeof(uint32_t);
+    *(uint32_t *)(requestBuf + offset) = certIdLen;
+    offset += sizeof(uint32_t);
+    if (certIdLen > 0) {
+        if (memcpy_s(requestBuf + offset, certIdLen, request->certId, certIdLen) != EOK) {
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += certIdLen;
+    }
+    *outOffset = offset;
+    return CM_SUCCESS;
+}
+
+/* pack FindCertRequest into a contiguous buffer:
+   certTypesCount(4) + certTypes[](4*count) + scope(4) +
+   nameSize(4) + name[] + countLimit(4) + certIdSize(4) + certId[]
+   On success *outBuf is malloc'd by CmMalloc and must be freed by the caller. */
+static int32_t PackFindCertRequest(const struct FindCertRequest *request,
+    uint8_t **outBuf, uint32_t *outSize)
+{
+    uint32_t nameLen = (request->name[0] != '\0') ? (strlen(request->name) + 1) : 0;
+    uint32_t certIdLen = (request->certId[0] != '\0') ? (strlen(request->certId) + 1) : 0;
+    uint32_t requestBufSize = sizeof(uint32_t) +
+        sizeof(enum CmFindCertType) * request->certTypesCount +
+        sizeof(uint32_t) + sizeof(uint32_t) + nameLen +
+        sizeof(uint32_t) + sizeof(uint32_t) + certIdLen;
+
+    uint8_t *requestBuf = (uint8_t *)CmMalloc(requestBufSize);
+    if (requestBuf == NULL) {
+        CM_LOG_E("malloc request buf failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(requestBuf, requestBufSize, 0, requestBufSize);
+
+    uint32_t offset = 0;
+    int32_t ret = SerializeFindCertFields(request, requestBuf, nameLen, certIdLen, &offset);
+    if (ret != CM_SUCCESS) {
+        CM_FREE_PTR(requestBuf);
+        return ret;
+    }
+
+    *outBuf = requestBuf;
+    *outSize = offset;
+    return CM_SUCCESS;
+}
+
+/* serialize the packed request buffer into a CmParamSet parcel blob. */
+static int32_t BuildFindCertParamSet(const uint8_t *requestBuf, uint32_t requestSize,
+    struct CmBlob *parcelBlob, struct CmParamSet **sendParamSet)
+{
+    struct CmBlob requestBlob = { requestSize, (uint8_t *)requestBuf };
+    struct CmParam params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = requestBlob },
+    };
+    return CmSendParcelInit(params, CM_ARRAY_SIZE(params), parcelBlob, sendParamSet);
+}
+
+/* release an array of FindCertInfo that may be partially populated. */
+static void FreeFindCertInfos(struct FindCertInfo *certInfos, uint32_t count)
+{
+    if (certInfos == NULL) {
+        return;
+    }
+    for (uint32_t j = 0; j < count; j++) {
+        CM_FREE_BLOB(certInfos[j].certData);
+    }
+    CM_FREE_PTR(certInfos);
+}
+
+/* read a length-prefixed blob from outBlob and copy its bytes into a fixed-size
+   destination buffer dst (capacity dstCap). Advances *outOffset past the blob. */
+static int32_t ReadBlobToFixedField(const struct CmBlob *outBlob, uint32_t *outOffset,
+    void *dst, uint32_t dstCap)
+{
+    struct CmBlob blob = { 0, NULL };
+    int32_t ret = CmGetBlobFromBuffer(&blob, outBlob, outOffset);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    if (memcpy_s(dst, dstCap, blob.data, blob.size) != EOK) {
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    return CM_SUCCESS;
+}
+
+/* read a length-prefixed certData blob from outBlob, deep-copying its bytes into
+   info->certData (CmMalloc'd). Advances *outOffset past the blob. */
+static int32_t ReadCertDataBlob(struct FindCertInfo *info,
+    const struct CmBlob *outBlob, uint32_t *outOffset)
+{
+    struct CmBlob certDataBlob = { 0, NULL };
+    int32_t ret = CmGetBlobFromBuffer(&certDataBlob, outBlob, outOffset);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    info->certData.size = certDataBlob.size;
+    if (certDataBlob.size == 0) {
+        return CM_SUCCESS;
+    }
+    info->certData.data = (uint8_t *)CmMalloc(certDataBlob.size);
+    if (info->certData.data == NULL) {
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memcpy_s(info->certData.data, certDataBlob.size, certDataBlob.data, certDataBlob.size);
+    return CM_SUCCESS;
+}
+
+/* decode a single FindCertInfo entry from the response buffer. */
+static int32_t UnpackOneFindCertInfo(struct FindCertInfo *info,
+    const struct CmBlob *outBlob, uint32_t *outOffset)
+{
+    int32_t ret = ReadBlobToFixedField(outBlob, outOffset, info->uri, MAX_LEN_URI);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = GetUint32FromBuffer(&info->type, outBlob, outOffset);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = ReadBlobToFixedField(outBlob, outOffset, info->alias, MAX_LEN_CERT_ALIAS);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = GetUint32FromBuffer(&info->state, outBlob, outOffset);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = ReadBlobToFixedField(outBlob, outOffset, info->subjectName, MAX_LEN_SUBJECT_NAME);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = GetUint32FromBuffer((uint32_t *)&info->scope, outBlob, outOffset);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    return ReadCertDataBlob(info, outBlob, outOffset);
+}
+
+/* unpack FindCertResult from outBlob into result. On error result is left zeroed. */
+static int32_t UnpackFindCertResult(const struct CmBlob *outBlob, struct FindCertResult *result)
+{
+    uint32_t outOffset = 0;
+    uint32_t count = 0;
+    int32_t ret = GetUint32FromBuffer(&count, outBlob, &outOffset);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("get cert count failed");
+        return ret;
+    }
+    if (count == 0) {
+        result->count = 0;
+        result->certInfos = NULL;
+        return CM_SUCCESS;
+    }
+    if (count > MAX_COUNT_FIND_CERT_RESULT) {
+        CM_LOG_E("result count %u exceeds max", count);
+        return CMR_ERROR_INVALID_OPERATION;
+    }
+
+    uint32_t allocSize = sizeof(struct FindCertInfo) * count;
+    struct FindCertInfo *certInfos = (struct FindCertInfo *)CmMalloc(allocSize);
+    if (certInfos == NULL) {
+        CM_LOG_E("malloc certInfos failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(certInfos, allocSize, 0, allocSize);
+
+    uint32_t i = 0;
+    for (; i < count; i++) {
+        ret = UnpackOneFindCertInfo(&certInfos[i], outBlob, &outOffset);
+        if (ret != CM_SUCCESS) {
+            break;
+        }
+    }
+
+    if (ret == CM_SUCCESS) {
+        result->count = count;
+        result->certInfos = certInfos;
+    } else {
+        /* free already-allocated certData to prevent memory leak */
+        FreeFindCertInfos(certInfos, count);
+    }
+    return ret;
+}
+
+int32_t CmClientFindCertificate(const struct FindCertRequest *request, struct FindCertResult *result)
+{
+    if (request == NULL || result == NULL) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CM_SUCCESS;
+    struct CmBlob outBlob = { 0, NULL };
+    struct CmBlob parcelBlob = { 0, NULL };
+    struct CmParamSet *sendParamSet = NULL;
+    uint8_t *requestBuf = NULL;
+    uint32_t requestSize = 0;
+
+    ret = PackFindCertRequest(request, &requestBuf, &requestSize);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = BuildFindCertParamSet(requestBuf, requestSize, &parcelBlob, &sendParamSet);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("FindCertificate sendParcel failed");
+        CM_FREE_PTR(requestBuf);
+        return ret;
+    }
+
+    ret = FindCertInitOutData(&outBlob);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("malloc out data failed");
+        CmFreeParamSet(&sendParamSet);
+        CM_FREE_PTR(requestBuf);
+        return ret;
+    }
+
+    ret = SendRequest(CM_MSG_FIND_CERTIFICATE, &parcelBlob, &outBlob);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmClientFindCertificate request fail");
+        CmFreeParamSet(&sendParamSet);
+        CM_FREE_BLOB(outBlob);
+        CM_FREE_PTR(requestBuf);
+        return ret;
+    }
+
+    ret = UnpackFindCertResult(&outBlob, result);
+
+    CmFreeParamSet(&sendParamSet);
+    CM_FREE_BLOB(outBlob);
+    CM_FREE_PTR(requestBuf);
     return ret;
 }

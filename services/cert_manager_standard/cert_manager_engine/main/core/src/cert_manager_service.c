@@ -1482,3 +1482,241 @@ int32_t CmServiceGetCertManagerConfig(const struct CmBlob *keysBlob, struct Cert
     CM_LOG_I("leave CmServiceGetCertManagerConfig, count = %u", config->count);
     return ret;
 }
+
+static int32_t GetFindCertScopeFromUserId(int32_t userId, enum CmFindCertScope *scope)
+{
+    if (userId == 0) {
+        *scope = CM_FIND_CERT_SCOPE_GLOBAL;
+    } else {
+        *scope = CM_FIND_CERT_SCOPE_CURRENT_USER;
+    }
+    return CM_SUCCESS;
+}
+
+static int32_t GetCertDataAndStatus(const struct CertProperty *prop,
+    struct FindCertInfo *info)
+{
+    /* construct file path: USER_CA_STORE/userId/uid/uri */
+    char uidPath[CERT_MAX_PATH_LEN] = { 0 };
+    if (snprintf_s(uidPath, CERT_MAX_PATH_LEN, CERT_MAX_PATH_LEN - 1,
+        "%s%d/%d", USER_CA_STORE, prop->userId, prop->uid) < 0) {
+        CM_LOG_E("construct uid path failed");
+        return CMR_ERROR_MEM_OPERATION_PRINT;
+    }
+
+    /* read cert file data */
+    struct CmBlob certData = { 0, NULL };
+    int32_t ret = CmStorageGetBuf(uidPath, prop->uri, &certData);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("Failed to get cert data for uri:%s", prop->uri);
+        return ret;
+    }
+
+    info->certData.data = certData.data;
+    info->certData.size = certData.size;
+
+    /* get cert status */
+    uint32_t status = CERT_STATUS_ENABLED;
+    ret = CmGetCertConfigStatus(prop->uri, &status);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("Failed to get cert status for uri:%s", prop->uri);
+        CM_FREE_BLOB(certData);
+        return ret;
+    }
+    info->state = status;
+
+    return CM_SUCCESS;
+}
+
+static void BuildFindCertUserIds(const struct CmContext *context,
+    const struct FindCertRequest *request, int32_t userIds[2], uint32_t *userIdCount)
+{
+    if (request->scope == CM_FIND_CERT_SCOPE_CURRENT_USER) {
+        userIds[0] = (int32_t)context->userId;
+        *userIdCount = 1;
+    } else if (request->scope == CM_FIND_CERT_SCOPE_GLOBAL) {
+        userIds[0] = 0; /* userId=0 means global */
+        *userIdCount = 1;
+    } else {
+        /* CM_FIND_CERT_SCOPE_CURRENT_AND_GLOBAL */
+        userIds[0] = (int32_t)context->userId;
+        userIds[1] = 0;
+        *userIdCount = 2;
+    }
+}
+
+static void BuildFindCertCondition(const struct CmContext *context,
+    const struct FindCertRequest *request, struct CmFindCertCondition *condition,
+    int32_t userIds[2])
+{
+    (void)memset_s(condition, sizeof(*condition), 0, sizeof(*condition));
+
+    /* certType: only UserCA ("c") is currently supported */
+    if (request->certTypesCount > 0) {
+        condition->certType = "c";
+    }
+
+    /* scope -> userId list */
+    uint32_t userIdCount = 0;
+    BuildFindCertUserIds(context, request, userIds, &userIdCount);
+    condition->userIds = userIds;
+    condition->userIdCount = userIdCount;
+
+    /* name filter */
+    if (request->name[0] != '\0') {
+        condition->name = request->name;
+    }
+
+    /* certId filter */
+    if (request->certId[0] != '\0') {
+        condition->certId = request->certId;
+    }
+}
+
+static int32_t FillFindCertInfo(const struct CertProperty *prop, struct FindCertInfo *info)
+{
+    if (memcpy_s(info->uri, MAX_LEN_URI, prop->uri, MAX_LEN_URI) != EOK) {
+        CM_LOG_E("memcpy_s uri failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    if (memcpy_s(info->alias, MAX_LEN_CERT_ALIAS, prop->alias, MAX_LEN_CERT_ALIAS) != EOK) {
+        CM_LOG_E("memcpy_s alias failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    if (memcpy_s(info->subjectName, MAX_LEN_SUBJECT_NAME,
+        prop->subjectName, MAX_LEN_SUBJECT_NAME) != EOK) {
+        CM_LOG_E("memcpy_s subjectName failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+
+    /* map certType to type field */
+    info->type = CM_FIND_CERT_TYPE_USER_CA;
+
+    /* map userId to scope */
+    (void)GetFindCertScopeFromUserId(prop->userId, &info->scope);
+
+    /* get cert data and status */
+    int32_t ret = GetCertDataAndStatus(prop, info);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("GetCertDataAndStatus failed for uri:%s, skip", prop->uri);
+        return ret;
+    }
+    return CM_SUCCESS;
+}
+
+static int32_t CalcFindCertResultCount(const struct FindCertRequest *request,
+    uint32_t propCount, uint32_t *resultCount)
+{
+    uint32_t count = propCount;
+    if (request->countLimit > 0 && propCount > request->countLimit) {
+        count = request->countLimit;
+    }
+
+    if (count > MAX_COUNT_FIND_CERT_RESULT) {
+        CM_LOG_E("result count %u exceeds max %u", count, MAX_COUNT_FIND_CERT_RESULT);
+        return CMR_ERROR_INVALID_OPERATION;
+    }
+
+    *resultCount = count;
+    return CM_SUCCESS;
+}
+
+static int32_t BuildFindCertResults(const struct CertProperty *propResults, uint32_t resultCount,
+    struct FindCertInfo **outCertInfos, uint32_t *outValidCount)
+{
+    uint32_t allocSize = sizeof(struct FindCertInfo) * resultCount;
+    struct FindCertInfo *certInfos = (struct FindCertInfo *)CMMalloc(allocSize);
+    if (certInfos == NULL) {
+        CM_LOG_E("malloc failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(certInfos, allocSize, 0, allocSize);
+
+    uint32_t validCount = 0;
+    int32_t ret = CM_SUCCESS;
+    for (uint32_t i = 0; i < resultCount; i++) {
+        int32_t fillRet = FillFindCertInfo(&propResults[i], &certInfos[validCount]);
+        if (fillRet == CMR_ERROR_MEM_OPERATION_COPY) {
+            ret = fillRet;
+            break;
+        }
+        if (fillRet != CM_SUCCESS) {
+            /* GetCertDataAndStatus failed, skip this entry */
+            continue;
+        }
+        validCount++;
+    }
+
+    if (ret != CM_SUCCESS) {
+        /* free already-allocated certData on error path */
+        for (uint32_t j = 0; j < validCount; j++) {
+            CM_FREE_BLOB(certInfos[j].certData);
+        }
+        CM_FREE_PTR(certInfos);
+        return ret;
+    }
+
+    if (validCount == 0 && resultCount > 0) {
+        CM_FREE_PTR(certInfos);
+    }
+    *outCertInfos = certInfos;
+    *outValidCount = validCount;
+    return CM_SUCCESS;
+}
+
+int32_t CmServiceFindCertificate(const struct CmContext *context,
+    const struct FindCertRequest *request, struct FindCertResult *result)
+{
+    CM_LOG_I("enter CmServiceFindCertificate");
+    if (context == NULL || request == NULL || result == NULL) {
+        CM_LOG_E("invalid argument");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CmServiceFindCertCheck(context, request);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmServiceFindCertCheck fail, ret = %d", ret);
+        return ret;
+    }
+
+    /* build query condition */
+    struct CmFindCertCondition condition;
+    int32_t userIds[2] = {0};
+    BuildFindCertCondition(context, request, &condition, userIds);
+
+    /* query RDB */
+    struct CertProperty *propResults = NULL;
+    uint32_t propCount = 0;
+    ret = QueryCertPropertyByCondition(&condition, &propResults, &propCount);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("QueryCertPropertyByCondition fail, ret = %d", ret);
+        return ret;
+    }
+
+    if (propCount == 0) {
+        result->count = 0;
+        result->certInfos = NULL;
+        CM_LOG_I("leave CmServiceFindCertificate, no results");
+        return CM_SUCCESS;
+    }
+
+    uint32_t resultCount = 0;
+    ret = CalcFindCertResultCount(request, propCount, &resultCount);
+    if (ret != CM_SUCCESS) {
+        free(propResults);
+        return ret;
+    }
+
+    uint32_t validCount = 0;
+    struct FindCertInfo *certInfos = NULL;
+    ret = BuildFindCertResults(propResults, resultCount, &certInfos, &validCount);
+    free(propResults);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    result->count = validCount;
+    result->certInfos = certInfos;
+    CM_LOG_I("leave CmServiceFindCertificate, count = %u", validCount);
+    return CM_SUCCESS;
+}

@@ -26,3 +26,15 @@ void CmFreeUkeyCertList(struct CredentialDetailList *credentialDetailList)
     credentialDetailList->credentialCount = 0;
     CM_FREE_PTR(credentialDetailList->credential);
 }
+
+void CmFreeFindCertResultInner(struct FindCertResult *result)
+{
+    if (result == NULL || result->certInfos == NULL) {
+        return;
+    }
+    for (uint32_t i = 0; i < result->count; ++i) {
+        CM_FREE_BLOB(result->certInfos[i].certData);
+    }
+    result->count = 0;
+    CM_FREE_PTR(result->certInfos);
+}

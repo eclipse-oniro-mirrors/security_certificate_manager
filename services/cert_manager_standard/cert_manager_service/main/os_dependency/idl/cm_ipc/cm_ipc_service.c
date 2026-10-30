@@ -1812,3 +1812,233 @@ void CmIpcServiceSaveRevocationCache(const struct CmBlob *paramSetBlob, struct C
     CmFreeParamSet(&paramSet);
     CM_LOG_I("leave CmIpcServiceSaveRevocationCache: ret = %d", ret);
 }
+
+static int32_t UnpackFindCertCertTypes(const struct CmBlob *requestBlob, uint32_t *offset,
+    struct FindCertRequest *request)
+{
+    if (*offset + sizeof(uint32_t) > requestBlob->size) {
+        CM_LOG_E("request blob too small for certTypesCount");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    request->certTypesCount = *(uint32_t *)(requestBlob->data + *offset);
+    *offset += sizeof(uint32_t);
+
+    if (request->certTypesCount > MAX_COUNT_FIND_CERT_TYPE) {
+        CM_LOG_E("certTypesCount %u exceeds max", request->certTypesCount);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (request->certTypesCount == 0) {
+        request->certTypes = NULL;
+        return CM_SUCCESS;
+    }
+
+    uint32_t typesSize = sizeof(enum CmFindCertType) * request->certTypesCount;
+    if (*offset + typesSize > requestBlob->size) {
+        CM_LOG_E("request blob too small for certTypes");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    enum CmFindCertType *certTypes = (enum CmFindCertType *)CmMalloc(typesSize);
+    if (certTypes == NULL) {
+        CM_LOG_E("malloc certTypes failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memcpy_s(certTypes, typesSize, requestBlob->data + *offset, typesSize);
+    *offset += typesSize;
+    request->certTypes = certTypes;
+    return CM_SUCCESS;
+}
+
+static int32_t UnpackFindCertName(const struct CmBlob *requestBlob, uint32_t *offset,
+    struct FindCertRequest *request)
+{
+    if (*offset + sizeof(uint32_t) > requestBlob->size) {
+        CM_LOG_E("request blob too small for name size");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    uint32_t nameSize = *(uint32_t *)(requestBlob->data + *offset);
+    *offset += sizeof(uint32_t);
+
+    if (nameSize == 0 || nameSize > MAX_LEN_FIND_CERT_NAME) {
+        return CM_SUCCESS;
+    }
+    if (*offset + nameSize > requestBlob->size) {
+        CM_LOG_E("request blob too small for name data");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (memcpy_s(request->name, MAX_LEN_FIND_CERT_NAME,
+        requestBlob->data + *offset, nameSize) != EOK) {
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    *offset += nameSize;
+    return CM_SUCCESS;
+}
+
+static int32_t UnpackFindCertId(const struct CmBlob *requestBlob, uint32_t *offset,
+    struct FindCertRequest *request)
+{
+    if (*offset + sizeof(uint32_t) > requestBlob->size) {
+        CM_LOG_E("request blob too small for certId size");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    uint32_t certIdSize = *(uint32_t *)(requestBlob->data + *offset);
+    *offset += sizeof(uint32_t);
+
+    if (certIdSize == 0 || certIdSize > MAX_LEN_FIND_CERT_ID) {
+        return CM_SUCCESS;
+    }
+    if (*offset + certIdSize > requestBlob->size) {
+        CM_LOG_E("request blob too small for certId data");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (memcpy_s(request->certId, MAX_LEN_FIND_CERT_ID,
+        requestBlob->data + *offset, certIdSize) != EOK) {
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    *offset += certIdSize;
+    return CM_SUCCESS;
+}
+
+static int32_t UnpackFindCertRequest(const struct CmBlob *requestBlob, struct FindCertRequest *request)
+{
+    if (requestBlob == NULL || request == NULL) {
+        return CMR_ERROR_NULL_POINTER;
+    }
+    (void)memset_s(request, sizeof(*request), 0, sizeof(*request));
+
+    uint32_t offset = 0;
+    int32_t ret = UnpackFindCertCertTypes(requestBlob, &offset, request);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    /* unpack scope */
+    if (offset + sizeof(uint32_t) > requestBlob->size) {
+        CM_LOG_E("request blob too small for scope");
+        CM_FREE_PTR(request->certTypes);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    request->scope = *(enum CmFindCertScope *)(requestBlob->data + offset);
+    offset += sizeof(uint32_t);
+
+    ret = UnpackFindCertName(requestBlob, &offset, request);
+    if (ret != CM_SUCCESS) {
+        CM_FREE_PTR(request->certTypes);
+        return ret;
+    }
+
+    /* unpack countLimit */
+    if (offset + sizeof(uint32_t) > requestBlob->size) {
+        CM_LOG_E("request blob too small for countLimit");
+        CM_FREE_PTR(request->certTypes);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    request->countLimit = *(uint32_t *)(requestBlob->data + offset);
+    offset += sizeof(uint32_t);
+
+    ret = UnpackFindCertId(requestBlob, &offset, request);
+    if (ret != CM_SUCCESS) {
+        CM_FREE_PTR(request->certTypes);
+        return ret;
+    }
+    return CM_SUCCESS;
+}
+
+static int32_t PackFindCertResult(const struct FindCertResult *result, struct CmBlob *outData)
+{
+    if (outData == NULL) {
+        return CMR_ERROR_NULL_POINTER;
+    }
+    uint32_t outOffset = 0;
+    int32_t ret = CopyUint32ToBuffer(result->count, outData, &outOffset);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("copy count to buffer failed");
+        return ret;
+    }
+    for (uint32_t i = 0; i < result->count; i++) {
+        struct CmBlob uriBlob = { strlen(result->certInfos[i].uri) + 1,
+            (uint8_t *)result->certInfos[i].uri };
+        ret = CopyBlobToBuffer(&uriBlob, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+        ret = CopyUint32ToBuffer(result->certInfos[i].type, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+        struct CmBlob aliasBlob = { strlen(result->certInfos[i].alias) + 1,
+            (uint8_t *)result->certInfos[i].alias };
+        ret = CopyBlobToBuffer(&aliasBlob, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+        ret = CopyUint32ToBuffer(result->certInfos[i].state, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+        struct CmBlob subjectBlob = { strlen(result->certInfos[i].subjectName) + 1,
+            (uint8_t *)result->certInfos[i].subjectName };
+        ret = CopyBlobToBuffer(&subjectBlob, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+        ret = CopyUint32ToBuffer(result->certInfos[i].scope, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+        ret = CopyBlobToBuffer(&result->certInfos[i].certData, outData, &outOffset);
+        if (ret != CM_SUCCESS) {
+            return ret;
+        }
+    }
+    return CM_SUCCESS;
+}
+
+void CmIpcServiceFindCertificate(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context)
+{
+    int32_t ret = CM_SUCCESS;
+    struct CmBlob requestBlob = { 0, NULL };
+    struct CmContext cmContext = {0};
+    struct CmParamSet *paramSet = NULL;
+    struct CmParamOut params[] = {
+        { .tag = CM_TAG_PARAM0_BUFFER, .blob = &requestBlob },
+    };
+
+    do {
+        ret = GetInputParams(paramSetBlob, &paramSet, &cmContext, params, CM_ARRAY_SIZE(params));
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("FindCertificate get input params failed, ret = %d", ret);
+            break;
+        }
+
+        /* unpack FindCertRequest from requestBlob */
+        struct FindCertRequest request;
+        ret = UnpackFindCertRequest(&requestBlob, &request);
+        if (ret != CM_SUCCESS) {
+            break;
+        }
+
+        /* call service */
+        struct FindCertResult result;
+        (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+
+        ret = CmServiceFindCertificate(&cmContext, &request, &result);
+        CM_FREE_PTR(request.certTypes);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("CmServiceFindCertificate fail, ret = %d", ret);
+            break;
+        }
+
+        /* pack FindCertResult into outData */
+        ret = PackFindCertResult(&result, outData);
+        CmFreeFindCertResultInner(&result);
+    } while (0);
+
+    if (ret != CM_SUCCESS) {
+        CmSendResponse(context, ret, NULL);
+    } else {
+        CmSendResponse(context, ret, outData);
+    }
+    CmFreeParamSet(&paramSet);
+    CM_LOG_I("leave CmIpcServiceFindCertificate: ret = %d", ret);
+}

@@ -494,6 +494,46 @@ static inline int32_t CmCheckInstallCertInfo(const struct CmInstallCertInfo *ins
     return CM_SUCCESS;
 }
 
+/* FindCertificate related types */
+#define MAX_COUNT_FIND_CERT_TYPE    8
+#define MAX_LEN_FIND_CERT_NAME     257   /* include 1 byte: the terminator('\0') */
+#define MAX_LEN_FIND_CERT_ID       256
+#define MAX_COUNT_FIND_CERT_RESULT 16
+
+enum CmFindCertScope {
+    CM_FIND_CERT_SCOPE_CURRENT_USER = 0,
+    CM_FIND_CERT_SCOPE_GLOBAL = 1,
+    CM_FIND_CERT_SCOPE_CURRENT_AND_GLOBAL = 2,
+};
+
+enum CmFindCertType {
+    CM_FIND_CERT_TYPE_USER_CA = 0,
+};
+
+struct FindCertRequest {
+    uint32_t certTypesCount;
+    enum CmFindCertType *certTypes;
+    enum CmFindCertScope scope;
+    char name[MAX_LEN_FIND_CERT_NAME];
+    uint32_t countLimit;
+    char certId[MAX_LEN_FIND_CERT_ID];
+};
+
+struct FindCertInfo {
+    char uri[MAX_LEN_URI];
+    uint32_t type;
+    char alias[MAX_LEN_CERT_ALIAS];
+    uint32_t state;
+    char subjectName[MAX_LEN_SUBJECT_NAME];
+    enum CmFindCertScope scope;
+    struct CmBlob certData;
+};
+
+struct FindCertResult {
+    uint32_t count;
+    struct FindCertInfo *certInfos;
+};
+
 #ifdef __cplusplus
 }
 #endif

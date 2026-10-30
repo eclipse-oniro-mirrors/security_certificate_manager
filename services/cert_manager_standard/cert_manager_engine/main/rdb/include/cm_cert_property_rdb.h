@@ -43,6 +43,17 @@ int32_t UpdateCertProperty(const struct CertProperty *certProperty);
 
 int32_t QueryCertProperty(const char *uri, struct CertProperty *certProperty);
 
+struct CmFindCertCondition {
+    const char *certType;
+    const int32_t *userIds;
+    uint32_t userIdCount;
+    const char *name;
+    const char *certId;
+};
+
+int32_t QueryCertPropertyByCondition(const struct CmFindCertCondition *condition,
+    struct CertProperty **results, uint32_t *resultCount);
+
 #ifdef __cplusplus
 }
 #endif

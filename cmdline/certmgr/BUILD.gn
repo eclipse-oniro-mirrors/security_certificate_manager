@@ -43,6 +43,7 @@ if (certificate_manager_feature_cmdline_enabled == true) {
       "hilog:libhilog",
       "bounds_checking_function:libsec_shared",
       "i18n:intl_util",
+      "openssl:libcrypto_shared",
     ]
 
     if (useriam_user_auth_enable) {

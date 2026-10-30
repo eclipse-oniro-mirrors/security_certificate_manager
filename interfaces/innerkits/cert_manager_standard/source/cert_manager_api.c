@@ -22,6 +22,7 @@
 #include "cm_mem.h"
 #include "cm_ipc_client.h"
 #include "cm_type.h"
+#include "cm_type_free.h"
 #include "cm_ukey_ability_type.h"
 
 const char *HUKS_SYSCAP = "SystemCapability.Security.Huks.CryptoExtension";
@@ -653,6 +654,36 @@ CM_API_EXPORT int32_t CmImportUkeyCert(const struct CmBlob *keyUri, const struct
     return ret;
 }
 
+CM_API_EXPORT int32_t CmSetCertManagerConfig(const struct CertManagerConfig *config)
+{
+    if (config == NULL || config->configItems == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    return CmClientSetCertManagerConfig(config);
+}
+
+CM_API_EXPORT int32_t CmGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertManagerConfig *config)
+{
+    CM_LOG_I("enter get cert manager config");
+    if (config == NULL) {
+        CM_LOG_E("invalid input arguments");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CmClientGetCertManagerConfig(keysBlob, config);
+    CM_LOG_I("leave get cert manager config, result = %d", ret);
+    return ret;
+}
+
+CM_API_EXPORT void CmFreeCertManagerConfig(struct CertManagerConfig *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    CM_FREE_PTR(config->configItems);
+    config->count = 0;
+}
+
 CM_API_EXPORT int32_t CmOpenUkeyAuthDialog(const struct UkeyAuthRequest *ukeyAuthRequest,
     CmUkeyAuthDialogResultCallback callback, void *userData)
 {
@@ -711,33 +742,28 @@ CM_API_EXPORT int32_t CmReportUkeyAuthResult(const struct CmBlob *requestId, int
     CM_LOG_I("leave report ukey auth result, result = %d", ret);
     return ret;
 }
-
-CM_API_EXPORT int32_t CmSetCertManagerConfig(const struct CertManagerConfig *config)
+ 
+CM_API_EXPORT int32_t CmFindCertificate(const struct FindCertRequest *request,
+    struct FindCertResult *result)
 {
-    if (config == NULL || config->configItems == NULL) {
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-    return CmClientSetCertManagerConfig(config);
-}
-
-CM_API_EXPORT int32_t CmGetCertManagerConfig(const struct CmBlob *keysBlob, struct CertManagerConfig *config)
-{
-    CM_LOG_I("enter get cert manager config");
-    if (config == NULL) {
+    CM_LOG_I("enter find certificate");
+    if (request == NULL || result == NULL) {
         CM_LOG_E("invalid input arguments");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    
-    int32_t ret = CmClientGetCertManagerConfig(keysBlob, config);
-    CM_LOG_I("leave get cert manager config, result = %d", ret);
+ 
+    int32_t ret = CmClientFindCertificate(request, result);
+    CM_LOG_I("leave find certificate, result = %d", ret);
     return ret;
 }
-
-CM_API_EXPORT void CmFreeCertManagerConfig(struct CertManagerConfig *config)
+ 
+CM_API_EXPORT void CmFreeFindCertResult(struct FindCertResult *result)
 {
-    if (config == NULL) {
+    CM_LOG_I("enter free find cert result");
+    if (result == NULL) {
+        CM_LOG_E("result is null");
         return;
     }
-    CM_FREE_PTR(config->configItems);
-    config->count = 0;
+    CmFreeFindCertResultInner(result);
+    CM_LOG_I("leave free find cert result");
 }

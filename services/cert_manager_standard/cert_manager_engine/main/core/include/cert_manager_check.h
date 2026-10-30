@@ -58,6 +58,8 @@ int32_t CmServiceSetCertManagerConfigCheck(const struct CertManagerConfig *confi
 int32_t CmServiceGetCertManagerConfigCheck(const struct CmBlob *keysBlob);
 
 int32_t CmServiceGetCertManagerConfigCheckKeys(const struct CmBlob *keysBlob);
+
+int32_t CmServiceFindCertCheck(const struct CmContext *cmContext, const struct FindCertRequest *request);
 #ifdef __cplusplus
 }
 #endif
