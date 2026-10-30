@@ -1,4 +1,4 @@
-# Copyright (C) 2022-2025 Huawei Device Co., Ltd.
+# Copyright (C) 2022-2026 Huawei Device Co., Ltd.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -23,6 +23,7 @@ ohos_static_library("libcert_manager_hisysevent_wrapper_static") {
   part_name = "certificate_manager"
   public_configs = [ ":cert_manager_config" ]
   branch_protector_ret = "pac_ret"
+  stack_protector_ret = true
   sanitize = {
     cfi = true
     cfi_cross_dso = true
@@ -30,7 +31,6 @@ ohos_static_library("libcert_manager_hisysevent_wrapper_static") {
     debug = false
     integer_overflow = true
     ubsan = true
-    stack_protector_ret = true
   }
   include_dirs = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include" ]
   sources = [

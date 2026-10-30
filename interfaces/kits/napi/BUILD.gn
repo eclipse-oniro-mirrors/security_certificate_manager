@@ -16,6 +16,7 @@ import("//build/ohos.gni")
 
 ohos_shared_library("certmanager") {
   branch_protector_ret = "pac_ret"
+  stack_protector_ret = true
   sanitize = {
     cfi = true
     cfi_cross_dso = true
@@ -23,7 +24,6 @@ ohos_shared_library("certmanager") {
     debug = false
     integer_overflow = true
     ubsan = true
-    stack_protector_ret = true
   }
 
   include_dirs = [
@@ -85,6 +85,7 @@ ohos_shared_library("certmanager") {
 
 ohos_shared_library("certmanagerdialog") {
   branch_protector_ret = "pac_ret"
+  stack_protector_ret = true
   sanitize = {
     cfi = true
     cfi_cross_dso = true
@@ -92,7 +93,6 @@ ohos_shared_library("certmanagerdialog") {
     debug = false
     integer_overflow = true
     ubsan = true
-    stack_protector_ret = true
   }
 
   include_dirs = [

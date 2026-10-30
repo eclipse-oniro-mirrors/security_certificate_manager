@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023 Huawei Device Co., Ltd.
+# Copyright (c) 2022-2026 Huawei Device Co., Ltd.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -16,6 +16,7 @@ import("//build/ohos.gni")
 
 ohos_shared_library("cj_cert_manager_ffi") {
   branch_protector_ret = "pac_ret"
+  stack_protector_ret = true
   sanitize = {
     cfi = true
     cfi_cross_dso = true
@@ -23,7 +24,6 @@ ohos_shared_library("cj_cert_manager_ffi") {
     debug = false
     integer_overflow = true
     ubsan = true
-    stack_protector_ret = true
   }
 
   include_dirs = [ "include" ]
