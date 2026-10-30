@@ -840,6 +840,56 @@ TEST_F(CmRevocationCacheEngineTest, LogicalEvictionDeletesFile)
     EXPECT_NE(access(bigFull.c_str(), F_OK), 0);
 }
 
+/* telemetry probe: the SA registers the hisysevent adapter, tests register
+ * this probe and read back what the engine would have reported */
+static uint32_t g_evictReportCount = 0;
+static uint64_t g_evictReportedSum = 0;
+
+static void TestEvictReporter(uint64_t deletedTotalSize)
+{
+    g_evictReportCount++;
+    g_evictReportedSum = deletedTotalSize;
+}
+
+TEST_F(CmRevocationCacheEngineTest, EvictReportsDeletedSum)
+{
+    /* an unexpired capacity eviction reports the total DATA_SIZE of the
+     * IS_DELETED=1 rows through the registered reporter, so the platform
+     * can track cache pressure */
+    g_evictReportCount = 0;
+    g_evictReportedSum = 0;
+    CmSetRevocationEvictReporter(TestEvictReporter);
+
+    const char *bigRel = "ocsp/65766931.cache"; /* hex("evi1") */
+    struct RevocationCacheRecord big = { 0 };
+    big.expireTimeUtc = static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC; /* unexpired */
+    (void)strncpy_s(big.key, sizeof(big.key), "65766931", strlen("65766931"));
+    (void)strncpy_s(big.type, sizeof(big.type), "ocsp", strlen("ocsp"));
+    (void)strncpy_s(big.filePath, sizeof(big.filePath), bigRel, strlen(bigRel));
+    big.dataSize = static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES);
+    ASSERT_EQ(InsertRevocationCacheRecord(&big), CM_SUCCESS);
+    std::string bigFull = std::string(REVOCATION_CACHE_DIR) + bigRel;
+    const uint8_t body[] = "EVICT";
+    ASSERT_EQ(WriteTestFile(bigFull.c_str(), body, sizeof(body) - 1), 0);
+
+    uint8_t keyBuf[] = "evkey11";
+    struct CmBlob key = { sizeof(keyBuf) - 1, keyBuf };
+    uint8_t dataBuf[] = "D";
+    struct CmBlob data = { 1, dataBuf };
+    ASSERT_EQ(CmServiceSaveRevocationCache(&key, CM_REVOCATION_TYPE_OCSP, &data,
+        static_cast<int64_t>(time(nullptr)) + ONE_HOUR_SEC), CM_SUCCESS);
+
+    CmSetRevocationEvictReporter(nullptr); /* never leak the probe into other cases */
+
+    EXPECT_EQ(g_evictReportCount, 1u);
+    EXPECT_EQ(g_evictReportedSum, static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES));
+
+    /* the query behind the report is verifiable directly as well */
+    uint64_t deletedSum = 0;
+    ASSERT_EQ(QueryRevocationCacheDeletedSumSize(&deletedSum), CM_SUCCESS);
+    EXPECT_EQ(deletedSum, static_cast<uint64_t>(REVOCATION_CACHE_MAX_TOTAL_BYTES));
+}
+
 TEST_F(CmRevocationCacheEngineTest, ResaveResurrectsDeletedRow)
 {
     /* a re-save after logical deletion resurrects the row: the REPLACE insert

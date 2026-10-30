@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -31,6 +31,7 @@
 #include "cm_ipc_service.h"
 #include "cm_ukey_auth_dialog_ipc_service.h"
 #include "cm_ukey_auth_dialog_manager.h"
+#include "cert_manager_revocation_cache.h"
 #include "cert_manager_updateflag.h"
 #include "cm_report_wrapper.h"
 #include "cm_response.h"
@@ -382,6 +383,7 @@ void CertManagerService::OnStart(const SystemAbilityOnDemandReason& startReason)
         CmReport(__func__, &context, nullptr, ret);
         return;
     }
+    CmSetRevocationEvictReporter(WriteRevocationEvictEvent);
 
     ret = Init();
     if (ret != CM_SUCCESS) {

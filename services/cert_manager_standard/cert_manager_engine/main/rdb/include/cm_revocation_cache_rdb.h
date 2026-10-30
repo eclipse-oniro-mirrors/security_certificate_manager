@@ -46,13 +46,17 @@ int32_t DeleteRevocationCacheRecord(const char *filePath);
  * row: the exclusion keeps a re-save from billing its own old row twice */
 int32_t QueryRevocationCacheActiveSumSize(const char *key, const char *type, uint64_t *totalSize);
 
+/* sum of DATA_SIZE over logically deleted (IS_DELETED = 1) rows: the eviction
+ * reporter bills the evicted-but-unreaped bytes */
+int32_t QueryRevocationCacheDeletedSumSize(uint64_t *totalSize);
+
 /* oldest active (IS_DELETED = 0) row excluding the given (key, type) row: the next
  * eviction candidate, ordered by expire then write time */
 int32_t QueryRevocationCacheEvictCandidate(const char *key, const char *type,
     struct RevocationCacheRecord *record);
 
-/* logical delete: mark the row IS_DELETED = 1, the cache file stays on disk until
- * the row expires and the periodic cleanup reclaims it */
+/* logical delete: mark the row IS_DELETED = 1; whether the cache file stays on
+ * disk is the caller's decision */
 int32_t MarkRevocationCacheRecordDeleted(const char *filePath);
 
 int32_t QueryExpiredRevocationCacheRecord(int64_t nowUtc, struct RevocationCacheRecord *record);

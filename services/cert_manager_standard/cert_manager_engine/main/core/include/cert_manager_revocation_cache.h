@@ -28,6 +28,13 @@ int32_t CmServiceSaveRevocationCache(const struct CmBlob *key, uint32_t type, co
 int32_t CmRunSaveRevocationCacheAsync(const struct CmBlob *key, uint32_t type, const struct CmBlob *data,
     int64_t expireTimeUtc);
 
+/* telemetry hook: invoked with the total DATA_SIZE of the IS_DELETED = 1 rows
+ * right after a capacity eviction dropped unexpired entries; the SA registers
+ * the hisysevent adapter at startup, NULL (the default) disables reporting */
+typedef void (*CmRevocationEvictReporter)(uint64_t deletedTotalSize);
+
+void CmSetRevocationEvictReporter(CmRevocationEvictReporter reporter);
+
 #ifdef __cplusplus
 }
 #endif
