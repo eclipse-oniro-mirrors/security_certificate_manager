@@ -16,9 +16,16 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 
+#include "securec.h"
+
+#include "cert_manager_query.h"
+#include "cert_manager_service.h"
+#include "cert_manager_status.h"
 #include "cm_rdb_config.h"
 #include "cm_rdb_data_manager.h"
 #include "cm_root_ca_store_rdb.h"
@@ -178,4 +185,126 @@ TEST_F(CmRootCaStoreRdbTest, NullArgsRejected)
     EXPECT_EQ(QueryDisabledRootCa(records, TEST_RECORD_CAPACITY, nullptr), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(QueryRootCaEnable(nullptr, 1, &enable), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(QueryRootCaEnable("testa.0", strlen("testa.0"), nullptr), CMR_ERROR_INVALID_ARGUMENT);
+}
+
+/* ---------- CmRegenerateRevocationPolicyFile / CmSetSystemCertStatus ---------- */
+
+/* read the whole policy file; false when it cannot be opened */
+static bool ReadPolicyFile(std::string &out)
+{
+    std::ifstream f(FORCE_CHECK_POLICY_FILE, std::ios::in | std::ios::binary);
+    if (!f.is_open()) {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+TEST_F(CmRootCaStoreRdbTest, RegeneratePolicyFileEmptyWhenNothingDisabled)
+{
+    ASSERT_EQ(CmRegenerateRevocationPolicyFile(), CM_SUCCESS);
+
+    std::string content;
+    ASSERT_TRUE(ReadPolicyFile(content));
+    EXPECT_EQ(content.size(), 0u); /* no disabled row: 0-byte file, not absent */
+}
+
+TEST_F(CmRootCaStoreRdbTest, RegeneratePolicyFileListsDisabledOrderedByUri)
+{
+    ASSERT_EQ(UpsertRootCaStore("testa.0", strlen("testa.0"), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL, 0, PK_HASH_A),
+        CM_SUCCESS);
+    ASSERT_EQ(UpsertRootCaStore("testb.0", strlen("testb.0"), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL, 0, PK_HASH_B),
+        CM_SUCCESS);
+    ASSERT_EQ(CmRegenerateRevocationPolicyFile(), CM_SUCCESS);
+
+    std::string content;
+    ASSERT_TRUE(ReadPolicyFile(content));
+    /* one "1,<hash>" line per disabled row, ordered by uri */
+    std::string expected = std::string("1,") + PK_HASH_A + "\n" + "1," + PK_HASH_B + "\n";
+    EXPECT_EQ(content, expected);
+}
+
+TEST_F(CmRootCaStoreRdbTest, RegeneratePolicyFileClearsAfterTableReset)
+{
+    ASSERT_EQ(UpsertRootCaStore("testa.0", strlen("testa.0"), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL, 0, PK_HASH_A),
+        CM_SUCCESS);
+    ASSERT_EQ(CmRegenerateRevocationPolicyFile(), CM_SUCCESS);
+    std::string before;
+    ASSERT_TRUE(ReadPolicyFile(before));
+    ASSERT_GT(before.size(), 0u);
+
+    /* fresh table: nothing disabled means the policy file empties out again */
+    DropRootCaStoreTable();
+    ASSERT_EQ(CreateRootCaStoreRdb(), CM_SUCCESS);
+    ASSERT_EQ(CmRegenerateRevocationPolicyFile(), CM_SUCCESS);
+    std::string after;
+    ASSERT_TRUE(ReadPolicyFile(after));
+    EXPECT_EQ(after.size(), 0u);
+}
+
+TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusUnknownUriRejected)
+{
+    /* start from a known state: empty policy file */
+    ASSERT_EQ(CmRegenerateRevocationPolicyFile(), CM_SUCCESS);
+    std::string before;
+    ASSERT_TRUE(ReadPolicyFile(before));
+    ASSERT_EQ(before.size(), 0u);
+
+    struct CmContext context;
+    (void)memset_s(&context, sizeof(context), 0, sizeof(context));
+    char uriBuf[] = "INVALIDXXXX";
+    struct CmBlob uri = { sizeof(uriBuf), (uint8_t *)uriBuf };
+    /* uri not in the system store: nothing recorded, nothing rewritten */
+    EXPECT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CMR_ERROR_NOT_EXIST);
+
+    struct RootCaStoreRecord records[TEST_RECORD_CAPACITY] = {};
+    uint32_t count = 1;
+    EXPECT_EQ(QueryDisabledRootCa(records, TEST_RECORD_CAPACITY, &count), CM_SUCCESS);
+    EXPECT_EQ(count, 0u);
+    std::string after;
+    ASSERT_TRUE(ReadPolicyFile(after));
+    EXPECT_EQ(after, before);
+}
+
+/* device case: round-trips the first REAL system root CA uri through
+ * disable/enable; needs /etc/security/certificates on the target */
+TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
+{
+    struct CmContext context;
+    (void)memset_s(&context, sizeof(context), 0, sizeof(context));
+    struct CmMutableBlob certFileList = { 0, NULL };
+    const struct UserCAProperty prop = { INIT_INVALID_VALUE, CM_ALL_USER };
+    ASSERT_EQ(CmServiceGetCertList(&context, &prop, CM_SYSTEM_TRUSTED_STORE, &certFileList), CM_SUCCESS);
+    ASSERT_GT(certFileList.size, 0u);
+
+    /* copy the uri before the list (and its buffers) is freed */
+    struct CertFileInfo *files = (struct CertFileInfo *)certFileList.data;
+    ASSERT_GT(files[0].fileName.size, 0u);
+    ASSERT_LT(files[0].fileName.size, (uint32_t)sizeof(char[MAX_LEN_URI]));
+    char uriBuf[MAX_LEN_URI] = {0};
+    ASSERT_EQ(memcpy_s(uriBuf, sizeof(uriBuf), files[0].fileName.data, files[0].fileName.size), EOK);
+    CmFreeCertFiles(files, certFileList.size);
+
+    struct CmBlob uri = { (uint32_t)strlen(uriBuf) + 1, (uint8_t *)uriBuf };
+    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CM_SUCCESS);
+
+    uint32_t enable = 1;
+    ASSERT_EQ(QueryRootCaEnable(uriBuf, strlen(uriBuf), &enable), CM_SUCCESS);
+    EXPECT_EQ(enable, 0u);
+
+    std::string content;
+    ASSERT_TRUE(ReadPolicyFile(content));
+    /* exactly one force-check line: "1," + 64 uppercase hex + '\n' (65 + 2) */
+    ASSERT_EQ(content.size(), 67u);
+    EXPECT_EQ(content.substr(0, 2), "1,");
+    EXPECT_EQ(content[66], '\n');
+
+    /* re-enable empties the policy file and clears the disabled row */
+    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED), CM_SUCCESS);
+    std::string cleared;
+    ASSERT_TRUE(ReadPolicyFile(cleared));
+    EXPECT_EQ(cleared.size(), 0u);
+    uint32_t reenable = 0;
+    ASSERT_EQ(QueryRootCaEnable(uriBuf, strlen(uriBuf), &reenable), CM_SUCCESS);
+    EXPECT_EQ(reenable, 1u);
 }

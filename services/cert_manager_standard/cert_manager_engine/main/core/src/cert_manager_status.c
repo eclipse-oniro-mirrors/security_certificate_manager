@@ -16,6 +16,10 @@
 #include "cert_manager_status.h"
 
 #include <pthread.h>
+#include <errno.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "securec.h"
 
@@ -25,8 +29,12 @@
 #include "cert_manager_file_operator.h"
 #include "cert_manager_key_operation.h"
 #include "cert_manager_mem.h"
+#include "cert_manager_query.h"
+#include "cert_manager_service.h"
 #include "cm_log.h"
 #include "cm_type.h"
+#include "cm_x509.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cert_manager_uri.h"
 #include "cert_manager_storage.h"
 
@@ -64,6 +72,162 @@ int32_t CmGetCertConfigStatus(const char *fileName, uint32_t *status)
         *status = CERT_STATUS_ENABLED;
     }
     return CM_SUCCESS;
+}
+
+/* one writer at a time: the tmp file name is fixed, so concurrent
+ * regeneration would interleave writes (same pattern as g_authMgrLock) */
+static pthread_mutex_t g_policyFileLock = PTHREAD_MUTEX_INITIALIZER;
+
+int32_t CmRegenerateRevocationPolicyFile(void)
+{
+    pthread_mutex_lock(&g_policyFileLock);
+
+    int32_t ret = CM_SUCCESS;
+    struct RootCaStoreRecord *records = NULL;
+    FILE *fp = NULL;
+    const char *tmpPath = FORCE_CHECK_POLICY_FILE ".tmp";
+    do {
+        /* the cfg mkdir is the primary source of the directory; this is the
+         * fresh-boot/self-healing fallback and must match its 0701 mode */
+        if (CmIsDirExist(FORCE_CHECK_POLICY_DIR) != CM_SUCCESS) {
+            mode_t mode0701 = S_IRWXU | S_IXOTH;
+            (void)CmUserBakupMakeDir(FORCE_CHECK_POLICY_DIR, &mode0701);
+        }
+
+        /* MAX_COUNT_CERTIFICATE (256) covers every system root CA (125 preset) */
+        records = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE * sizeof(struct RootCaStoreRecord));
+        if (records == NULL) {
+            CM_LOG_E("malloc records failed");
+            ret = CMR_ERROR_MALLOC_FAIL;
+            break;
+        }
+        uint32_t count = 0;
+        ret = QueryDisabledRootCa(records, MAX_COUNT_CERTIFICATE, &count);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("query disabled root ca failed, ret = %d", ret);
+            break;
+        }
+
+        fp = fopen(tmpPath, "wb");
+        if (fp == NULL) {
+            CM_LOG_E("open %s failed", tmpPath);
+            ret = CMR_ERROR_OPEN_FILE_FAIL;
+            break;
+        }
+        for (uint32_t i = 0; i < count; i++) {
+            /* line format: <seq>,<cert pk hash>; the seq is fixed to 1 */
+            if (fprintf(fp, "1,%s\n", records[i].certPkHash) < 0) {
+                CM_LOG_E("write policy line failed");
+                ret = CMR_ERROR_WRITE_FILE_FAIL;
+                break;
+            }
+        }
+        if (ret != CM_SUCCESS) {
+            break;
+        }
+        if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
+            CM_LOG_E("flush policy tmp file failed");
+            ret = CMR_ERROR_WRITE_FILE_FAIL;
+            break;
+        }
+        if (fclose(fp) != 0) {
+            CM_LOG_E("close policy tmp file failed");
+            ret = CMR_ERROR_CLOSE_FILE_FAIL;
+            break;
+        }
+        fp = NULL;
+        /* for-all-app consumers only read the file */
+        if (chmod(tmpPath, 0644) != 0) {
+            CM_LOG_E("chmod policy tmp file failed");
+            ret = CMR_ERROR_WRITE_FILE_FAIL;
+            break;
+        }
+        if (rename(tmpPath, FORCE_CHECK_POLICY_FILE) != 0) {
+            CM_LOG_E("rename policy tmp file failed, errno = 0x%x", errno);
+            ret = CMR_ERROR_WRITE_FILE_FAIL;
+            break;
+        }
+    } while (0);
+
+    if (fp != NULL) {
+        (void)fclose(fp);
+    }
+    if (ret != CM_SUCCESS) {
+        (void)unlink(tmpPath);
+    }
+    CM_FREE_PTR(records);
+    pthread_mutex_unlock(&g_policyFileLock);
+    return ret;
+}
+
+int32_t CmSetSystemCertStatus(const struct CmContext *context,
+    const struct CmBlob *certUri, uint32_t status)
+{
+    if (context == NULL || certUri == NULL || certUri->data == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (status != CERT_STATUS_ENANLED && status != CERT_STATUS_DISABLED) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret;
+    struct CmMutableBlob certFileList = { 0, NULL };
+    do {
+        /* enumerate the real system store and match the uri against it:
+         * a uri that is not a preset file name cannot reach the disk */
+        const struct UserCAProperty prop = { INIT_INVALID_VALUE, CM_ALL_USER };
+        ret = CmServiceGetCertList(context, &prop, CM_SYSTEM_TRUSTED_STORE, &certFileList);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("get system cert list failed, ret = %d", ret);
+            break;
+        }
+
+        uint32_t matchIndex = CmGetMatchedCertIndex(&certFileList, certUri);
+        if ((matchIndex == MAX_COUNT_CERTIFICATE) || (matchIndex == certFileList.size)) {
+            CM_LOG_E("certUri don't match any system cert");
+            ret = CMR_ERROR_NOT_EXIST;
+            break;
+        }
+
+        struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList.data;
+        struct CmBlob certData = { 0, NULL };
+        ret = CmStorageGetBuf((char *)cFileList[matchIndex].path.data,
+            (char *)cFileList[matchIndex].fileName.data, &certData);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("read cert data failed, ret = %d", ret);
+            break;
+        }
+
+        uint32_t algType = CM_ROOT_CA_ALG_TYPE_INTERNATIONAL;
+        char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
+        do {
+            ret = CmGetCertAlgType(&certData, &algType);
+            if (ret != CM_SUCCESS) {
+                CM_LOG_E("get cert alg type failed, ret = %d", ret);
+                break;
+            }
+            ret = CmGetCertPubKeyHashHex(&certData, certPkHash);
+            if (ret != CM_SUCCESS) {
+                CM_LOG_E("get cert pubkey hash failed, ret = %d", ret);
+                break;
+            }
+            uint32_t enable = (status == CERT_STATUS_ENANLED) ? 1 : 0;
+            ret = UpsertRootCaStore((const char *)certUri->data, certUri->size, algType, enable, certPkHash);
+            if (ret != CM_SUCCESS) {
+                CM_LOG_E("upsert root ca store failed, ret = %d", ret);
+                break;
+            }
+        } while (0);
+        CM_FREE_BLOB(certData);
+        if (ret != CM_SUCCESS) {
+            break;
+        }
+
+        ret = CmRegenerateRevocationPolicyFile();
+    } while (0);
+
+    CmFreeCertFiles((struct CertFileInfo *)certFileList.data, certFileList.size);
+    return ret;
 }
 #ifdef __cplusplus
 }

@@ -29,6 +29,16 @@ extern "C" {
 #endif
 
 int32_t CmGetCertConfigStatus(const char *fileName, uint32_t *status);
+
+/* set the manual enable/disable state of one SYSTEM root CA certificate
+ * (certUri must match a file enumerated from the system store); writes the
+ * root_ca_cert_store row and regenerates the force-check policy file */
+int32_t CmSetSystemCertStatus(const struct CmContext *context,
+    const struct CmBlob *certUri, uint32_t status);
+
+/* rewrite the force-check policy file from the disabled rows of
+ * root_ca_cert_store (atomic tmp + rename); 0 bytes when nothing is disabled */
+int32_t CmRegenerateRevocationPolicyFile(void);
 #ifdef __cplusplus
 }
 #endif
