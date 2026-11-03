@@ -43,7 +43,7 @@ static constexpr uint32_t INDEX_DEFAULT_CONFIG = 0;
 static constexpr uint32_t INDEX_ENABLE_LIST = 1;
 static constexpr uint32_t INDEX_DISABLE_LIST = 2;
 static constexpr const char *CONFIG_VALUE_DISABLE = "disable";
-static constexpr const char *CONFIG_VALUE_ENABLE_LIST = "100,200";
+static constexpr const char *CONFIG_VALUE_ENABLE_LIST = "100|200";
 static constexpr const char *CONFIG_VALUE_DISABLE_LIST = "300";
 
 static struct CmConfigItem g_setItems[SET_ITEM_COUNT];
