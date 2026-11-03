@@ -582,6 +582,69 @@ int32_t GetX509Fingerprint(const X509 *x509cert, char *outBuf, uint32_t outBufMa
     return (int32_t)length;
 }
 
+int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex)
+{
+    if (certData == NULL || certData->data == NULL || outPkHashHex == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    X509 *cert = InitCertContext(certData->data, certData->size);
+    if (cert == NULL) {
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+
+    uint8_t md[EVP_MAX_MD_SIZE] = {0};
+    unsigned int mdLen = 0;
+    int32_t ret = CM_SUCCESS;
+    do {
+        if (X509_pubkey_digest(cert, EVP_sha256(), md, &mdLen) != 1 || mdLen == 0) {
+            CM_LOG_E("X509_pubkey_digest failed");
+            ret = CMR_ERROR_INVALID_CERT_FORMAT;
+            break;
+        }
+        /* two uppercase hex chars per byte; 64 chars + NUL fit the 65-byte
+         * contract documented in cm_x509.h */
+        if ((2 * mdLen + 1) > 65) { /* more than SHA256 would overflow it */
+            CM_LOG_E("unexpected pubkey digest length %u", mdLen);
+            ret = CMR_ERROR;
+            break;
+        }
+        static const char hexTbl[] = "0123456789ABCDEF";
+        for (uint32_t i = 0; i < mdLen; i++) {
+            outPkHashHex[2 * i] = hexTbl[md[i] >> 4];       /* high nibble */
+            outPkHashHex[2 * i + 1] = hexTbl[md[i] & 0x0F]; /* low nibble */
+        }
+        outPkHashHex[2 * mdLen] = '\0';
+    } while (0);
+    FreeCertContext(cert);
+    return ret;
+}
+
+int32_t CmGetCertAlgType(const struct CmBlob *certData, uint32_t *algType)
+{
+    if (certData == NULL || certData->data == NULL || algType == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    X509 *cert = InitCertContext(certData->data, certData->size);
+    if (cert == NULL) {
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+
+    int32_t ret = CM_SUCCESS;
+    do {
+        EVP_PKEY *pkey = X509_get0_pubkey(cert);
+        if (pkey == NULL) {
+            CM_LOG_E("X509_get0_pubkey failed");
+            ret = CMR_ERROR_INVALID_CERT_FORMAT;
+            break;
+        }
+        *algType = (EVP_PKEY_base_id(pkey) == EVP_PKEY_SM2) ? 2 : 1; /* 2 = GM, 1 = international */
+    } while (0);
+    FreeCertContext(cert);
+    return ret;
+}
+
 void FreeCertContext(X509 *x509cert)
 {
     if (!x509cert) {
