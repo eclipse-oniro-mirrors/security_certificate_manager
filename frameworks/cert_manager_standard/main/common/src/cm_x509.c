@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -34,6 +34,8 @@ typedef X509_NAME *(FUNC)(const X509 *);
 typedef ASN1_TIME *(TIME_FUNC)(const X509 *);
 #define CONVERT(p) (((p)[0] - '0') * 10 + (p)[1] - '0')
 #define BASE_YEAR 1900
+#define CM_X509_HEX_CHARS_PER_BYTE 2
+#define CM_X509_HEX_BITS_PER_NIBBLE 4
 
 X509 *InitCertContext(const uint8_t *certBuf, uint32_t size)
 {
@@ -604,17 +606,18 @@ int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex
         }
         /* two uppercase hex chars per byte; 64 chars + NUL fit the 65-byte
          * contract documented in cm_x509.h */
-        if ((2 * mdLen + 1) > 65) { /* more than SHA256 would overflow it */
+        if ((CM_X509_HEX_CHARS_PER_BYTE * mdLen + 1) > 65) { /* more than SHA256 would overflow it */
             CM_LOG_E("unexpected pubkey digest length %u", mdLen);
             ret = CMR_ERROR;
             break;
         }
         static const char hexTbl[] = "0123456789ABCDEF";
         for (uint32_t i = 0; i < mdLen; i++) {
-            outPkHashHex[2 * i] = hexTbl[md[i] >> 4];       /* high nibble */
-            outPkHashHex[2 * i + 1] = hexTbl[md[i] & 0x0F]; /* low nibble */
+            outPkHashHex[CM_X509_HEX_CHARS_PER_BYTE * i] =
+                hexTbl[md[i] >> CM_X509_HEX_BITS_PER_NIBBLE]; /* high nibble */
+            outPkHashHex[CM_X509_HEX_CHARS_PER_BYTE * i + 1] = hexTbl[md[i] & 0x0F]; /* low nibble */
         }
-        outPkHashHex[2 * mdLen] = '\0';
+        outPkHashHex[CM_X509_HEX_CHARS_PER_BYTE * mdLen] = '\0';
     } while (0);
     FreeCertContext(cert);
     return ret;

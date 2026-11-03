@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -78,13 +78,68 @@ int32_t CmGetCertConfigStatus(const char *fileName, uint32_t *status)
  * regeneration would interleave writes (same pattern as g_authMgrLock) */
 static pthread_mutex_t g_policyFileLock = PTHREAD_MUTEX_INITIALIZER;
 
+/* serialize the disabled rows into the tmp file, push it to disk, then
+ * atomically rename it over the published policy file */
+static int32_t WriteAndPublishPolicyFile(const struct RootCaStoreRecord *records, uint32_t count,
+    const char *tmpPath)
+{
+    int32_t ret = CM_SUCCESS;
+    FILE *fp = fopen(tmpPath, "wb");
+    if (fp == NULL) {
+        CM_LOG_E("open %s failed", tmpPath);
+        return CMR_ERROR_OPEN_FILE_FAIL;
+    }
+    do {
+        for (uint32_t i = 0; i < count; i++) {
+            /* line format: <seq>,<cert pk hash>; the seq is fixed to 1 */
+            if (fprintf(fp, "1,%s\n", records[i].certPkHash) < 0) {
+                CM_LOG_E("write policy line failed");
+                ret = CMR_ERROR_WRITE_FILE_FAIL;
+                break;
+            }
+        }
+        if (ret != CM_SUCCESS) {
+            break;
+        }
+        if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
+            CM_LOG_E("flush policy tmp file failed");
+            ret = CMR_ERROR_WRITE_FILE_FAIL;
+            break;
+        }
+        /* fclose destroys the stream even when it fails: close exactly once,
+         * retrying it in the cleanup below would be undefined behavior */
+        int closeRet = fclose(fp);
+        fp = NULL;
+        if (closeRet != 0) {
+            CM_LOG_E("close policy tmp file failed");
+            ret = CMR_ERROR_CLOSE_FILE_FAIL;
+            break;
+        }
+        /* for-all-app consumers only read the file */
+        if (chmod(tmpPath, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) != 0) {
+            CM_LOG_E("chmod policy tmp file failed");
+            ret = CMR_ERROR_WRITE_FILE_FAIL;
+            break;
+        }
+        if (rename(tmpPath, FORCE_CHECK_POLICY_FILE) != 0) {
+            CM_LOG_E("rename policy tmp file failed, errno = 0x%x", errno);
+            ret = CMR_ERROR_WRITE_FILE_FAIL;
+            break;
+        }
+    } while (0);
+
+    if (fp != NULL) {
+        (void)fclose(fp);
+    }
+    return ret;
+}
+
 int32_t CmRegenerateRevocationPolicyFile(void)
 {
     pthread_mutex_lock(&g_policyFileLock);
 
     int32_t ret = CM_SUCCESS;
     struct RootCaStoreRecord *records = NULL;
-    FILE *fp = NULL;
     const char *tmpPath = FORCE_CHECK_POLICY_FILE ".tmp";
     do {
         /* the cfg mkdir is the primary source of the directory; this is the
@@ -108,55 +163,38 @@ int32_t CmRegenerateRevocationPolicyFile(void)
             break;
         }
 
-        fp = fopen(tmpPath, "wb");
-        if (fp == NULL) {
-            CM_LOG_E("open %s failed", tmpPath);
-            ret = CMR_ERROR_OPEN_FILE_FAIL;
-            break;
-        }
-        for (uint32_t i = 0; i < count; i++) {
-            /* line format: <seq>,<cert pk hash>; the seq is fixed to 1 */
-            if (fprintf(fp, "1,%s\n", records[i].certPkHash) < 0) {
-                CM_LOG_E("write policy line failed");
-                ret = CMR_ERROR_WRITE_FILE_FAIL;
-                break;
-            }
-        }
-        if (ret != CM_SUCCESS) {
-            break;
-        }
-        if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
-            CM_LOG_E("flush policy tmp file failed");
-            ret = CMR_ERROR_WRITE_FILE_FAIL;
-            break;
-        }
-        if (fclose(fp) != 0) {
-            CM_LOG_E("close policy tmp file failed");
-            ret = CMR_ERROR_CLOSE_FILE_FAIL;
-            break;
-        }
-        fp = NULL;
-        /* for-all-app consumers only read the file */
-        if (chmod(tmpPath, 0644) != 0) {
-            CM_LOG_E("chmod policy tmp file failed");
-            ret = CMR_ERROR_WRITE_FILE_FAIL;
-            break;
-        }
-        if (rename(tmpPath, FORCE_CHECK_POLICY_FILE) != 0) {
-            CM_LOG_E("rename policy tmp file failed, errno = 0x%x", errno);
-            ret = CMR_ERROR_WRITE_FILE_FAIL;
-            break;
-        }
+        ret = WriteAndPublishPolicyFile(records, count, tmpPath);
     } while (0);
 
-    if (fp != NULL) {
-        (void)fclose(fp);
-    }
     if (ret != CM_SUCCESS) {
         (void)unlink(tmpPath);
     }
     CM_FREE_PTR(records);
     pthread_mutex_unlock(&g_policyFileLock);
+    return ret;
+}
+
+/* digest the matched certificate and upsert its root_ca_cert_store row */
+static int32_t UpsertRootCaRecord(const struct CmBlob *certData, const struct CmBlob *certUri,
+    uint32_t status)
+{
+    uint32_t algType = CM_ROOT_CA_ALG_TYPE_INTERNATIONAL;
+    char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
+    int32_t ret = CmGetCertAlgType(certData, &algType);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("get cert alg type failed, ret = %d", ret);
+        return ret;
+    }
+    ret = CmGetCertPubKeyHashHex(certData, certPkHash);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("get cert pubkey hash failed, ret = %d", ret);
+        return ret;
+    }
+    uint32_t enable = (status == CERT_STATUS_ENANLED) ? 1 : 0;
+    ret = UpsertRootCaStore((const char *)certUri->data, certUri->size, algType, enable, certPkHash);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("upsert root ca store failed, ret = %d", ret);
+    }
     return ret;
 }
 
@@ -198,26 +236,7 @@ int32_t CmSetSystemCertStatus(const struct CmContext *context,
             break;
         }
 
-        uint32_t algType = CM_ROOT_CA_ALG_TYPE_INTERNATIONAL;
-        char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
-        do {
-            ret = CmGetCertAlgType(&certData, &algType);
-            if (ret != CM_SUCCESS) {
-                CM_LOG_E("get cert alg type failed, ret = %d", ret);
-                break;
-            }
-            ret = CmGetCertPubKeyHashHex(&certData, certPkHash);
-            if (ret != CM_SUCCESS) {
-                CM_LOG_E("get cert pubkey hash failed, ret = %d", ret);
-                break;
-            }
-            uint32_t enable = (status == CERT_STATUS_ENANLED) ? 1 : 0;
-            ret = UpsertRootCaStore((const char *)certUri->data, certUri->size, algType, enable, certPkHash);
-            if (ret != CM_SUCCESS) {
-                CM_LOG_E("upsert root ca store failed, ret = %d", ret);
-                break;
-            }
-        } while (0);
+        ret = UpsertRootCaRecord(&certData, certUri, status);
         CM_FREE_BLOB(certData);
         if (ret != CM_SUCCESS) {
             break;

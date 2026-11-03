@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -582,6 +582,41 @@ static int32_t GetCertInfo(const struct CertFileInfo *certFileInfo, uint32_t sto
     return ret;
 }
 
+/* manual status of one system root CA: disabled only when root_ca_cert_store
+ * carries a row with the same uri; no row counts as enabled */
+static uint32_t GetSystemCertManualStatus(const struct CmBlob *fileName,
+    const struct RootCaStoreRecord *disabledRecords, uint32_t disabledCount)
+{
+    /* fileName carries its NUL terminator and record.uri is NUL terminated:
+     * equal length including it and equal bytes mean the same uri */
+    for (uint32_t j = 0; j < disabledCount; j++) {
+        if ((fileName->size == strlen(disabledRecords[j].uri) + 1) &&
+            (memcmp(fileName->data, disabledRecords[j].uri, fileName->size) == 0)) {
+            return CERT_STATUS_DISABLED;
+        }
+    }
+    return CERT_STATUS_ENABLED;
+}
+
+/* fetch the disabled rows in one shot so the per-certificate loop only does
+ * an in-memory match */
+static int32_t GetDisabledRootCaRecords(struct RootCaStoreRecord **records, uint32_t *count)
+{
+    *records = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE *
+        sizeof(struct RootCaStoreRecord));
+    if (*records == NULL) {
+        CM_LOG_E("malloc disabled records failed");
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    int32_t ret = QueryDisabledRootCa(*records, MAX_COUNT_CERTIFICATE, count);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("query disabled root ca failed, ret = %d", ret);
+        CM_FREE_PTR(*records);
+        *records = NULL;
+    }
+    return ret;
+}
+
 int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
     const struct CmMutableBlob *certFileList, struct CertBlob *certBlob, uint32_t *status)
 {
@@ -599,16 +634,8 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
     struct RootCaStoreRecord *disabledRecords = NULL;
     uint32_t disabledCount = 0;
     if (store == CM_SYSTEM_TRUSTED_STORE) {
-        disabledRecords = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE *
-            sizeof(struct RootCaStoreRecord));
-        if (disabledRecords == NULL) {
-            CM_LOG_E("malloc disabled records failed");
-            return CMR_ERROR_MALLOC_FAIL;
-        }
-        ret = QueryDisabledRootCa(disabledRecords, MAX_COUNT_CERTIFICATE, &disabledCount);
+        ret = GetDisabledRootCaRecords(&disabledRecords, &disabledCount);
         if (ret != CM_SUCCESS) {
-            CM_LOG_E("query disabled root ca failed, ret = %d", ret);
-            CM_FREE_PTR(disabledRecords);
             return ret;
         }
     }
@@ -638,17 +665,7 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
         certBlob->uri[i].size = cFileList[i].fileName.size; /* uri */
 
         if (store == CM_SYSTEM_TRUSTED_STORE) {
-            status[i] = CERT_STATUS_ENABLED;
-            /* fileName carries its NUL terminator and record.uri is NUL
-             * terminated: equal means same length including it, same bytes */
-            for (uint32_t j = 0; j < disabledCount; j++) {
-                if ((cFileList[i].fileName.size == strlen(disabledRecords[j].uri) + 1) &&
-                    (memcmp(cFileList[i].fileName.data, disabledRecords[j].uri,
-                    cFileList[i].fileName.size) == 0)) {
-                    status[i] = CERT_STATUS_DISABLED;
-                    break;
-                }
-            }
+            status[i] = GetSystemCertManualStatus(&cFileList[i].fileName, disabledRecords, disabledCount);
             continue;
         }
         ret = CmGetCertConfigStatus((char *)cFileList[i].fileName.data, &status[i]);
