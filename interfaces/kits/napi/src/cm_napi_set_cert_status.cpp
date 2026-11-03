@@ -102,6 +102,8 @@ static napi_value SetCertStatusParseParams(
     }
     if (context->certType == CM_CA_CERT_USER) {
         context->store = CM_USER_TRUSTED_STORE;
+    } else if (context->certType == CM_CA_CERT_SYSTEM) {
+        context->store = CM_SYSTEM_TRUSTED_STORE;
     } else {
         ThrowError(env, PARAM_ERROR, "certType invalid.", context->metricsReport.get());
         CM_LOG_E("check certType invalid");
@@ -124,6 +126,8 @@ static void SetCertStatusExecute(napi_env env, void *data)
     SetCertStatusAsyncContext context = static_cast<SetCertStatusAsyncContext>(data);
     if (context->store == CM_USER_TRUSTED_STORE) {
         context->result = CmSetUserCertStatus(context->certUri, context->store, context->status);
+    } else if (context->store == CM_SYSTEM_TRUSTED_STORE) {
+        context->result = CmSetCertStatus(context->certUri, context->store, context->status);
     } else {
         context->result = CMR_ERROR_INVALID_ARGUMENT;
     }
