@@ -38,6 +38,7 @@
 #include "cm_event_process.h"
 #include "cm_cert_property_rdb.h"
 #include "cm_config_rdb.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cm_log.h"
 #include "cm_type.h"
 #include "cm_x509.h"
@@ -625,9 +626,19 @@ static int32_t CmServiceGetSysCertInfo(const struct CmContext *context, const st
             ret = CMR_ERROR_NOT_EXIST;
             break;
         }
-        *status = CERT_STATUS_ENABLED;
 
         struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList.data;
+        /* report the manual state from root_ca_cert_store; a uri without a
+         * row there counts as enabled */
+        uint32_t enable = 1;
+        ret = QueryRootCaEnable((char *)cFileList[matchIndex].fileName.data,
+            cFileList[matchIndex].fileName.size, &enable);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("Failed to get root ca enable, ret = %d", ret);
+            break;
+        }
+        *status = (enable == 1) ? CERT_STATUS_ENABLED : CERT_STATUS_DISABLED;
+
         ret = CmStorageGetBuf((char *)cFileList[matchIndex].path.data,
         (char *)cFileList[matchIndex].fileName.data, certificateData); /* cert data */
         if (ret != CM_SUCCESS) {

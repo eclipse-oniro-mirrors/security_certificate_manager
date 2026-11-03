@@ -17,6 +17,7 @@
 
 #include "securec.h"
 #include "cm_cert_property_rdb.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cm_log.h"
 #include "cm_type.h"
 #include "cm_x509.h"
@@ -593,12 +594,31 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
         return ret;
     }
 
+    /* the system store reports the manual disable state recorded in
+     * root_ca_cert_store: one query up front beats one per certificate */
+    struct RootCaStoreRecord *disabledRecords = NULL;
+    uint32_t disabledCount = 0;
+    if (store == CM_SYSTEM_TRUSTED_STORE) {
+        disabledRecords = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE *
+            sizeof(struct RootCaStoreRecord));
+        if (disabledRecords == NULL) {
+            CM_LOG_E("malloc disabled records failed");
+            return CMR_ERROR_MALLOC_FAIL;
+        }
+        ret = QueryDisabledRootCa(disabledRecords, MAX_COUNT_CERTIFICATE, &disabledCount);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("query disabled root ca failed, ret = %d", ret);
+            CM_FREE_PTR(disabledRecords);
+            return ret;
+        }
+    }
+
     for (uint32_t i = 0; i < certFileList->size; i++) {
         struct CmContext certContext = {0};
         ret = GetCertContext(&cFileList[i].fileName, &certContext, context, store);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("Failed to get cert context");
-            return ret;
+            break;
         }
 
         ret = GetCertInfo(&cFileList[i], store, &(certBlob->certAlias[i]), &(certBlob->subjectName[i]));
@@ -611,21 +631,34 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
         if (memcpy_s(certBlob->uri[i].data, MAX_LEN_URI, cFileList[i].fileName.data,
             cFileList[i].fileName.size) != EOK) {
             CM_LOG_E("Failed to get cert uri");
-            return CMR_ERROR_MEM_OPERATION_COPY;
+            ret = CMR_ERROR_MEM_OPERATION_COPY;
+            break;
         }
 
         certBlob->uri[i].size = cFileList[i].fileName.size; /* uri */
 
         if (store == CM_SYSTEM_TRUSTED_STORE) {
             status[i] = CERT_STATUS_ENABLED;
+            /* fileName carries its NUL terminator and record.uri is NUL
+             * terminated: equal means same length including it, same bytes */
+            for (uint32_t j = 0; j < disabledCount; j++) {
+                if ((cFileList[i].fileName.size == strlen(disabledRecords[j].uri) + 1) &&
+                    (memcmp(cFileList[i].fileName.data, disabledRecords[j].uri,
+                    cFileList[i].fileName.size) == 0)) {
+                    status[i] = CERT_STATUS_DISABLED;
+                    break;
+                }
+            }
             continue;
         }
         ret = CmGetCertConfigStatus((char *)cFileList[i].fileName.data, &status[i]);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("Failed to get cert status, ret = %d", ret);
-            return CMR_ERROR_GET_CERT_STATUS;
+            ret = CMR_ERROR_GET_CERT_STATUS;
+            break;
         }
     }
+    CM_FREE_PTR(disabledRecords);
     return ret;
 }
 

@@ -212,6 +212,12 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
             CM_LOG_E("CmServiceSetCertStatusCheck check failed, ret = %d", ret);
             break;
         }
+
+        ret = CmSetSystemCertStatus(&cmContext, &certUri, status);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("CmSetSystemCertStatus failed, ret = %d", ret);
+            break;
+        }
     } while (0);
     CmReport(__func__, &cmContext, &certUri, ret);
 

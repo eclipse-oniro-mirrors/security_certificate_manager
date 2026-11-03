@@ -13,6 +13,10 @@
  * limitations under the License.
  */
 
+#include <fstream>
+#include <iterator>
+#include <string>
+
 #include <gtest/gtest.h>
 #include "cm_test_log.h"
 #include "cm_test_common.h"
@@ -29,12 +33,34 @@ struct CertStatusExpectResult {
     bool expectStatus;
 };
 
+/* preset system CA pubkey hashes, precomputed with (NOT derived from the
+ * code under test):
+ *   openssl x509 -in config/systemCertificates/<uri> -pubkey -noout |
+ *   openssl pkey -pubin -outform DER | sha256sum   (uppercase)
+ * index i pairs with g_expectList[i].uri */
+static const char *EXPECTED_SYSTEM_PK_HASHES[] = {
+    "7E0EAD76BB6819DC2F54511A84354F6E8B307B9DD82058EA6C004F01D9DDA5DF", /* 1d3472b9.0 */
+    "808D68B3FAB4884A5F971ACE7D10550D7A95A163774F3EC36AFFFB213FBE4C74", /* 4bfab552.0 */
+    "40FCFC28875DCCBFEBCBDF6CD7433312DA63C4EFCF3BD7B1B505C22020AE0274", /* 4f316efb.0 */
+};
+
+/* read the whole force-check policy file; false when it cannot be opened */
+static bool ReadPolicyFile(std::string &out)
+{
+    std::ifstream f(FORCE_CHECK_POLICY_FILE, std::ios::in | std::ios::binary);
+    if (!f.is_open()) {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
 struct CertStatusExpectResult g_expectList[] = {
     {
-        {"1d3472b9.0"}, false, true
+        {"1d3472b9.0"}, false, false
     },
     {
-        {"4bfab552.0"}, false, true
+        {"4bfab552.0"}, false, false
     },
     {
         {"4f316efb.0"}, true, true
@@ -120,6 +146,13 @@ HWTEST_F(CmSetCertStatusTest, SetCertStatusAndQueryStatus002, TestSize.Level0)
         EXPECT_EQ(status, 1) << "SetCertStatusAndQueryStatus faild, cert info: " << DumpCertInfo(&certDetailInfo);
         FreeCMBlobData(&(certDetailInfo.certInfo));
 
+        /* disabled in this iteration: the force-check policy file must list it */
+        if (!g_expectList[i].inparamStatus) {
+            std::string policy;
+            ASSERT_TRUE(ReadPolicyFile(policy));
+            EXPECT_NE(policy.find(std::string("1,") + EXPECTED_SYSTEM_PK_HASHES[i]), std::string::npos);
+        }
+
         ret = CmSetCertStatus(&uriBlob, CM_SYSTEM_TRUSTED_STORE, true);
         EXPECT_EQ(ret, CM_SUCCESS) << " SetCertStatusAndQueryStatus, CmSetCertStatus failed,retcode: " << ret;
     }
@@ -156,6 +189,11 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
         ret = CmSetCertStatus(&uriBlob2, CM_SYSTEM_TRUSTED_STORE, true);
         EXPECT_EQ(ret, CM_SUCCESS);
     }
+
+    /* all re-enabled: the force-check policy file is empty again */
+    std::string policy;
+    ASSERT_TRUE(ReadPolicyFile(policy));
+    ASSERT_EQ(policy.size(), 0u);
     FreeCertList(certlist);
 }
 
@@ -176,6 +214,6 @@ HWTEST_F(CmSetCertStatusTest, ExceptionSetStatus004, TestSize.Level0)
     const char *invalidUri = "INVALIDXXXX";
     struct CmBlob invalidUriBlob = {strlen(invalidUri) + 1, (uint8_t *)invalidUri};
     EXPECT_EQ(CmSetCertStatus(&invalidUriBlob, CM_SYSTEM_TRUSTED_STORE, true),
-        CM_SUCCESS);
+        CMR_ERROR_NOT_EXIST);
 }
 }

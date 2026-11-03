@@ -20,6 +20,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "securec.h"
 
@@ -45,7 +46,8 @@ constexpr uint32_t TEST_RECORD_CAPACITY = 4;
  * cert_manager_query.c): the store must key both spellings to the same row */
 constexpr uint32_t URI_NUL_LEN = 1;
 
-/* drop the whole table so every test starts and ends on an empty store */
+/* drop the whole table (used INSIDE one test to simulate a fresh table;
+ * fixtures must NOT leave it dropped: the SA shares this database file) */
 void DropRootCaStoreTable()
 {
     using namespace OHOS::Security::CertManager;
@@ -57,18 +59,33 @@ void DropRootCaStoreTable()
     auto dropMgr = std::make_shared<CmRdbDataManager>(dropCfg);
     (void)dropMgr->CreateTable();
 }
+
+/* delete every row, then rewrite the policy file to match: the table itself
+ * stays because the SA reads the same database file */
+void CleanupRootCaStoreState()
+{
+    using namespace OHOS::Security::CertManager;
+    RdbConfig cleanCfg;
+    cleanCfg.dbName = CERT_MANAGER_RDB_NAME;
+    cleanCfg.tableName = ROOT_CA_STORE_TABLE_NAME;
+    /* make_shared is mandatory: the manager takes shared_from_this on open */
+    auto cleanMgr = std::make_shared<CmRdbDataManager>(cleanCfg);
+    (void)cleanMgr->ExecuteSql("DELETE FROM " + ROOT_CA_STORE_TABLE_NAME,
+        std::vector<OHOS::NativeRdb::ValueObject>());
+    (void)CmRegenerateRevocationPolicyFile();
+}
 } // namespace
 
 class CmRootCaStoreRdbTest : public testing::Test {
 public:
     void SetUp() override
     {
-        DropRootCaStoreTable();
+        CleanupRootCaStoreState();
         ASSERT_EQ(CreateRootCaStoreRdb(), CM_SUCCESS);
     }
     void TearDown() override
     {
-        DropRootCaStoreTable();
+        CleanupRootCaStoreState();
     }
 };
 
