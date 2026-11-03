@@ -153,6 +153,25 @@ HWTEST_F(CmSetCertStatusTest, SetCertStatusAndQueryStatus002, TestSize.Level0)
             EXPECT_NE(policy.find(std::string("1,") + EXPECTED_SYSTEM_PK_HASHES[i]), std::string::npos);
         }
 
+        /* list-level: the abstract row for this uri must carry the same state
+         * as the detail query (exercises the disabled-records query + uri match
+         * in CmGetCertListInfo, and both directions of the status mapping) */
+        struct CertList *certlist = NULL;
+        ASSERT_TRUE(InitCertList(&certlist) == CM_SUCCESS);
+        ret = CmGetCertList(CM_SYSTEM_TRUSTED_STORE, certlist);
+        EXPECT_EQ(ret, CM_SUCCESS) << "SetCertStatusAndQueryStatus,CmGetCertList failed,retcode:" << ret;
+        bool rowFound = false;
+        for (uint32_t j = 0; j < certlist->certsCount; ++j) {
+            if (strcmp(certlist->certAbstract[j].uri, g_expectList[i].uri) == 0) {
+                EXPECT_EQ(certlist->certAbstract[j].status, g_expectList[i].expectStatus)
+                    << "list status mismatch for uri: " << g_expectList[i].uri;
+                rowFound = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(rowFound) << "uri not found in system cert list: " << g_expectList[i].uri;
+        FreeCertList(certlist);
+
         ret = CmSetCertStatus(&uriBlob, CM_SYSTEM_TRUSTED_STORE, true);
         EXPECT_EQ(ret, CM_SUCCESS) << " SetCertStatusAndQueryStatus, CmSetCertStatus failed,retcode: " << ret;
     }

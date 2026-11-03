@@ -602,13 +602,13 @@ static uint32_t GetSystemCertManualStatus(const struct CmBlob *fileName,
  * an in-memory match */
 static int32_t GetDisabledRootCaRecords(struct RootCaStoreRecord **records, uint32_t *count)
 {
-    *records = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE *
+    *records = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE_ALL *
         sizeof(struct RootCaStoreRecord));
     if (*records == NULL) {
         CM_LOG_E("malloc disabled records failed");
         return CMR_ERROR_MALLOC_FAIL;
     }
-    int32_t ret = QueryDisabledRootCa(*records, MAX_COUNT_CERTIFICATE, count);
+    int32_t ret = QueryDisabledRootCa(*records, MAX_COUNT_CERTIFICATE_ALL, count);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("query disabled root ca failed, ret = %d", ret);
         CM_FREE_PTR(*records);
@@ -636,7 +636,11 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
     if (store == CM_SYSTEM_TRUSTED_STORE) {
         ret = GetDisabledRootCaRecords(&disabledRecords, &disabledCount);
         if (ret != CM_SUCCESS) {
-            return ret;
+            /* fail open on the read path: a broken root_ca_cert_store must not
+             * fail the whole system CA listing — show every preset root CA as
+             * enabled until the store recovers (the set path stays hard-fail) */
+            ret = CM_SUCCESS;
+            disabledCount = 0;
         }
     }
 

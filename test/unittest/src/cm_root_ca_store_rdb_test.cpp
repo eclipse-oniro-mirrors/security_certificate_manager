@@ -61,7 +61,10 @@ void DropRootCaStoreTable()
 }
 
 /* delete every row, then rewrite the policy file to match: the table itself
- * stays because the SA reads the same database file */
+ * stays because the SA reads the same database file.
+ * WARNING: this wipes REAL rows — any manual disable state an actual user
+ * recorded in root_ca_cert_store is lost; running these tests is therefore
+ * confined to a dedicated test device */
 void CleanupRootCaStoreState()
 {
     using namespace OHOS::Security::CertManager;
@@ -311,10 +314,12 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
 
     std::string content;
     ASSERT_TRUE(ReadPolicyFile(content));
-    /* exactly one force-check line: "1," + 64 uppercase hex + '\n' (65 + 2) */
-    ASSERT_EQ(content.size(), 67u);
-    EXPECT_EQ(content.substr(0, 2), "1,");
-    EXPECT_EQ(content[66], '\n');
+    /* exactly one force-check line: "1," + 64 uppercase hex chars + '\n' */
+    constexpr size_t POLICY_PREFIX_LEN = 2; /* "1," */
+    constexpr size_t POLICY_LINE_LEN = POLICY_PREFIX_LEN + CM_ROOT_CA_PK_HASH_HEX_LEN + 1;
+    ASSERT_EQ(content.size(), POLICY_LINE_LEN);
+    EXPECT_EQ(content.substr(0, POLICY_PREFIX_LEN), "1,");
+    EXPECT_EQ(content[POLICY_LINE_LEN - 1], '\n');
 
     /* re-enable empties the policy file and clears the disabled row */
     ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED), CM_SUCCESS);

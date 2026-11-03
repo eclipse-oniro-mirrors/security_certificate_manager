@@ -149,15 +149,17 @@ int32_t CmRegenerateRevocationPolicyFile(void)
             (void)CmUserBakupMakeDir(FORCE_CHECK_POLICY_DIR, &mode0701);
         }
 
-        /* MAX_COUNT_CERTIFICATE (256) covers every system root CA (125 preset) */
-        records = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE * sizeof(struct RootCaStoreRecord));
+        /* MAX_COUNT_CERTIFICATE_ALL (512) matches the system store list bound
+         * (125 preset root CAs today) */
+        records = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE_ALL *
+            sizeof(struct RootCaStoreRecord));
         if (records == NULL) {
             CM_LOG_E("malloc records failed");
             ret = CMR_ERROR_MALLOC_FAIL;
             break;
         }
         uint32_t count = 0;
-        ret = QueryDisabledRootCa(records, MAX_COUNT_CERTIFICATE, &count);
+        ret = QueryDisabledRootCa(records, MAX_COUNT_CERTIFICATE_ALL, &count);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("query disabled root ca failed, ret = %d", ret);
             break;

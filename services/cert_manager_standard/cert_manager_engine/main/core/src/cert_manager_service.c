@@ -634,8 +634,11 @@ static int32_t CmServiceGetSysCertInfo(const struct CmContext *context, const st
         ret = QueryRootCaEnable((char *)cFileList[matchIndex].fileName.data,
             cFileList[matchIndex].fileName.size, &enable);
         if (ret != CM_SUCCESS) {
+            /* fail open on the read path: detail queries keep working when
+             * root_ca_cert_store is broken — the cert reports as enabled
+             * (the set path stays hard-fail so state never silently changes) */
             CM_LOG_E("Failed to get root ca enable, ret = %d", ret);
-            break;
+            ret = CM_SUCCESS;
         }
         *status = (enable == 1) ? CERT_STATUS_ENABLED : CERT_STATUS_DISABLED;
 

@@ -83,8 +83,16 @@ int32_t CertManagerInitialize(void)
      * the root ca table + a policy-file regeneration self-heal the state on
      * every SA start (config rdb created above) */
     (void)CreateRevocationCacheRdb();
-    (void)CreateRootCaStoreRdb();
-    (void)CmRegenerateRevocationPolicyFile();
+    /* best-effort init: a failure here must not block the SA from starting —
+     * status reads fail open (all system CA enabled); the table creation is
+     * retried on the next SA start, while every successful status set
+     * regenerates the policy file */
+    if (CreateRootCaStoreRdb() != CM_SUCCESS) {
+        CM_LOG_E("create root ca store rdb failed, keep fail-open");
+    }
+    if (CmRegenerateRevocationPolicyFile() != CM_SUCCESS) {
+        CM_LOG_E("regenerate revocation policy file failed on boot");
+    }
 
     return CM_SUCCESS;
 }
