@@ -2040,7 +2040,6 @@ void CmIpcServiceFindCertificate(const struct CmBlob *paramSetBlob, struct CmBlo
     } else {
         CmSendResponse(context, ret, outData);
     }
-}
     CmFreeParamSet(&paramSet);
     CM_LOG_I("leave CmIpcServiceFindCertificate: ret = %d", ret);
 }
