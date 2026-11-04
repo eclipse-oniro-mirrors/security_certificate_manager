@@ -60,6 +60,7 @@ ohos_static_library("libcm_ukey_auth_dialog_static") {
     "huks:libhukssdk",
     "init:libbegetutil",
     "ipc:ipc_core",
+    "samgr:samgr_proxy",
   ]
 
   cflags_cc = [
