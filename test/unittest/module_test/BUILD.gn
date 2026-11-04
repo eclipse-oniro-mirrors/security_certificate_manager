@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023 Huawei Device Co., Ltd.
+# Copyright (c) 2022-2026 Huawei Device Co., Ltd.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -31,6 +31,7 @@ ohos_unittest("cm_module_test") {
   include_dirs = [
     "include",
     "../include",
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/core/include",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/idl/cm_ipc",
   ]
   cflags_cc = [

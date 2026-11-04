@@ -16,14 +16,46 @@
 #include "cm_cert_status_event.h"
 
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "want.h"
 
+#include "cert_manager_thread_pool.h"
 #include "cm_cert_status_event_publish.h"
 #include "cm_log.h"
 #include "cm_type.h"
+
+namespace {
+/* retry policy for the broadcast: at most 3 delayed retries, 50ms apart,
+ * after the first synchronous publish attempt fails */
+constexpr uint32_t CM_STATUS_EVENT_RETRY_DELAY_MS = 50;
+constexpr uint32_t CM_STATUS_EVENT_MAX_RETRY_COUNT = 3;
+
+bool CmPublishSystemCaStatusEventNow(const OHOS::AAFwk::Want &want)
+{
+    std::vector<std::string> subscriberPermissions = { CM_EVENT_SUBSCRIBER_PERMISSION };
+    return CmPublishCommonEventToCes(want, subscriberPermissions);
+}
+
+void CmRetrySystemCaStatusEvent(OHOS::AAFwk::Want want, uint32_t remainingRetry)
+{
+    if (CmPublishSystemCaStatusEventNow(want)) {
+        CM_LOG_I("system ca status event published on retry");
+        return;
+    }
+    if (remainingRetry == 0) {
+        CM_LOG_E("system ca status event dropped, retries exhausted");
+        return;
+    }
+    int32_t ret = CmThreadPoolPost(
+        std::bind(CmRetrySystemCaStatusEvent, want, remainingRetry - 1), CM_STATUS_EVENT_RETRY_DELAY_MS);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("schedule retry of system ca status event failed, ret = %d", ret);
+    }
+}
+} // namespace
 
 int32_t CmPublishSystemCaStatusEvent(const char *certUri, uint32_t status)
 {
@@ -46,12 +78,20 @@ int32_t CmPublishSystemCaStatusEvent(const char *certUri, uint32_t status)
     want.SetParam(CM_EVENT_PARAM_CERT_URI, std::string(certUri));
     want.SetParam(CM_EVENT_PARAM_ENABLED, enabled);
 
-    std::vector<std::string> subscriberPermissions = { CM_EVENT_SUBSCRIBER_PERMISSION };
-    if (!CmPublishCommonEventToCes(want, subscriberPermissions)) {
-        CM_LOG_E("publish system ca status event failed, uri = %s", certUri);
-        return CMR_ERROR;
+    if (CmPublishSystemCaStatusEventNow(want)) {
+        CM_LOG_I("publish system ca status event, uri = %s, enabled = %d", certUri, enabled);
+        return CM_SUCCESS;
     }
 
-    CM_LOG_I("publish system ca status event, uri = %s, enabled = %d", certUri, enabled);
+    /* first attempt failed: hand the retry chain to the generic pool so the
+     * IPC thread returns immediately; delivery stays best-effort */
+    CM_LOG_E("publish system ca status event failed, uri = %s, enqueue retry", certUri);
+    int32_t ret = CmThreadPoolPost(
+        std::bind(CmRetrySystemCaStatusEvent, want, CM_STATUS_EVENT_MAX_RETRY_COUNT - 1),
+        CM_STATUS_EVENT_RETRY_DELAY_MS);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("enqueue retry of system ca status event failed, ret = %d", ret);
+        return CMR_ERROR;
+    }
     return CM_SUCCESS;
 }
