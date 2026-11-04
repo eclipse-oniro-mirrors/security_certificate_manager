@@ -19,16 +19,19 @@ module_output_path = "certificate_manager/certificate_manager"
 ohos_unittest("cm_module_test") {
   module_out_path = module_output_path
   sources = [
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/idl/cm_ipc/cm_cert_status_event.cpp",
     "src/cm_cert_parse_test.cpp",
-    "src/cm_log_test.cpp",
-    "src/cm_param_test.cpp",
+    "src/cm_cert_status_event_test.cpp",
     "src/cm_data_parcel_processor_test.cpp",
     "src/cm_ipc_response_type_test.cpp",
+    "src/cm_log_test.cpp",
+    "src/cm_param_test.cpp",
   ]
 
   include_dirs = [
     "include",
     "../include",
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/idl/cm_ipc",
   ]
   cflags_cc = [
     "-Wall",
@@ -59,6 +62,7 @@ ohos_unittest("cm_module_test") {
   }
 
   external_deps = [
+    "ability_base:want",
     "bounds_checking_function:libsec_static",
     "c_utils:utils",
     "googletest:gtest",

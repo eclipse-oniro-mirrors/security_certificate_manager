@@ -35,6 +35,8 @@ ohos_static_library("libcm_service_idl_standard_static") {
   include_dirs = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include" ]
   defines = []
   sources = [
+    "cm_ipc/cm_cert_status_event.cpp",
+    "cm_ipc/cm_cert_status_event_publish.cpp",
     "cm_ipc/cm_ipc_service.c",
     "cm_ipc/cm_ipc_service_cert_pack.c",
     "cm_ipc/cm_response.cpp",
@@ -55,6 +57,7 @@ ohos_static_library("libcm_service_idl_standard_static") {
     "ability_runtime:ability_connect_callback_stub",
     "access_token:libaccesstoken_sdk",
     "c_utils:utils",
+    "common_event_service:cesfwk_innerkits",
     "eventhandler:libeventhandler",
     "huks:libhukssdk",
     "init:libbegetutil",

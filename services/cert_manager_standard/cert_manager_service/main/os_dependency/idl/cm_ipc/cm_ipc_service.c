@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+#include "cm_cert_status_event.h"
 #include "cm_ipc_service.h"
 
 #include "cm_log.h"
@@ -218,6 +219,11 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
             CM_LOG_E("CmSetSystemCertStatus failed, ret = %d", ret);
             break;
         }
+
+        /* the status change is committed; notify subscribers best-effort:
+         * the event wrapper logs failures internally and a failed broadcast
+         * must not fail the already committed status update */
+        (void)CmPublishSystemCaStatusEvent((const char *)certUri.data, status);
     } while (0);
     CmReport(__func__, &cmContext, &certUri, ret);
 
