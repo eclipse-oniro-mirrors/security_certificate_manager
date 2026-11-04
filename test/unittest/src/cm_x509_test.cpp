@@ -41,7 +41,7 @@ public:
 
 HWTEST_F(CmX509Test, InitCertContextInvalidArgs, TestSize.Level0)
 {
-    EXPECT_EQ(InitCertContext(NULL, 100), nullptr);
+    EXPECT_EQ(InitCertContext(nullptr, 100), nullptr);
     uint8_t buf[] = "x";
     EXPECT_EQ(InitCertContext(buf, 0), nullptr);
     EXPECT_EQ(InitCertContext(buf, MAX_LEN_CERTIFICATE + 1), nullptr);
@@ -71,7 +71,7 @@ HWTEST_F(CmX509Test, InitCertContextSuccess, TestSize.Level0)
 
 HWTEST_F(CmX509Test, InitCertStackContextInvalidArgs, TestSize.Level0)
 {
-    EXPECT_EQ(InitCertStackContext(NULL, 100), nullptr);
+    EXPECT_EQ(InitCertStackContext(nullptr, 100), nullptr);
     uint8_t buf[] = "x";
     EXPECT_EQ(InitCertStackContext(buf, 0), nullptr);
     EXPECT_EQ(InitCertStackContext(buf, MAX_LEN_CERTIFICATE_P7B + 1), nullptr);

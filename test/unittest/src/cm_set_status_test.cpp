@@ -38,7 +38,7 @@ struct CertStatusExpectResult {
  *   openssl x509 -in config/systemCertificates/<uri> -pubkey -noout |
  *   openssl pkey -pubin -outform DER | sha256sum   (uppercase)
  * index i pairs with g_expectList[i].uri */
-static const char *EXPECTED_SYSTEM_PK_HASHES[] = {
+static const char *g_expectedSystemPkHashes[] = {
     "7E0EAD76BB6819DC2F54511A84354F6E8B307B9DD82058EA6C004F01D9DDA5DF", /* 1d3472b9.0 */
     "808D68B3FAB4884A5F971ACE7D10550D7A95A163774F3EC36AFFFB213FBE4C74", /* 4bfab552.0 */
     "40FCFC28875DCCBFEBCBDF6CD7433312DA63C4EFCF3BD7B1B505C22020AE0274", /* 4f316efb.0 */
@@ -150,21 +150,21 @@ HWTEST_F(CmSetCertStatusTest, SetCertStatusAndQueryStatus002, TestSize.Level0)
         if (!g_expectList[i].inparamStatus) {
             std::string policy;
             ASSERT_TRUE(ReadPolicyFile(policy));
-            EXPECT_NE(policy.find(std::string("1,") + EXPECTED_SYSTEM_PK_HASHES[i]), std::string::npos);
+            EXPECT_NE(policy.find(std::string("1,") + g_expectedSystemPkHashes[i]), std::string::npos);
         }
 
         /* list-level: the abstract row for this uri must carry the same state
          * as the detail query (exercises the disabled-records query + uri match
          * in CmGetCertListInfo, and both directions of the status mapping) */
-        struct CertList *certlist = NULL;
+        struct CertList *certlist = nullptr;
         ASSERT_TRUE(InitCertList(&certlist) == CM_SUCCESS);
         ret = CmGetCertList(CM_SYSTEM_TRUSTED_STORE, certlist);
         EXPECT_EQ(ret, CM_SUCCESS) << "SetCertStatusAndQueryStatus,CmGetCertList failed,retcode:" << ret;
         bool rowFound = false;
         for (uint32_t j = 0; j < certlist->certsCount; ++j) {
             if (strcmp(certlist->certAbstract[j].uri, g_expectList[i].uri) == 0) {
-                EXPECT_EQ(certlist->certAbstract[j].status, g_expectList[i].expectStatus)
-                    << "list status mismatch for uri: " << g_expectList[i].uri;
+                EXPECT_EQ(certlist->certAbstract[j].status, g_expectList[i].expectStatus) <<
+                    "list status mismatch for uri: " << g_expectList[i].uri;
                 rowFound = true;
                 break;
             }
@@ -185,7 +185,7 @@ HWTEST_F(CmSetCertStatusTest, SetCertStatusAndQueryStatus002, TestSize.Level0)
  */
 HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 {
-    struct CertList *certlist = NULL;
+    struct CertList *certlist = nullptr;
 
     ASSERT_TRUE(InitCertList(&certlist) == CM_SUCCESS);
     // CA trusted list
@@ -195,7 +195,7 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 
     for (uint32_t i = 0; i < certlist->certsCount; ++i) {
         struct CertAbstract *ptr = &(certlist->certAbstract[i]);
-        ASSERT_TRUE(NULL != ptr);
+        ASSERT_TRUE(nullptr != ptr);
         struct CmBlob uriBlob = {strlen(ptr->uri) + 1, (uint8_t *)(ptr->uri)};
         ret = CmSetCertStatus(&uriBlob, CM_SYSTEM_TRUSTED_STORE, false);
         EXPECT_EQ(ret, CM_SUCCESS);
@@ -203,7 +203,7 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 
     for (uint32_t i = 0; i < certlist->certsCount; ++i) {
         struct CertAbstract *ptr2 = &(certlist->certAbstract[i]);
-        ASSERT_TRUE(NULL != ptr2);
+        ASSERT_TRUE(nullptr != ptr2);
         struct CmBlob uriBlob2 = {strlen(ptr2->uri) + 1, (uint8_t *)(ptr2->uri)};
         ret = CmSetCertStatus(&uriBlob2, CM_SYSTEM_TRUSTED_STORE, true);
         EXPECT_EQ(ret, CM_SUCCESS);
@@ -225,7 +225,7 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 HWTEST_F(CmSetCertStatusTest, ExceptionSetStatus004, TestSize.Level0)
 {
     struct CmBlob uriBlob = {strlen(g_expectList[1].uri) + 1, (uint8_t *)(g_expectList[1].uri)};
-    EXPECT_EQ(CmSetCertStatus(NULL, CM_SYSTEM_TRUSTED_STORE, true),
+    EXPECT_EQ(CmSetCertStatus(nullptr, CM_SYSTEM_TRUSTED_STORE, true),
         CMR_ERROR_NULL_POINTER);
 
     EXPECT_EQ(CmSetCertStatus(&uriBlob, 10, true), CMR_ERROR_INVALID_ARGUMENT);

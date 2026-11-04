@@ -292,7 +292,7 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
 {
     struct CmContext context;
     (void)memset_s(&context, sizeof(context), 0, sizeof(context));
-    struct CmMutableBlob certFileList = { 0, NULL };
+    struct CmMutableBlob certFileList = { 0, nullptr };
     const struct UserCAProperty prop = { INIT_INVALID_VALUE, CM_ALL_USER };
     ASSERT_EQ(CmServiceGetCertList(&context, &prop, CM_SYSTEM_TRUSTED_STORE, &certFileList), CM_SUCCESS);
     ASSERT_GT(certFileList.size, 0u);
@@ -315,11 +315,11 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
     std::string content;
     ASSERT_TRUE(ReadPolicyFile(content));
     /* exactly one force-check line: "1," + 64 uppercase hex chars + '\n' */
-    constexpr size_t POLICY_PREFIX_LEN = 2; /* "1," */
-    constexpr size_t POLICY_LINE_LEN = POLICY_PREFIX_LEN + CM_ROOT_CA_PK_HASH_HEX_LEN + 1;
-    ASSERT_EQ(content.size(), POLICY_LINE_LEN);
-    EXPECT_EQ(content.substr(0, POLICY_PREFIX_LEN), "1,");
-    EXPECT_EQ(content[POLICY_LINE_LEN - 1], '\n');
+    constexpr size_t policyPrefixLen = 2; /* "1," */
+    constexpr size_t policyLineLen = policyPrefixLen + CM_ROOT_CA_PK_HASH_HEX_LEN + 1;
+    ASSERT_EQ(content.size(), policyLineLen);
+    EXPECT_EQ(content.substr(0, policyPrefixLen), "1,");
+    EXPECT_EQ(content[policyLineLen - 1], '\n');
 
     /* re-enable empties the policy file and clears the disabled row */
     ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED), CM_SUCCESS);
