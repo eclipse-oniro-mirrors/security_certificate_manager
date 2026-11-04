@@ -195,7 +195,7 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 
     for (uint32_t i = 0; i < certlist->certsCount; ++i) {
         struct CertAbstract *ptr = &(certlist->certAbstract[i]);
-        ASSERT_TRUE(nullptr != ptr);
+        ASSERT_TRUE(ptr != nullptr);
         struct CmBlob uriBlob = {strlen(ptr->uri) + 1, (uint8_t *)(ptr->uri)};
         ret = CmSetCertStatus(&uriBlob, CM_SYSTEM_TRUSTED_STORE, false);
         EXPECT_EQ(ret, CM_SUCCESS);
@@ -203,7 +203,7 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 
     for (uint32_t i = 0; i < certlist->certsCount; ++i) {
         struct CertAbstract *ptr2 = &(certlist->certAbstract[i]);
-        ASSERT_TRUE(nullptr != ptr2);
+        ASSERT_TRUE(ptr2 != nullptr);
         struct CmBlob uriBlob2 = {strlen(ptr2->uri) + 1, (uint8_t *)(ptr2->uri)};
         ret = CmSetCertStatus(&uriBlob2, CM_SYSTEM_TRUSTED_STORE, true);
         EXPECT_EQ(ret, CM_SUCCESS);
