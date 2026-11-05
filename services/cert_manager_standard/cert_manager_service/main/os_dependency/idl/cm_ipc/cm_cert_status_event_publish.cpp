@@ -17,19 +17,17 @@
 
 #include "common_event_data.h"
 #include "common_event_manager.h"
-#include "common_event_publish_info.h"
 
 #include "cm_log.h"
 
-bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want,
-    const std::vector<std::string> &subscriberPermissions)
+/* publish with no CommonEventPublishInfo: the event carries no subscriber
+ * permission requirement, so any app holding a CES subscription receives it */
+bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want)
 {
     OHOS::EventFwk::CommonEventData eventData;
     eventData.SetWant(want);
-    OHOS::EventFwk::CommonEventPublishInfo publishInfo;
-    publishInfo.SetSubscriberPermissions(subscriberPermissions);
 
-    bool published = OHOS::EventFwk::CommonEventManager::PublishCommonEvent(eventData, publishInfo);
+    bool published = OHOS::EventFwk::CommonEventManager::PublishCommonEvent(eventData);
     if (!published) {
         CM_LOG_E("publish common event to ces failed");
     }

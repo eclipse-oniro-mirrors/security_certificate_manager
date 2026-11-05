@@ -27,9 +27,6 @@ extern "C" {
 #define CM_EVENT_ACTION_SYSTEM_CA_STATUS_CHANGED "action.certmanager.systemCaStatusChanged"
 #define CM_EVENT_PARAM_CERT_URI                  "certUri"
 #define CM_EVENT_PARAM_ENABLED                   "enabled"
-/* subscribers must hold the internal cert manager permission, the same
- * permission checked on the set-status path */
-#define CM_EVENT_SUBSCRIBER_PERMISSION           "ohos.permission.ACCESS_CERT_MANAGER_INTERNAL"
 
 /*
  * Publish the system CA status changed common event.

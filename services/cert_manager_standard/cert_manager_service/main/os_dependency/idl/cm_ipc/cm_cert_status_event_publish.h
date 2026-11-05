@@ -16,18 +16,15 @@
 #ifndef CM_CERT_STATUS_EVENT_PUBLISH_H
 #define CM_CERT_STATUS_EVENT_PUBLISH_H
 
-#include <string>
-#include <vector>
-
 #include "want.h"
 
 /*
  * Internal seam between the event construction logic and the common event
  * service innerkit. The production implementation lives in
  * cm_cert_status_event_publish.cpp; unit tests substitute their own
- * definition via link-time replacement.
+ * definition via link-time replacement. The event is published with no
+ * subscriber permission requirement: any app may subscribe.
  */
-bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want,
-    const std::vector<std::string> &subscriberPermissions);
+bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want);
 
 #endif /* CM_CERT_STATUS_EVENT_PUBLISH_H */

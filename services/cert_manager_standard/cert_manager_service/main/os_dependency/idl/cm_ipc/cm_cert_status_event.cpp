@@ -18,7 +18,6 @@
 #include <cstring>
 #include <functional>
 #include <string>
-#include <vector>
 
 #include "want.h"
 
@@ -35,8 +34,7 @@ constexpr uint32_t CM_STATUS_EVENT_MAX_RETRY_COUNT = 3;
 
 bool CmPublishSystemCaStatusEventNow(const OHOS::AAFwk::Want &want)
 {
-    std::vector<std::string> subscriberPermissions = { CM_EVENT_SUBSCRIBER_PERMISSION };
-    return CmPublishCommonEventToCes(want, subscriberPermissions);
+    return CmPublishCommonEventToCes(want);
 }
 
 void CmRetrySystemCaStatusEvent(OHOS::AAFwk::Want want, uint32_t remainingRetry)

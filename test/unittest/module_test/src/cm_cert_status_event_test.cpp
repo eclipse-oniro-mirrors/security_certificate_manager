@@ -32,7 +32,6 @@ struct PublishRecord {
     std::string certUri;
     bool enabled = false;
     bool hasEnabledParam = false;
-    std::vector<std::string> subscriberPermissions;
     int32_t callCount = 0;
     bool publishResult = true;
 };
@@ -68,15 +67,14 @@ void RunAllPooledTasksOnce()
 /* link seam: the test target links cm_cert_status_event.cpp but NOT
  * cm_cert_status_event_publish.cpp nor cert_manager_thread_pool.cpp, so
  * these definitions replace the real common event service and pool calls
- * and only record what was built and scheduled */
-bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want,
-    const std::vector<std::string> &subscriberPermissions)
+ * and only record what was built and scheduled; the seam taking no
+ * subscriber permissions is itself the no-permission contract */
+bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want)
 {
     g_publishRecord.action = want.GetActionRef();
     g_publishRecord.certUri = want.GetStringParam(CM_EVENT_PARAM_CERT_URI);
     g_publishRecord.enabled = want.GetBoolParam(CM_EVENT_PARAM_ENABLED, true);
     g_publishRecord.hasEnabledParam = want.HasParameter(CM_EVENT_PARAM_ENABLED);
-    g_publishRecord.subscriberPermissions = subscriberPermissions;
     g_publishRecord.callCount++;
     return g_publishRecord.publishResult;
 }
@@ -137,9 +135,6 @@ HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest001, TestSize.Level0)
     EXPECT_EQ(g_publishRecord.certUri, std::string("system://ca0"));
     EXPECT_FALSE(g_publishRecord.enabled);
     EXPECT_TRUE(g_publishRecord.hasEnabledParam);
-    ASSERT_FALSE(g_publishRecord.subscriberPermissions.empty());
-    EXPECT_EQ(g_publishRecord.subscriberPermissions[0],
-        std::string("ohos.permission.ACCESS_CERT_MANAGER_INTERNAL"));
 }
 
 /**
