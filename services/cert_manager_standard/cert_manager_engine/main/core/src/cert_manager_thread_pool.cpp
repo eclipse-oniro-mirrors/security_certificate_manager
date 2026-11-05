@@ -15,19 +15,23 @@
 
 #include "cert_manager_thread_pool.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
 
-#include "thread_pool.h"
+#include <pthread.h>
 
 #include "cm_log.h"
 
 namespace {
-/* core = maximum = 4 worker threads: c_utils ThreadPool has no grow
- * phase, so core and maximum coincide in a fixed pool */
+/* core = maximum = 4 workers: spawned lazily, at most one per submitted
+ * task while fewer than the bound are alive, so the pool ramps up with
+ * load instead of holding resident threads */
 constexpr uint32_t CM_THREAD_POOL_CORE_THREADS = 4;
 /* bounded work queue: when it is full the task is discarded with an
  * error log instead of blocking the caller; callers drop the task or
@@ -40,46 +44,44 @@ struct CmPooledTask {
     uint32_t delayMs;
 };
 
-/* process-lifetime singleton: the pool is intentionally never destroyed,
- * worker threads die with the service process. The underlying
- * OHOS::ThreadPool cannot reap idle threads (workers wait on an internal
- * condition variable and Stop() can never be followed by Start()), so an
- * idle keep-alive is not implementable on top of it; releasing idle
- * workers is delegated to the SA recycle strategy instead. This also
- * avoids join delays (delayed tasks sleep up to their delayMs) when the
- * SA is recycled */
-OHOS::ThreadPool *g_cmThreadPool = nullptr;
-std::once_flag g_cmThreadPoolOnce;
+/* process-lifetime pool state, intentionally never destroyed: workers
+ * are detached and die with the service process, so no shutdown path
+ * can join threads and delay the SA (delayed tasks sleep up to their
+ * delayMs). Idle workers exit on their own after the keep-alive, so an
+ * idle pool holds no threads */
+std::mutex g_cmPoolMutex;
+std::condition_variable g_cmPoolCv;
+std::deque<std::shared_ptr<CmPooledTask>> g_cmPoolQueue;
+uint32_t g_cmPoolLiveWorkers = 0;
+std::atomic<uint32_t> g_cmPoolKeepAliveMs{CM_THREAD_POOL_KEEP_ALIVE_MS};
 
-void CmRunPooledTask(const std::shared_ptr<CmPooledTask> &pooled)
+void *CmPoolWorkerEntry(void *arg)
 {
-    if (pooled->delayMs > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(pooled->delayMs));
+    (void)arg;
+    (void)pthread_setname_np(pthread_self(), "CmPool");
+    std::unique_lock<std::mutex> lock(g_cmPoolMutex);
+    bool workerAlive = true;
+    while (workerAlive) {
+        if (!g_cmPoolQueue.empty()) {
+            std::shared_ptr<CmPooledTask> pooled = g_cmPoolQueue.front();
+            g_cmPoolQueue.pop_front();
+            lock.unlock();
+            if (pooled->delayMs > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(pooled->delayMs));
+            }
+            pooled->task(pooled->arg);
+            lock.lock();
+            continue;
+        }
+        bool timedOut = g_cmPoolCv.wait_for(lock,
+            std::chrono::milliseconds(g_cmPoolKeepAliveMs.load())) == std::cv_status::timeout;
+        if (timedOut && g_cmPoolQueue.empty()) {
+            g_cmPoolLiveWorkers--;
+            CM_LOG_I("cm thread pool worker exited after idle");
+            workerAlive = false;
+        }
     }
-    pooled->task(pooled->arg);
-}
-
-void EnsureCmThreadPoolStarted()
-{
-    std::call_once(g_cmThreadPoolOnce, []() {
-        OHOS::ThreadPool *pool = new (std::nothrow) OHOS::ThreadPool("CmPool");
-        if (pool == nullptr) {
-            CM_LOG_E("alloc cm thread pool failed");
-            return;
-        }
-        /* no SetMaxTaskNum: the native bound makes AddTask BLOCK on a full
-         * queue, and a blocked worker that nests AddTask (retry chains do)
-         * could deadlock the pool; the wrapper enforces its own bound */
-        uint32_t ret = pool->Start(CM_THREAD_POOL_CORE_THREADS);
-        if (ret != 0) { /* 0 is ERR_OK of ThreadPool::Start */
-            CM_LOG_E("start cm thread pool failed, ret = %u", ret);
-            delete pool;
-            return;
-        }
-        /* publish the pool only with live workers: with no worker thread
-         * c_utils AddTask would run the task on the CALLER thread */
-        g_cmThreadPool = pool;
-    });
+    return nullptr;
 }
 } // namespace
 
@@ -88,20 +90,40 @@ int32_t CmThreadPoolAddTask(void (*task)(void *), void *arg, uint32_t delayMs)
     if (task == nullptr) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
+    auto pooled = std::make_shared<CmPooledTask>(CmPooledTask{task, arg, delayMs});
 
-    EnsureCmThreadPoolStarted();
-    OHOS::ThreadPool *pool = g_cmThreadPool;
-    if (pool == nullptr) {
-        return CMR_ERROR;
-    }
-    /* work queue full (with a fixed pool the workers are busy by then):
-     * discard the task, log it and let the caller decide the fallback */
-    if (pool->GetCurTaskNum() >= CM_THREAD_POOL_QUEUE_SIZE) {
+    std::unique_lock<std::mutex> lock(g_cmPoolMutex);
+    if (g_cmPoolQueue.size() >= CM_THREAD_POOL_QUEUE_SIZE) {
         CM_LOG_E("cm thread pool queue is full, task discarded");
         return CMR_ERROR;
     }
-
-    auto pooled = std::make_shared<CmPooledTask>(CmPooledTask{task, arg, delayMs});
-    pool->AddTask([pooled]() { CmRunPooledTask(pooled); });
+    g_cmPoolQueue.push_back(pooled);
+    if (g_cmPoolLiveWorkers < CM_THREAD_POOL_CORE_THREADS) {
+        pthread_t threadId;
+        int ret = pthread_create(&threadId, nullptr, CmPoolWorkerEntry, nullptr);
+        if (ret == 0) {
+            g_cmPoolLiveWorkers++;
+            (void)pthread_detach(threadId);
+        } else {
+            CM_LOG_E("create cm thread pool worker failed, ret = %d", ret);
+            if (g_cmPoolLiveWorkers == 0) {
+                /* no worker can ever pick the task up, take it back */
+                g_cmPoolQueue.pop_back();
+                return CMR_ERROR;
+            }
+        }
+    }
+    g_cmPoolCv.notify_one();
     return CM_SUCCESS;
+}
+
+void CmThreadPoolSetKeepAliveMsForTest(uint32_t keepAliveMs)
+{
+    g_cmPoolKeepAliveMs.store(keepAliveMs);
+}
+
+uint32_t CmThreadPoolGetWorkerCountForTest(void)
+{
+    std::unique_lock<std::mutex> lock(g_cmPoolMutex);
+    return g_cmPoolLiveWorkers;
 }

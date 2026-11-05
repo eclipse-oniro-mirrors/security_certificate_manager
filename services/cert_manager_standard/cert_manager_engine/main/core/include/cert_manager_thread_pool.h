@@ -29,24 +29,32 @@ extern "C" {
  * fire-and-forget background work (common event retry, asynchronous
  * revocation cache saving and similar follow-ups).
  *
- * The pool is lazily started with a fixed set of worker threads (core =
- * maximum = 4) and a bounded work queue (8 tasks): when the queue is full
- * the task is DISCARDED with an error log and a negative return value
+ * Workers are self-managed: spawned lazily while fewer than the fixed
+ * bound (core = maximum = 4) are alive and reaped by their own idle
+ * keep-alive (CM_THREAD_POOL_KEEP_ALIVE_MS), so an idle pool holds no
+ * threads. The work queue is bounded (8 tasks): when it is full the
+ * task is DISCARDED with an error log and a negative return value
  * instead of blocking the caller, so best-effort callers can drop the
  * task and the revocation cache can fall back to saving synchronously.
- * Idle workers are not reaped (not supported by the underlying pool);
- * they live for the process lifetime.
  *
- * @param task the function to run on a pool thread
+ * @param task the function to run on a pool worker
  * @param arg caller-owned argument passed through to task; the pool never
  *            touches it, ownership stays with the task function
- * @param delayMs delay before the task runs on the pool thread; 0 runs as
+ * @param delayMs delay before the task runs on the worker; 0 runs as
  *                soon as a worker picks it up
  * @return CM_SUCCESS if the task was accepted; CMR_ERROR_INVALID_ARGUMENT
- *         for a null task; CMR_ERROR when the pool is unavailable or the
- *         queue is full (task discarded)
+ *         for a null task; CMR_ERROR when the queue is full (task
+ *         discarded) or no worker could be created
  */
 int32_t CmThreadPoolAddTask(void (*task)(void *), void *arg, uint32_t delayMs);
+
+/* test-only: shorten the worker idle keep-alive (milliseconds) so thread
+ * reaping and respawn can be exercised without waiting for the 30 s
+ * default; production code must not call this */
+void CmThreadPoolSetKeepAliveMsForTest(uint32_t keepAliveMs);
+
+/* test-only: live worker count for lifecycle assertions */
+uint32_t CmThreadPoolGetWorkerCountForTest(void);
 
 #ifdef __cplusplus
 }
@@ -56,6 +64,9 @@ int32_t CmThreadPoolAddTask(void (*task)(void *), void *arg, uint32_t delayMs);
 #include <functional>
 #include <memory>
 #include <utility>
+
+/* default idle keep-alive of pool workers, in milliseconds */
+constexpr uint32_t CM_THREAD_POOL_KEEP_ALIVE_MS = 30000;
 
 /*
  * C++ convenience wrapper over CmThreadPoolAddTask for std::function tasks.
