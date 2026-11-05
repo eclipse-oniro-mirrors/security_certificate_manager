@@ -13,14 +13,19 @@
  * limitations under the License.
  */
 
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include "cm_test_log.h"
 #include "cm_test_common.h"
 #include "cert_manager_api.h"
+#include "cert_manager_status.h"
+#include "cert_manager_storage.h"
+#include "cm_root_ca_store_rdb.h"
 
 using namespace testing::ext;
 using namespace CertmanagerTest;
@@ -53,6 +58,26 @@ static bool ReadPolicyFile(std::string &out)
     }
     out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     return true;
+}
+
+/* query the root_ca_cert_store disabled rows and assert that the row for
+ * uri classifies as international (the preset CAs live in SYSTEM_CA_STORE) */
+static void CheckDisabledRootCaAlgType(const char *uri)
+{
+    std::vector<struct RootCaStoreRecord> records(MAX_COUNT_CERTIFICATE_ALL);
+    uint32_t disabledCount = 0;
+    ASSERT_EQ(QueryDisabledRootCa(records.data(), MAX_COUNT_CERTIFICATE_ALL, &disabledCount), CM_SUCCESS)
+        << "query disabled root ca failed";
+    bool rowFound = false;
+    for (uint32_t r = 0; r < disabledCount; ++r) {
+        if (strcmp(records[r].uri, uri) == 0) {
+            EXPECT_EQ(records[r].algType, CM_ROOT_CA_ALG_TYPE_INTERNATIONAL)
+                << "alg type mismatch for uri: " << uri;
+            rowFound = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(rowFound) << "disabled row missing for uri: " << uri;
 }
 
 struct CertStatusExpectResult g_expectList[] = {
@@ -151,6 +176,10 @@ HWTEST_F(CmSetCertStatusTest, SetCertStatusAndQueryStatus002, TestSize.Level0)
             std::string policy;
             ASSERT_TRUE(ReadPolicyFile(policy));
             EXPECT_NE(policy.find(std::string("1,") + g_expectedSystemPkHashes[i]), std::string::npos);
+
+            /* the persisted row must classify the root CA by its store
+             * directory: these preset CAs live in SYSTEM_CA_STORE */
+            CheckDisabledRootCaAlgType(g_expectList[i].uri);
         }
 
         /* list-level: the abstract row for this uri must carry the same state
@@ -234,5 +263,20 @@ HWTEST_F(CmSetCertStatusTest, ExceptionSetStatus004, TestSize.Level0)
     struct CmBlob invalidUriBlob = {strlen(invalidUri) + 1, (uint8_t *)invalidUri};
     EXPECT_EQ(CmSetCertStatus(&invalidUriBlob, CM_SYSTEM_TRUSTED_STORE, true),
         CMR_ERROR_NOT_EXIST);
+}
+
+/**
+ * @tc.name: SystemCaAlgTypeByDirectory005
+ * @tc.desc: the persisted alg type follows the store directory the system CA
+ *           file lives in, not the certificate encoding
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MJA /SR000H096P
+ */
+HWTEST_F(CmSetCertStatusTest, SystemCaAlgTypeByDirectory005, TestSize.Level0)
+{
+    EXPECT_EQ(CmGetSystemCaAlgType(SYSTEM_CA_STORE_GM), CM_ROOT_CA_ALG_TYPE_GM);
+    EXPECT_EQ(CmGetSystemCaAlgType(SYSTEM_CA_STORE), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
+    EXPECT_EQ(CmGetSystemCaAlgType(nullptr), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
+    EXPECT_EQ(CmGetSystemCaAlgType("/data/service/el1/public"), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
 }
 }

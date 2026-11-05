@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -176,18 +177,23 @@ int32_t CmRegenerateRevocationPolicyFile(void)
     return ret;
 }
 
-/* digest the matched certificate and upsert its root_ca_cert_store row */
-static int32_t UpsertRootCaRecord(const struct CmBlob *certData, const struct CmBlob *certUri,
-    uint32_t status)
+uint32_t CmGetSystemCaAlgType(const char *certPath)
 {
-    uint32_t algType = CM_ROOT_CA_ALG_TYPE_INTERNATIONAL;
-    char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
-    int32_t ret = CmGetCertAlgType(certData, &algType);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("get cert alg type failed, ret = %d", ret);
-        return ret;
+    if (certPath == NULL) {
+        return CM_ROOT_CA_ALG_TYPE_INTERNATIONAL;
     }
-    ret = CmGetCertPubKeyHashHex(certData, certPkHash);
+    return (strcmp(certPath, SYSTEM_CA_STORE_GM) == 0) ? CM_ROOT_CA_ALG_TYPE_GM :
+        CM_ROOT_CA_ALG_TYPE_INTERNATIONAL;
+}
+
+/* digest the matched certificate and upsert its root_ca_cert_store row;
+ * the alg type follows the store directory the file was enumerated from */
+static int32_t UpsertRootCaRecord(const struct CmBlob *certData, const struct CmBlob *certUri,
+    const char *certPath, uint32_t status)
+{
+    uint32_t algType = CmGetSystemCaAlgType(certPath);
+    char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
+    int32_t ret = CmGetCertPubKeyHashHex(certData, certPkHash);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("get cert pubkey hash failed, ret = %d", ret);
         return ret;
@@ -238,7 +244,7 @@ int32_t CmSetSystemCertStatus(const struct CmContext *context,
             break;
         }
 
-        ret = UpsertRootCaRecord(&certData, certUri, status);
+        ret = UpsertRootCaRecord(&certData, certUri, (char *)cFileList[matchIndex].path.data, status);
         CM_FREE_BLOB(certData);
         if (ret != CM_SUCCESS) {
             break;

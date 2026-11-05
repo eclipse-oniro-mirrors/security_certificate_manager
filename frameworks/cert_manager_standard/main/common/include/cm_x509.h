@@ -93,10 +93,6 @@ int32_t GetX509Fingerprint(const X509 *x509cert, char *outBuf, uint32_t outBufMa
  * hex chars; outPkHashHex must hold at least 65 bytes (64 chars + NUL) */
 int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex);
 
-/* public key algorithm family: 1 = international, 2 = GM/SM2 — same values
- * as the public enum CertAlgorithm { INTERNATIONAL = 1, SM = 2 } */
-int32_t CmGetCertAlgType(const struct CmBlob *certData, uint32_t *algType);
-
 void FreeCertContext(X509 *x509cert);
 #ifdef __cplusplus
 }

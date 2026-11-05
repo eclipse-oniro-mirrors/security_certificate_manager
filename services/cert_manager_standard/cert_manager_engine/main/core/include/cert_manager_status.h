@@ -30,6 +30,19 @@ extern "C" {
 
 int32_t CmGetCertConfigStatus(const char *fileName, uint32_t *status);
 
+/* algorithm classification of a system root CA certificate from the store
+ * DIRECTORY its file lives in: the product partitions GM (national
+ * cryptography) root CAs into SYSTEM_CA_STORE_GM and international ones
+ * into SYSTEM_CA_STORE, and that partition is authoritative — parsing the
+ * certificate public key is not (preset GM certificates commonly encode
+ * the key with the standard EC algorithm OID, which OpenSSL reads back as
+ * a plain EC key, never as SM2)
+ * @param certPath the store directory of the certificate file, as
+ *                 enumerated into CertFileInfo.path
+ * @return CM_ROOT_CA_ALG_TYPE_GM when the directory is the GM store,
+ *         CM_ROOT_CA_ALG_TYPE_INTERNATIONAL otherwise (including NULL) */
+uint32_t CmGetSystemCaAlgType(const char *certPath);
+
 /* set the manual enable/disable state of one SYSTEM root CA certificate
  * (certUri must match a file enumerated from the system store); writes the
  * root_ca_cert_store row and regenerates the force-check policy file */

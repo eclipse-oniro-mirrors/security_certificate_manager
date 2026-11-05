@@ -786,7 +786,7 @@ HWTEST_F(CmX509Test, GetX509IssueNameLongFormatSnprintfFails, TestSize.Level0)
     EXPECT_TRUE(ret == CMR_ERROR_MEM_OPERATION_PRINT || ret == CMR_ERROR_BUFFER_TOO_SMALL || ret < 0);
     FreeCertContext(cert);
 }
-/* ---------- CmGetCertPubKeyHashHex / CmGetCertAlgType ---------- */
+/* ---------- CmGetCertPubKeyHashHex ---------- */
 
 /* precomputed independently of the code under test:
  *   openssl x509 -in cert.pem -pubkey -noout |
@@ -829,21 +829,5 @@ HWTEST_F(CmX509Test, CmGetCertPubKeyHashHexFormat, TestSize.Level0)
         EXPECT_TRUE((hash[i] >= '0' && hash[i] <= '9') || (hash[i] >= 'A' && hash[i] <= 'F'))
             << "hash[" << i << "] = " << hash[i];
     }
-}
-
-HWTEST_F(CmX509Test, CmGetCertAlgTypeNullArgs, TestSize.Level0)
-{
-    uint32_t algType = 0;
-    struct CmBlob certData = { strlen(g_rsa2048PEMCertChain), (uint8_t *)g_rsa2048PEMCertChain };
-    EXPECT_EQ(CmGetCertAlgType(nullptr, &algType), CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmGetCertAlgType(&certData, nullptr), CMR_ERROR_INVALID_ARGUMENT);
-}
-
-HWTEST_F(CmX509Test, CmGetCertAlgTypeRsaIsInternational, TestSize.Level0)
-{
-    struct CmBlob certData = { strlen(g_rsa2048PEMCertChain), (uint8_t *)g_rsa2048PEMCertChain };
-    uint32_t algType = 0;
-    ASSERT_EQ(CmGetCertAlgType(&certData, &algType), CM_SUCCESS);
-    EXPECT_EQ(algType, 1u); /* d.ts CertAlgorithm.INTERNATIONAL */
 }
 } // end of namespace
