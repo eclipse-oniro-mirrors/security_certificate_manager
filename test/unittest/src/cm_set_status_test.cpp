@@ -16,6 +16,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,8 @@
 #include "cert_manager_api.h"
 #include "cert_manager_status.h"
 #include "cert_manager_storage.h"
+#include "cm_rdb_config.h"
+#include "cm_rdb_data_manager.h"
 #include "cm_root_ca_store_rdb.h"
 
 using namespace testing::ext;
@@ -58,6 +61,23 @@ static bool ReadPolicyFile(std::string &out)
     }
     out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     return true;
+}
+
+/* delete every row, then rewrite the policy file to match: the suite
+ * toggles REAL preset system CAs, so a failed run must not leave any of
+ * them disabled in the shared database (the SA reads the same file). The
+ * table itself stays. Same cleanup as CmRootCaStoreRdbTest. */
+static void CleanupRootCaStoreState()
+{
+    using namespace OHOS::Security::CertManager;
+    RdbConfig cleanCfg;
+    cleanCfg.dbName = CERT_MANAGER_RDB_NAME;
+    cleanCfg.tableName = ROOT_CA_STORE_TABLE_NAME;
+    /* make_shared is mandatory: the manager takes shared_from_this on open */
+    auto cleanMgr = std::make_shared<CmRdbDataManager>(cleanCfg);
+    (void)cleanMgr->ExecuteSql("DELETE FROM " + ROOT_CA_STORE_TABLE_NAME,
+        std::vector<OHOS::NativeRdb::ValueObject>());
+    (void)CmRegenerateRevocationPolicyFile();
 }
 
 /* query the root_ca_cert_store disabled rows and assert that the row for
@@ -107,6 +127,12 @@ void CmSetCertStatusTest::SetUpTestCase(void)
 {
     g_selfTokenId = GetSelfTokenID();
     CmTestCommon::SetTestEnvironment(g_selfTokenId);
+    /* the engine reaches root_ca_cert_store only through the global rdb
+     * manager, which CertManagerInitialize creates in the SA process;
+     * a test process must create it itself or every status call fails
+     * with CMR_ERROR_NULL_POINTER (idempotent, same as the
+     * CmRootCaStoreRdbTest fixture) */
+    ASSERT_EQ(CreateRootCaStoreRdb(), CM_SUCCESS);
 }
 
 void CmSetCertStatusTest::TearDownTestCase(void)
@@ -116,11 +142,13 @@ void CmSetCertStatusTest::TearDownTestCase(void)
 
 void CmSetCertStatusTest::SetUp()
 {
+    CleanupRootCaStoreState();
     g_MockHap = new (std::nothrow) MockHapToken();
 }
 
 void CmSetCertStatusTest::TearDown()
 {
+    CleanupRootCaStoreState();
     if (g_MockHap != nullptr) {
         delete g_MockHap;
         g_MockHap = nullptr;
