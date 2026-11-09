@@ -20,7 +20,6 @@
 
 #include "securec.h"
 #include "cert_manager_api.h"
-#include "cert_manager_service.h"
 #include "cm_config_type.h"
 #include "cm_mem.h"
 #include "cm_test_common.h"
@@ -44,7 +43,7 @@ static constexpr uint32_t INDEX_DEFAULT_CONFIG = 0;
 static constexpr uint32_t INDEX_ENABLE_LIST = 1;
 static constexpr uint32_t INDEX_DISABLE_LIST = 2;
 static constexpr const char *CONFIG_VALUE_DISABLE = "disable";
-static constexpr const char *CONFIG_VALUE_ENABLE_LIST = "100,200";
+static constexpr const char *CONFIG_VALUE_ENABLE_LIST = "100|200";
 static constexpr const char *CONFIG_VALUE_DISABLE_LIST = "300";
 
 static struct CmConfigItem g_setItems[SET_ITEM_COUNT];
@@ -138,7 +137,7 @@ static void FreeKeysBlob(struct CmBlob *&blob)
 
 /**
  * @tc.name: SetAndGetConfig001
- * @tc.desc: Test CmServiceSetCertManagerConfig and CmServiceGetCertManagerConfig round-trip
+ * @tc.desc: Test CmSetCertManagerConfig and CmGetCertManagerConfig round-trip
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, SetAndGetConfig001, TestSize.Level0)
@@ -147,12 +146,12 @@ HWTEST_F(CmCertManagerConfigTest, SetAndGetConfig001, TestSize.Level0)
         .count = sizeof(g_setItems) / sizeof(g_setItems[0]),
         .configItems = g_setItems,
     };
-    int32_t ret = CmServiceSetCertManagerConfig(&setConfig);
-    EXPECT_EQ(ret, CM_SUCCESS) << "CmServiceSetCertManagerConfig failed, ret = " << ret;
+    int32_t ret = CmSetCertManagerConfig(&setConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "CmSetCertManagerConfig failed, ret = " << ret;
 
     struct CertManagerConfig getConfig = { 0, nullptr };
-    ret = CmServiceGetCertManagerConfig(nullptr, &getConfig);
-    EXPECT_EQ(ret, CM_SUCCESS) << "CmServiceGetCertManagerConfig(NULL) failed, ret = " << ret;
+    ret = CmGetCertManagerConfig(nullptr, &getConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "CmGetCertManagerConfig(NULL) failed, ret = " << ret;
     EXPECT_EQ(getConfig.count, setConfig.count) << "config count mismatch";
 
     CmFreeCertManagerConfig(&getConfig);
@@ -160,7 +159,7 @@ HWTEST_F(CmCertManagerConfigTest, SetAndGetConfig001, TestSize.Level0)
 
 /**
  * @tc.name: GetConfigBySingleKey002
- * @tc.desc: Test CmServiceGetCertManagerConfig with a single key
+ * @tc.desc: Test CmGetCertManagerConfig with a single key
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, GetConfigBySingleKey002, TestSize.Level0)
@@ -170,15 +169,15 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigBySingleKey002, TestSize.Level0)
         .count = 1,
         .configItems = &g_setItems[0],
     };
-    int32_t ret = CmServiceSetCertManagerConfig(&setConfig);
-    EXPECT_EQ(ret, CM_SUCCESS) << "CmServiceSetCertManagerConfig failed, ret = " << ret;
+    int32_t ret = CmSetCertManagerConfig(&setConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "CmSetCertManagerConfig failed, ret = " << ret;
 
     struct CmBlob *keysBlob = BuildKeysBlob({ SUPPORTED_KEY_DEFAULT_CONFIG });
     ASSERT_NE(keysBlob, nullptr);
 
     struct CertManagerConfig getConfig = { 0, nullptr };
-    ret = CmServiceGetCertManagerConfig(keysBlob, &getConfig);
-    EXPECT_EQ(ret, CM_SUCCESS) << "CmServiceGetCertManagerConfig(single key) failed, ret = " << ret;
+    ret = CmGetCertManagerConfig(keysBlob, &getConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "CmGetCertManagerConfig(single key) failed, ret = " << ret;
     EXPECT_GE(getConfig.count, 1u) << "should return at least 1 item";
 
     bool found = false;
@@ -196,7 +195,7 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigBySingleKey002, TestSize.Level0)
 
 /**
  * @tc.name: GetConfigByMultiKeys003
- * @tc.desc: Test CmServiceGetCertManagerConfig with multiple keys
+ * @tc.desc: Test CmGetCertManagerConfig with multiple keys
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, GetConfigByMultiKeys003, TestSize.Level0)
@@ -206,8 +205,8 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigByMultiKeys003, TestSize.Level0)
         .count = sizeof(g_setItems) / sizeof(g_setItems[0]),
         .configItems = g_setItems,
     };
-    int32_t ret = CmServiceSetCertManagerConfig(&setConfig);
-    EXPECT_EQ(ret, CM_SUCCESS) << "CmServiceSetCertManagerConfig failed, ret = " << ret;
+    int32_t ret = CmSetCertManagerConfig(&setConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "CmSetCertManagerConfig failed, ret = " << ret;
 
     struct CmBlob *keysBlob = BuildKeysBlob({
         SUPPORTED_KEY_DEFAULT_CONFIG,
@@ -217,8 +216,8 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigByMultiKeys003, TestSize.Level0)
     ASSERT_NE(keysBlob, nullptr);
 
     struct CertManagerConfig getConfig = { 0, nullptr };
-    ret = CmServiceGetCertManagerConfig(keysBlob, &getConfig);
-    EXPECT_EQ(ret, CM_SUCCESS) << "CmServiceGetCertManagerConfig(multi keys) failed, ret = " << ret;
+    ret = CmGetCertManagerConfig(keysBlob, &getConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "CmGetCertManagerConfig(multi keys) failed, ret = " << ret;
     EXPECT_EQ(getConfig.count, 3u) << "should return 3 items";
 
     CmFreeCertManagerConfig(&getConfig);
@@ -227,7 +226,7 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigByMultiKeys003, TestSize.Level0)
 
 /**
  * @tc.name: GetConfigInvalidKey004
- * @tc.desc: Test CmServiceGetCertManagerConfig with an unsupported key
+ * @tc.desc: Test CmGetCertManagerConfig with an unsupported key
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, GetConfigInvalidKey004, TestSize.Level0)
@@ -236,7 +235,7 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigInvalidKey004, TestSize.Level0)
     ASSERT_NE(keysBlob, nullptr);
 
     struct CertManagerConfig getConfig = { 0, nullptr };
-    int32_t ret = CmServiceGetCertManagerConfig(keysBlob, &getConfig);
+    int32_t ret = CmGetCertManagerConfig(keysBlob, &getConfig);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "unsupported key should return invalid argument";
 
     CmFreeCertManagerConfig(&getConfig);
@@ -245,7 +244,7 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigInvalidKey004, TestSize.Level0)
 
 /**
  * @tc.name: SetConfigInvalidValue005
- * @tc.desc: Test CmServiceSetCertManagerConfig with an invalid value for defaultConfig
+ * @tc.desc: Test CmSetCertManagerConfig with an invalid value for defaultConfig
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, SetConfigInvalidValue005, TestSize.Level0)
@@ -259,59 +258,63 @@ HWTEST_F(CmCertManagerConfigTest, SetConfigInvalidValue005, TestSize.Level0)
         .count = 1,
         .configItems = &badItem,
     };
-    int32_t ret = CmServiceSetCertManagerConfig(&setConfig);
+    int32_t ret = CmSetCertManagerConfig(&setConfig);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "invalid value should return invalid argument";
 }
 
 /**
  * @tc.name: SetConfigNullParam006
- * @tc.desc: Test CmServiceSetCertManagerConfig with null parameters
+ * @tc.desc: Test CmSetCertManagerConfig with null parameters
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, SetConfigNullParam006, TestSize.Level0)
 {
-    int32_t ret = CmServiceSetCertManagerConfig(nullptr);
+    int32_t ret = CmSetCertManagerConfig(nullptr);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "null config should return invalid argument";
 
     struct CertManagerConfig emptyConfig = { 0, nullptr };
-    ret = CmServiceSetCertManagerConfig(&emptyConfig);
+    ret = CmSetCertManagerConfig(&emptyConfig);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "zero count config should return invalid argument";
+
+    struct CertManagerConfig nullItemsConfig = { 1, nullptr };
+    ret = CmSetCertManagerConfig(&nullItemsConfig);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "null configItems should return invalid argument";
 }
 
 /**
  * @tc.name: GetConfigNullParam007
- * @tc.desc: Test CmServiceGetCertManagerConfig with null config out param
+ * @tc.desc: Test CmGetCertManagerConfig with null config out param
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, GetConfigNullParam007, TestSize.Level0)
 {
     // both keysBlob and config are null
-    int32_t ret = CmServiceGetCertManagerConfig(nullptr, nullptr);
-    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "both null should return invalid argument";
+    int32_t ret = CmGetCertManagerConfig(nullptr, nullptr);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "null config out param should return invalid argument";
 
-    // keysBlob is null, config is not null
+    // keysBlob is null, config is not null: null keys means query all, must succeed
     struct CertManagerConfig outConfig = { 0, nullptr };
-    ret = CmServiceGetCertManagerConfig(nullptr, &outConfig);
-    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "null keysBlob should return invalid argument";
+    ret = CmGetCertManagerConfig(nullptr, &outConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "null keysBlob should query all config";
     CmFreeCertManagerConfig(&outConfig);
 
-    // keysBlob has null data
+    // keysBlob has null data: treated as query all, must succeed
     struct CmBlob emptyBlob = { 0, nullptr };
-    ret = CmServiceGetCertManagerConfig(&emptyBlob, &outConfig);
-    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "null keysBlob data should return invalid argument";
+    ret = CmGetCertManagerConfig(&emptyBlob, &outConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "null keysBlob data should query all config";
     CmFreeCertManagerConfig(&outConfig);
 
-    // keysBlob has zero size
+    // keysBlob has zero size: treated as query all, must succeed
     uint8_t dummy = 0;
     struct CmBlob zeroBlob = { 0, &dummy };
-    ret = CmServiceGetCertManagerConfig(&zeroBlob, &outConfig);
-    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "zero-size keysBlob should return invalid argument";
+    ret = CmGetCertManagerConfig(&zeroBlob, &outConfig);
+    EXPECT_EQ(ret, CM_SUCCESS) << "zero-size keysBlob should query all config";
     CmFreeCertManagerConfig(&outConfig);
 }
 
 /**
  * @tc.name: SetConfigNotSystemApp008
- * @tc.desc: Test CmServiceSetCertManagerConfig without system app identity
+ * @tc.desc: Test CmSetCertManagerConfig without system app identity
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, SetConfigNotSystemApp008, TestSize.Level0)
@@ -326,14 +329,14 @@ HWTEST_F(CmCertManagerConfigTest, SetConfigNotSystemApp008, TestSize.Level0)
         .count = 1,
         .configItems = &g_setItems[0],
     };
-    int32_t ret = CmServiceSetCertManagerConfig(&setConfig);
+    int32_t ret = CmSetCertManagerConfig(&setConfig);
     /* without ACCESS_CERT_MANAGER_INTERNAL permission, should be denied */
     EXPECT_EQ(ret, CMR_ERROR_PERMISSION_DENIED) << "non-privileged caller should be denied";
 }
 
 /**
  * @tc.name: GetConfigNotSystemApp009
- * @tc.desc: Test CmServiceGetCertManagerConfig without system app identity
+ * @tc.desc: Test CmGetCertManagerConfig without system app identity
  * @tc.type: FUNC
  */
 HWTEST_F(CmCertManagerConfigTest, GetConfigNotSystemApp009, TestSize.Level0)
@@ -344,7 +347,7 @@ HWTEST_F(CmCertManagerConfigTest, GetConfigNotSystemApp009, TestSize.Level0)
     }
 
     struct CertManagerConfig getConfig = { 0, nullptr };
-    int32_t ret = CmServiceGetCertManagerConfig(nullptr, &getConfig);
+    int32_t ret = CmGetCertManagerConfig(nullptr, &getConfig);
     /* without ACCESS_CERT_MANAGER permission or system app, should be denied */
     EXPECT_EQ(ret, CMR_ERROR_PERMISSION_DENIED) << "non-system caller should be denied";
 
@@ -370,11 +373,11 @@ HWTEST_F(CmCertManagerConfigTest, FreeCertManagerConfig010, TestSize.Level0)
         .count = 1,
         .configItems = &g_setItems[0],
     };
-    int32_t ret = CmServiceSetCertManagerConfig(&setConfig);
+    int32_t ret = CmSetCertManagerConfig(&setConfig);
     EXPECT_EQ(ret, CM_SUCCESS);
 
     struct CertManagerConfig getConfig = { 0, nullptr };
-    ret = CmServiceGetCertManagerConfig(nullptr, &getConfig);
+    ret = CmGetCertManagerConfig(nullptr, &getConfig);
     EXPECT_EQ(ret, CM_SUCCESS);
 
     CmFreeCertManagerConfig(&getConfig);

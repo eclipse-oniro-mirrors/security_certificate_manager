@@ -1681,6 +1681,7 @@ static int32_t PackConfigToBuffer(const struct CertManagerConfig *config, struct
             return ret;
         }
     }
+    outData->size = outOffset;
     return CM_SUCCESS;
 }
 
