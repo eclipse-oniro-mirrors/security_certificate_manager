@@ -39,18 +39,14 @@ struct CertStatusExpectResult {
 };
 
 /* preset system CA pubkey hashes, precomputed with (NOT derived from the
- * code under test): the implementation calls X509_pubkey_digest, whose
- * input is the certificate public key BIT STRING payload (RSA: the DER
- * of RSAPublicKey; EC: the raw point octets), NOT the whole
- * SubjectPublicKeyInfo. Reproduce for the RSA certs with:
+ * code under test):
  *   openssl x509 -in config/systemCertificates/<uri> -pubkey -noout |
- *   openssl rsa -pubin -RSAPublicKey_out -outform DER | sha256sum   (uppercase)
- * (1d3472b9.0 is EC P-384: hash the SPKI BIT STRING payload itself)
+ *   openssl pkey -pubin -outform DER | sha256sum   (uppercase)
  * index i pairs with g_expectList[i].uri */
 static const char *g_expectedSystemPkHashes[] = {
-    "9A0D70DB5AA724CEBD33A727DFC3FA7278008CE11E93939B29D1F10D9754E091", /* 1d3472b9.0 */
-    "500BE14F42573F2D4E7316E45D8FCE73DD39ED7BCE7F51ABD9035E2FA9764181", /* 4bfab552.0 */
-    "C75CCA156FC9F16E45EAA31B820E4192B772326360E659DA60EA06D5D0DBB702", /* 4f316efb.0 */
+    "7E0EAD76BB6819DC2F54511A84354F6E8B307B9DD82058EA6C004F01D9DDA5DF", /* 1d3472b9.0 */
+    "808D68B3FAB4884A5F971ACE7D10550D7A95A163774F3EC36AFFFB213FBE4C74", /* 4bfab552.0 */
+    "40FCFC28875DCCBFEBCBDF6CD7433312DA63C4EFCF3BD7B1B505C22020AE0274", /* 4f316efb.0 */
 };
 
 /* read the whole force-check policy file; false when it cannot be opened */

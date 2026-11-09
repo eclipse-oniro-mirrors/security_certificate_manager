@@ -89,8 +89,9 @@ int32_t GetX509NotAfter(const X509 *x509cert, char* outBuf, uint32_t outBufMaxSi
 
 int32_t GetX509Fingerprint(const X509 *x509cert, char *outBuf, uint32_t outBufMaxSize);
 
-/* hash of the certificate SubjectPublicKeyInfo DER, SHA256 as 64 uppercase
- * hex chars; outPkHashHex must hold at least 65 bytes (64 chars + NUL) */
+/* hash of the certificate SubjectPublicKeyInfo DER (the whole SPKI, not
+ * just the public key BIT STRING), SHA256 as 64 uppercase hex chars;
+ * outPkHashHex must hold at least 65 bytes (64 chars + NUL) */
 int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex);
 
 void FreeCertContext(X509 *x509cert);

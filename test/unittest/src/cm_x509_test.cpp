@@ -788,15 +788,12 @@ HWTEST_F(CmX509Test, GetX509IssueNameLongFormatSnprintfFails, TestSize.Level0)
 }
 /* ---------- CmGetCertPubKeyHashHex ---------- */
 
-/* precomputed independently of the code under test. The implementation
- * calls X509_pubkey_digest, whose input is the certificate public key
- * BIT STRING payload (for this RSA cert: the DER of RSAPublicKey), NOT
- * the whole SubjectPublicKeyInfo. Reproduce with:
+/* precomputed independently of the code under test:
  *   openssl x509 -in cert.pem -pubkey -noout |
- *   openssl rsa -pubin -RSAPublicKey_out -outform DER | sha256sum   (uppercase)
+ *   openssl pkey -pubin -outform DER | sha256sum   (uppercase)
  * over the FIRST certificate of g_rsa2048PEMCertChain */
 const char *EXPECTED_PK_HASH =
-    "0E04E03943962F4674041DB8940BA320D24EA7E7C9C4BA4F21C61B76DF7457BA";
+    "1721F31A570A0D4F7679EFA0B4E1F378CA215E107AD9ACFD67E1A7C96D0EA7DC";
 
 HWTEST_F(CmX509Test, CmGetCertPubKeyHashHexNullArgs, TestSize.Level0)
 {

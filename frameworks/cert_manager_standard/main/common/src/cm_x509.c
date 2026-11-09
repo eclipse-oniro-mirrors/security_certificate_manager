@@ -17,6 +17,7 @@
 
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
+#include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -599,8 +600,30 @@ int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex
     unsigned int mdLen = 0;
     int32_t ret = CM_SUCCESS;
     do {
-        if (X509_pubkey_digest(cert, EVP_sha256(), md, &mdLen) != 1 || mdLen == 0) {
-            CM_LOG_E("X509_pubkey_digest failed");
+        /* SHA256 over the whole SubjectPublicKeyInfo DER: the pkHash
+         * contract of root_ca_cert_store and the force-check policy
+         * file. X509_pubkey_digest is deliberately NOT used: it hashes
+         * only the public key BIT STRING payload, not the SPKI. The
+         * i2d_X509_PUBKEY re-encoding preserves the certificate's own
+         * SPKI bytes for any key type (no EVP_PKEY roundtrip, so
+         * curves unknown to the running OpenSSL still digest). */
+        X509_PUBKEY *pubkey = X509_get_X509_PUBKEY(cert);
+        if (pubkey == NULL) {
+            CM_LOG_E("X509_get_X509_PUBKEY failed");
+            ret = CMR_ERROR_INVALID_CERT_FORMAT;
+            break;
+        }
+        unsigned char *spkiDer = NULL;
+        int spkiLen = i2d_X509_PUBKEY(pubkey, &spkiDer);
+        if (spkiLen <= 0 || spkiDer == NULL) {
+            CM_LOG_E("i2d_X509_PUBKEY failed");
+            ret = CMR_ERROR_INVALID_CERT_FORMAT;
+            break;
+        }
+        int digested = EVP_Digest(spkiDer, (size_t)spkiLen, md, &mdLen, EVP_sha256(), NULL);
+        OPENSSL_free(spkiDer);
+        if (digested != 1 || mdLen == 0) {
+            CM_LOG_E("digest spki failed");
             ret = CMR_ERROR_INVALID_CERT_FORMAT;
             break;
         }
