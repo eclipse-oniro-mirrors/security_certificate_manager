@@ -16,8 +16,6 @@
 #ifndef CERT_MANAGER_THREAD_POOL_H
 #define CERT_MANAGER_THREAD_POOL_H
 
-#include <stdint.h>
-
 #include "cm_type.h"
 
 #ifdef __cplusplus

@@ -16,7 +16,7 @@
 #ifndef CM_CERT_STATUS_EVENT_H
 #define CM_CERT_STATUS_EVENT_H
 
-#include <stdint.h>
+#include "cm_type.h"
 
 #ifdef __cplusplus
 extern "C" {

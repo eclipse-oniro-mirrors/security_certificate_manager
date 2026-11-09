@@ -95,7 +95,7 @@ void CmThreadPoolTest::TearDown()
  */
 HWTEST_F(CmThreadPoolTest, CmThreadPoolTest001, TestSize.Level0)
 {
-    /* relies on a fresh pool: must be the first pool activity of the suite */
+    /* relies on a fresh pool: must be the first test of the suite to use the pool */
     CmThreadPoolSetKeepAliveMsForTest(POOL_TEST_KEEP_ALIVE_MS);
 
     std::atomic<uint32_t> done{0};
