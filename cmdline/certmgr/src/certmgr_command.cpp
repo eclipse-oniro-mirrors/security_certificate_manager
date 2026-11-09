@@ -644,6 +644,9 @@ std::unique_ptr<CertMgrCommand> CertMgrCommand::Create(const std::string &name)
     } else if (name == "findUserCA") {
         SetCommandName("findUserCA");
         return std::make_unique<FindUserCACommand>();
+    } else if (name == "uninstallUserCA") {
+        SetCommandName("uninstallUserCA");
+        return std::make_unique<UninstallUserCACommand>();
     }
     return nullptr;
 }
@@ -1010,6 +1013,303 @@ int32_t FindUserCACommand::Run()
 
     CmFreeFindCertResult(&result);
     return CM_SUCCESS;
+}
+
+// ============================================================
+// UninstallUserCACommand
+// ============================================================
+
+int32_t ParseUserIdFromUri(const std::string &uri, int32_t &userId)
+{
+    size_t uPos = uri.find("u=");
+    if (uPos == std::string::npos) {
+        return CM_CMD_ERR_PARAM_INVALID;
+    }
+    size_t valueStart = uPos + 2;
+    size_t sepPos = uri.find(';', valueStart);
+    std::string userIdStr = (sepPos == std::string::npos)
+        ? uri.substr(valueStart)
+        : uri.substr(valueStart, sepPos - valueStart);
+
+    if (userIdStr.empty()) {
+        return CM_CMD_ERR_PARAM_INVALID;
+    }
+    for (char c : userIdStr) {
+        if (c < '0' || c > '9') {
+            return CM_CMD_ERR_PARAM_INVALID;
+        }
+    }
+    userId = std::stoi(userIdStr);
+    return CM_CMD_SUCCESS;
+}
+
+int32_t UninstallUserCACommand::ParseArgs(int argc, char *argv[])
+{
+    for (int i = 2; i < argc; i++) {
+        if (std::string(argv[i]) == "-h") {
+            WriteStdOut(HELP_UNINSTALL);
+            return -1;
+        }
+    }
+
+    int i = 2;
+    while (i < argc) {
+        std::string arg = argv[i];
+        if (arg == "-g") {
+            hasG_ = true;
+        } else if (arg == "-i") {
+            if (i + 1 >= argc) {
+                WriteError(CM_CMD_ERR_PARAM_INVALID, "Missing value for -i parameter");
+                WriteStdOut(HELP_UNINSTALL);
+                return CM_CMD_ERR_PARAM_INVALID;
+            }
+            i++;
+            certUriStr_ = argv[i];
+            hasCertUri_ = true;
+        } else if (arg[0] == '-') {
+            WriteError(CM_CMD_ERR_PARAM_INVALID, "Unknown parameter: " + arg);
+            WriteStdOut(HELP_UNINSTALL);
+            return CM_CMD_ERR_PARAM_INVALID;
+        } else {
+            if (hasCertFile_) {
+                WriteError(CM_CMD_ERR_PARAM_INVALID,
+                    "Multiple certificate files specified. Only one certificate file is allowed");
+                WriteStdOut(HELP_UNINSTALL);
+                return CM_CMD_ERR_PARAM_INVALID;
+            }
+            certFilePath_ = arg;
+            hasCertFile_ = true;
+        }
+        i++;
+    }
+    return CM_CMD_SUCCESS;
+}
+
+int32_t UninstallUserCACommand::Validate()
+{
+    if (hasCertFile_ && hasCertUri_) {
+        WriteError(CM_CMD_ERR_PARAM_INVALID,
+            "Cannot specify both certFile and certURI. Please specify only one");
+        WriteStdOut(HELP_UNINSTALL);
+        return CM_CMD_ERR_PARAM_INVALID;
+    }
+
+    if (!hasCertFile_ && !hasCertUri_) {
+        if (!HasPipeInput()) {
+            WriteError(CM_CMD_ERR_PARAM_INVALID,
+                "Either certFile or certURI must be specified");
+            WriteStdOut(HELP_UNINSTALL);
+            return CM_CMD_ERR_PARAM_INVALID;
+        }
+        hasCertFile_ = true;
+    }
+
+    return CM_CMD_SUCCESS;
+}
+
+int32_t UninstallUserCACommand::AuthenticateForUninstall(
+    int32_t uriUserId, bool hasUriUserId, int32_t &authUserId)
+{
+    int32_t currentUserId = GetUserId();
+    if (currentUserId < 0) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
+
+    if (hasUriUserId) {
+        if (uriUserId == 0) {
+            return AuthenticateAdmin();
+        } else if (uriUserId == currentUserId) {
+#ifdef SUPPORT_USERIAM
+            return AuthenticateUser(currentUserId);
+#else
+            WriteError(CM_CMD_ERR_INTERNAL_ERROR, "User authentication is not supported in this build");
+            return CM_CMD_ERR_INTERNAL_ERROR;
+#endif
+        } else {
+            WriteError(CM_CMD_ERR_PERMISSION_DENIED,
+                "The current user does not have permission to uninstall this CA certificate");
+            return CM_CMD_ERR_PERMISSION_DENIED;
+        }
+    }
+
+    if (hasG_) {
+        int32_t ret = CheckGlobalUserCaPermission(currentUserId);
+        if (ret != CM_CMD_SUCCESS) {
+            return ret;
+        }
+        authUserId = 0;
+        return AuthenticateAdmin();
+    }
+
+    authUserId = static_cast<int32_t>(INIT_INVALID_VALUE);
+#ifdef SUPPORT_USERIAM
+    return AuthenticateUser(currentUserId);
+#else
+    WriteError(CM_CMD_ERR_INTERNAL_ERROR, "User authentication is not supported in this build");
+    return CM_CMD_ERR_INTERNAL_ERROR;
+#endif
+}
+
+int32_t UninstallUserCACommand::FindCertUriByHash(
+    const struct CmBlob &certBlob, std::string &outCertUri)
+{
+    std::string certFileHash;
+    int32_t ret = GetCertSha256Hex(certBlob, certFileHash);
+    if (ret != CM_SUCCESS) {
+        WriteError(CM_CMD_ERR_INVALID_CERT_FORMAT, "Failed to compute SHA-256 of certFile");
+        return CM_CMD_ERR_INVALID_CERT_FORMAT;
+    }
+
+    enum CmFindCertType certType = CM_FIND_CERT_TYPE_USER_CA;
+    struct FindCertRequest request;
+    (void)memset_s(&request, sizeof(request), 0, sizeof(request));
+    request.certTypesCount = 1;
+    request.certTypes = &certType;
+    request.scope = hasG_ ? CM_FIND_CERT_SCOPE_GLOBAL : CM_FIND_CERT_SCOPE_CURRENT_USER;
+    request.countLimit = 0;
+
+    struct FindCertResult result;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+
+    ret = CmFindCertificate(&request, &result);
+    if (ret != CM_SUCCESS) {
+        int32_t cmdErr = MapSdkErrToCmdErr(ret);
+        WriteError(cmdErr, "Failed to find certificates");
+        return cmdErr;
+    }
+
+    bool found = false;
+    for (uint32_t i = 0; i < result.count; i++) {
+        if (result.certInfos[i].certData.data == nullptr || result.certInfos[i].certData.size == 0) {
+            continue;
+        }
+        struct CmBlob certData = { result.certInfos[i].certData.size, result.certInfos[i].certData.data };
+        std::string certHash;
+        int32_t hashRet = GetCertSha256Hex(certData, certHash);
+        if (hashRet != CM_SUCCESS) {
+            continue;
+        }
+        if (certHash == certFileHash) {
+            outCertUri = std::string(result.certInfos[i].uri);
+            found = true;
+            break;
+        }
+    }
+
+    CmFreeFindCertResult(&result);
+
+    if (!found) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR,
+            "No matching user CA certificate found for the specified certFile");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
+
+    return CM_CMD_SUCCESS;
+}
+
+int32_t UninstallUserCACommand::UninstallByCertUri(const std::string &certUri)
+{
+    int32_t uriUserId = -1;
+    int32_t ret = ParseUserIdFromUri(certUri, uriUserId);
+    if (ret != CM_CMD_SUCCESS) {
+        WriteError(CM_CMD_ERR_PARAM_INVALID,
+            "Failed to parse userId from certURI (error code: 29700006)");
+        WriteStdOut(HELP_UNINSTALL);
+        return CM_CMD_ERR_PARAM_INVALID;
+    }
+
+    int32_t authUserId = 0;
+    ret = AuthenticateForUninstall(uriUserId, true, authUserId);
+    if (ret != CM_CMD_SUCCESS) {
+        return ret;
+    }
+
+    uint32_t uriLen = static_cast<uint32_t>(certUri.size());
+    uint8_t *uriBuf = static_cast<uint8_t *>(malloc(uriLen + 1));
+    if (uriBuf == nullptr) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to allocate memory for URI");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
+    (void)memcpy_s(uriBuf, uriLen + 1, certUri.c_str(), uriLen + 1);
+    struct CmBlob certUriBlob = { uriLen, uriBuf };
+
+    int32_t sdkRet = CmUninstallUserTrustedCert(&certUriBlob);
+    free(uriBuf);
+
+    if (sdkRet == CM_SUCCESS) {
+        WriteStdOut(certUri + "\n");
+        return CM_CMD_SUCCESS;
+    }
+
+    int32_t cmdErr = MapSdkErrToCmdErr(sdkRet);
+    WriteError(cmdErr, "Uninstall failed: " + GetErrDetail(cmdErr));
+    return cmdErr;
+}
+
+int32_t UninstallUserCACommand::UninstallByCertFile(const std::string &certFilePath)
+{
+    struct CmBlob certBlob = { 0, nullptr };
+    if (!certFilePath.empty()) {
+        int32_t ret = ReadFileData(certFilePath, certBlob);
+        if (ret != CM_CMD_SUCCESS) {
+            return ret;
+        }
+    } else {
+        int32_t ret = ReadPipeData(certBlob);
+        if (ret != CM_CMD_SUCCESS) {
+            return ret;
+        }
+    }
+
+    if (certBlob.size > MAX_LEN_CERTIFICATE) {
+        WriteError(CM_CMD_ERR_PARAM_INVALID, "Invalid file size: " + std::to_string(certBlob.size));
+        free(certBlob.data);
+        return CM_CMD_ERR_PARAM_INVALID;
+    }
+
+    int32_t authUserId = 0;
+    int32_t ret = AuthenticateForUninstall(0, false, authUserId);
+    if (ret != CM_CMD_SUCCESS) {
+        free(certBlob.data);
+        return ret;
+    }
+
+    std::string matchedCertUri;
+    ret = FindCertUriByHash(certBlob, matchedCertUri);
+    free(certBlob.data);
+    if (ret != CM_CMD_SUCCESS) {
+        return ret;
+    }
+
+    uint32_t uriLen = static_cast<uint32_t>(matchedCertUri.size());
+    uint8_t *uriBuf = static_cast<uint8_t *>(malloc(uriLen + 1));
+    if (uriBuf == nullptr) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to allocate memory for URI");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
+    (void)memcpy_s(uriBuf, uriLen + 1, matchedCertUri.c_str(), uriLen + 1);
+    struct CmBlob certUriBlob = { uriLen, uriBuf };
+
+    int32_t sdkRet = CmUninstallUserTrustedCert(&certUriBlob);
+    free(uriBuf);
+
+    if (sdkRet == CM_SUCCESS) {
+        WriteStdOut(matchedCertUri + "\n");
+        return CM_CMD_SUCCESS;
+    }
+
+    int32_t cmdErr = MapSdkErrToCmdErr(sdkRet);
+    WriteError(cmdErr, "Uninstall failed: " + GetErrDetail(cmdErr));
+    return cmdErr;
+}
+
+int32_t UninstallUserCACommand::Run()
+{
+    if (hasCertUri_) {
+        return UninstallByCertUri(certUriStr_);
+    }
+    return UninstallByCertFile(certFilePath_);
 }
 
 } // namespace CertMgr

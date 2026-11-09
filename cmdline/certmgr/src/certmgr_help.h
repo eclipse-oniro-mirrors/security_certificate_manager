@@ -24,8 +24,9 @@ const std::string HELP_MAIN =
     "Usage: certmgr [-h] [command] [opt ...]\n"
     "-h  Displays the help information about the certmgr command\n"
     "certmgr commands are:\n"
-    "installUserCA     Install user CA certificate\n"
-    "findUserCA        Find user CA certificates\n";
+    "installUserCA       Install user CA certificate\n"
+    "findUserCA          Find user CA certificates\n"
+    "uninstallUserCA     Uninstall user CA certificate\n";
 
 const std::string HELP_INSTALL =
     "Usage: certmgr installUserCA [-h] [-g] [-F certFileFormat] [certFile]\n"
@@ -44,6 +45,16 @@ const std::string HELP_FIND =
     "-c count    Maximum number of results (0 = all)\n"
     "-p          Print PEM encoding of certificates\n"
     "-z          Print SHA-256 and SHA-1 hash of certificates\n";
+
+const std::string HELP_UNINSTALL =
+    "Usage: certmgr uninstallUserCA [-h] [-g] [certFile] [-i certURI]\n"
+    "-h          Display help information\n"
+    "-g          Uninstall from system-level (GlobalUser) directory, default is current user. "
+    "Only effective when uninstalling by certFile\n"
+    "certFile    CA certificate file to uninstall (only one file allowed). "
+    "Supports pipe input. PEM/DER format only. Required if certURI is not specified\n"
+    "-i certURI  CA certificate URI to uninstall (can be obtained from install/find output). "
+    "Required if certFile is not specified\n";
 
 } // namespace CertMgr
 
