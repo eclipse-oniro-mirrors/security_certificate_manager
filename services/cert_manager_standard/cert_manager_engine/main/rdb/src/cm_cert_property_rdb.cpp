@@ -280,7 +280,7 @@ static void BuildPredicatesFromCondition(NativeRdb::AbsRdbPredicates &predicates
             if (i > 0) {
                 predicates.Or();
             }
-            predicates.EqualTo(COLUMN_USERID, std::to_string(condition->userIds[i]));
+            predicates.EqualTo(COLUMN_USERID, condition->userIds[i]);
         }
         predicates.EndWrap();
     }
@@ -364,6 +364,11 @@ int32_t QueryCertPropertyByCondition(const struct CmFindCertCondition *condition
 
     NativeRdb::AbsRdbPredicates predicates(CERT_PROPERTY_TABLE_NAME);
     BuildPredicatesFromCondition(predicates, condition);
+        
+    /* order by USERID, ALIAS, SUBJECT_NAME ascending */
+    predicates.OrderByAsc(COLUMN_USERID);
+    predicates.OrderByAsc(COLUMN_ALIAS);
+    predicates.OrderByAsc(COLUMN_SUBJECT_NAME);
 
     auto absSharedResultSet = cmRdbDataManager->QueryDataWithPredicates(predicates);
     if (absSharedResultSet == nullptr) {

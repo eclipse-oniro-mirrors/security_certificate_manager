@@ -1004,10 +1004,8 @@ int32_t FindUserCACommand::Run()
     WriteStdOut("certificate count: " + std::to_string(result.count) + "\n");
 
     for (uint32_t i = 0; i < result.count; i++) {
+        WriteStdOut("\n");
         PrintCertInfo(result.certInfos[i], printHash_, printPem_);
-        if (i < result.count - 1) {
-            WriteStdOut("\n");
-        }
     }
 
     CmFreeFindCertResult(&result);
