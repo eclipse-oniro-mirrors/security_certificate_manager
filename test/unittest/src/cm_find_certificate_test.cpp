@@ -555,4 +555,3 @@ HWTEST_F(CmFindCertificateTest, QueryByConditionNoMatch, TestSize.Level0)
     EXPECT_EQ(results, nullptr);
     free(results);
 }
-} // namespace
