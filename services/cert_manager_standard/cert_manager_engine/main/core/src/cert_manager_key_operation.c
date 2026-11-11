@@ -536,9 +536,12 @@ static int32_t ServiceSignVerifyUpdate(const struct CmBlob *handle, const struct
     int32_t ret = HksUpdate(&handleHks, paramSet, &inDataHks, &tempOut);
     if (ret != HKS_SUCCESS) {
         CM_LOG_E("huks update fail, ret = %d", ret);
-        CmDeleteSession(handle);
+        CmReleaseSession(handle, false); /* session is dead, remove it */
         return CMR_ERROR_KEY_UPDATE_FAILED;
     }
+    /* the session survives for the next update: clear the in-flight mark so
+     * a later Update/Finish/Abort on this handle can claim it again */
+    CmReleaseSession(handle, true);
     return CM_SUCCESS;
 }
 
@@ -550,7 +553,7 @@ static int32_t ServiceSignVerifyFinish(const struct CmBlob *handle, const struct
     struct HksBlob outDataHks = { outData->size, outData->data };
 
     int32_t ret = HksFinish(&handleHks, paramSet, &inDataHks, &outDataHks);
-    CmDeleteSession(handle);
+    CmReleaseSession(handle, false); /* session completed, remove it */
     if (ret != HKS_SUCCESS) {
         CM_LOG_E("huks finish fail, ret = %d", ret);
         return CMR_ERROR_KEY_FINISH_FAILED;
@@ -564,7 +567,7 @@ static int32_t ServiceSignVerifyAbort(const struct CmBlob *handle, const struct 
     struct HksBlob handleHks = { handle->size, handle->data };
 
     int32_t ret = HksAbort(&handleHks, paramSet);
-    CmDeleteSession(handle);
+    CmReleaseSession(handle, false); /* session aborted, remove it */
     if (ret != HKS_SUCCESS) {
         CM_LOG_E("huks abort fail, ret = %d", ret);
         return CMR_ERROR_KEY_ABORT_FAILED;
@@ -617,7 +620,11 @@ int32_t CmKeyOpProcess(enum CmSignVerifyCmd cmdId, const struct CmContext *conte
     const struct CmBlob *inData, struct CmBlob *outData)
 {
     struct CmSessionNodeInfo info = { context->userId, context->uid, { 0, NULL } };
-    if (CmQuerySession(&info, handle) == NULL) {
+    /* Claim the session under g_lock: claiming and the HUKS operation form
+     * one atomic step per handle. A plain query left a window where two
+     * threads (e.g. concurrent Finish and Abort) both observed the session
+     * and issued conflicting HUKS operations on the same handle. */
+    if (CmClaimSession(&info, handle) != CM_SUCCESS) {
         CM_LOG_E("session handle not exist");
         return (cmdId == SIGN_VERIFY_CMD_ABORT) ? CM_SUCCESS : CMR_ERROR_NOT_EXIST;
     }
@@ -631,7 +638,7 @@ int32_t CmKeyOpProcess(enum CmSignVerifyCmd cmdId, const struct CmContext *conte
         CM_AUTH_STORAGE_LEVEL_EL1, NULL);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("Failed to construct paramSet");
-        CmDeleteSession(handle);
+        CmReleaseSession(handle, false); /* claimed above, must be released */
         return CMR_ERROR_KEY_PROCESS_PARAM_FAILED;
     }
 
@@ -646,6 +653,8 @@ int32_t CmKeyOpProcess(enum CmSignVerifyCmd cmdId, const struct CmContext *conte
             ret = ServiceSignVerifyAbort(handle, paramSet);
             break;
         default:
+            /* not a valid op: leave the claimed session usable */
+            CmReleaseSession(handle, true);
             ret = CMR_ERROR_INVALID_ARGUMENT;
             break;
     }

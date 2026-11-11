@@ -97,6 +97,11 @@ private:
     CmUkeyAuthDialogResultCallback callback_;
     void *userData_;
     std::atomic<bool> delivered_;
+    /* sptr assignment is a non-atomic inc/dec/assign sequence: every write to
+     * selfHold_ (HoldSelf/Cancel/Deliver may run on different threads) goes
+     * through selfHoldMutex_, otherwise the refcount can be torn and the
+     * stub either revives (leak) or dies early (UAF) */
+    std::mutex selfHoldMutex_;
     sptr<CmDialogCallbackStub> selfHold_;
 
     DISALLOW_COPY_AND_MOVE(CmDialogCallbackStub);
@@ -153,6 +158,7 @@ bool CmDialogCallbackStub::StartFallbackTimer()
 
 void CmDialogCallbackStub::HoldSelf()
 {
+    std::lock_guard<std::mutex> lock(selfHoldMutex_);
     selfHold_ = this;
 }
 
@@ -160,6 +166,10 @@ void CmDialogCallbackStub::Cancel()
 {
     bool expected = false;
     delivered_.compare_exchange_strong(expected, true);
+    /* the sync-failure path runs after HoldSelf: drop the self reference so
+     * the stub is destroyed instead of leaking in the already-delivered state */
+    std::lock_guard<std::mutex> lock(selfHoldMutex_);
+    selfHold_ = nullptr;
 }
 
 void CmDialogCallbackStub::Deliver(int32_t result)
@@ -177,7 +187,10 @@ void CmDialogCallbackStub::Deliver(int32_t result)
     if (callback_ != nullptr) {
         callback_(result, userData_);
     }
-    selfHold_ = nullptr; /* release self-ownership */
+    {
+        std::lock_guard<std::mutex> lock(selfHoldMutex_);
+        selfHold_ = nullptr; /* release self-ownership */
+    }
 }
 } // namespace CertManager
 } // namespace Security
@@ -187,8 +200,9 @@ using namespace OHOS;
 using namespace OHOS::Security::CertManager;
 
 /* Common send sequence for OPEN requests (shared by both entries): arm the
- * client fallback timer -> send -> on sync failure Cancel destroys the stub
- * (no callback) / on success HoldSelf keeps it alive until Deliver; returns
+ * client fallback timer -> hold the stub for its own lifetime -> send -> on
+ * sync failure Cancel releases the self-hold and destroys the stub (no
+ * callback) / on success the hold persists until the first Deliver; returns
  * the sync code */
 static int32_t SendOpenDialogRequest(enum CertManagerInterfaceCode type,
     const sptr<CmDialogCallbackStub> &stub, const struct CmParamSet *sendParamSet)
@@ -202,6 +216,13 @@ static int32_t SendOpenDialogRequest(enum CertManagerInterfaceCode type,
             ret = CMR_DIALOG_ERROR_INTERNAL;
             break;
         }
+        /* Take self-ownership before the request leaves: the SA may deliver
+         * the callback right after (or even while) the sync reply is being
+         * written back, so HoldSelf must happen-before any possible Deliver.
+         * Holding it after SendRequest leaves a window where the stub is
+         * neither owned by the caller nor by itself (UAF) or gets revived
+         * after Deliver already ran (leak). */
+        stub->HoldSelf();
         struct CmBlob parcelBlob = { sendParamSet->paramSetSize,
             reinterpret_cast<uint8_t *>(const_cast<struct CmParamSet *>(sendParamSet)) };
         ret = OHOS::SendRequestWithRemote(type, &parcelBlob, stub, &replyCode);
@@ -212,7 +233,6 @@ static int32_t SendOpenDialogRequest(enum CertManagerInterfaceCode type,
             ret = (ret != CM_SUCCESS) ? ret : replyCode;
             break;
         }
-        stub->HoldSelf(); /* stub manages its own lifetime until Deliver */
         CM_LOG_I("ukey dialog request accepted");
     } while (0);
     return ret;

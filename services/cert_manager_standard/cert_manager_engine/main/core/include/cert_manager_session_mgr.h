@@ -33,6 +33,9 @@ struct CmSessionNode {
     struct CmSessionNodeInfo info;
     struct CmBlob handle;
     bool abortable;
+    /* guarded by g_lock: marks a node whose HUKS operation is in flight, so
+     * that only one thread at a time can operate on a session handle */
+    bool opInProgress;
 };
 
 enum CmSessionDeleteType {
@@ -51,6 +54,28 @@ int32_t CmCreateSession(const struct CmSessionNodeInfo *info, const struct CmBlo
 struct CmSessionNode *CmQuerySession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle);
 
 void CmDeleteSession(const struct CmBlob *handle);
+
+/**
+ * @brief Atomically take ownership of a session for an in-flight operation.
+ *
+ * Marks the matching node opInProgress under g_lock. A second claim on the
+ * same handle (e.g. concurrent Finish and Abort) fails, so exactly one
+ * thread proceeds to the HUKS operation; the check and the operation no
+ * longer race across the query->HUKS op->delete sequence.
+ *
+ * @return int32_t CM_SUCCESS when the session was claimed
+ * @retval CMR_ERROR_NOT_EXIST No session for the caller, or it is busy
+ */
+int32_t CmClaimSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle);
+
+/**
+ * @brief Release a session claimed with CmClaimSession.
+ *
+ * @param handle Session handle to release
+ * @param keepSession true keeps the session for further updates (only the
+ *                    opInProgress mark is cleared); false removes it
+ */
+void CmReleaseSession(const struct CmBlob *handle, bool keepSession);
 
 void CmDeleteSessionByNodeInfo(enum CmSessionDeleteType deleteType, const struct CmSessionNodeInfo *info);
 

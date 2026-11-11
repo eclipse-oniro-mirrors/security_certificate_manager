@@ -221,6 +221,46 @@ void CmDeleteSession(const struct CmBlob *handle)
     pthread_mutex_unlock(&g_lock);
 }
 
+int32_t CmClaimSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle)
+{
+    struct CmSessionNode *node = NULL;
+    pthread_mutex_lock(&g_lock);
+    CM_DLIST_ITER(node, &g_sessionList) {
+        if (IsSameBlob(handle, &(node->handle)) && IsSameCaller(info, node)) {
+            if (node->opInProgress) {
+                pthread_mutex_unlock(&g_lock);
+                return CMR_ERROR_NOT_EXIST; /* another op owns the session */
+            }
+            node->opInProgress = true;
+            pthread_mutex_unlock(&g_lock);
+            return CM_SUCCESS;
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+
+    return CMR_ERROR_NOT_EXIST;
+}
+
+void CmReleaseSession(const struct CmBlob *handle, bool keepSession)
+{
+    struct CmSessionNode *node = NULL;
+    pthread_mutex_lock(&g_lock);
+    CM_DLIST_ITER(node, &g_sessionList) {
+        if (IsSameBlob(handle, &(node->handle))) {
+            if (keepSession) {
+                node->opInProgress = false;
+            } else {
+                RemoveAndFreeSessionNode(&node);
+                --g_sessionCount;
+                CM_LOG_D("delete session count: %u", g_sessionCount);
+            }
+            pthread_mutex_unlock(&g_lock);
+            return;
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
 static bool IsNeedDelete(enum CmSessionDeleteType deleteType, const struct CmSessionNodeInfo *info,
     const struct CmSessionNode *node)
 {
