@@ -849,6 +849,54 @@ HWTEST_F(CmAppCertTest, AppCertUnInstallAbnormalTest006, TestSize.Level0)
 }
 
 /**
+ * @tc.name: AppCertUnInstallAbnormalTest007
+ * @tc.desc: Test uninstall private credential of another app, rdb data must not be deleted
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MI8 /SR000H09N9
+ */
+HWTEST_F(CmAppCertTest, AppCertUnInstallAbnormalTest007, TestSize.Level0)
+{
+    /* simulate the victim app's private credential rdb record: user 100, uid 96101 */
+    const char *victimUri = "oh:t=ak;o=victim007;u=100;a=96101";
+    struct CertProperty victimProp;
+    (void)memset_s(&victimProp, sizeof(struct CertProperty), 0, sizeof(struct CertProperty));
+    (void)memcpy_s(victimProp.uri, MAX_LEN_URI, victimUri, strlen(victimUri));
+    (void)memcpy_s(victimProp.alias, MAX_LEN_CERT_ALIAS, "victim007", strlen("victim007"));
+    (void)memcpy_s(victimProp.subjectName, MAX_LEN_SUBJECT_NAME, "C=OH,O=UnitTest,CN=victim007",
+        strlen("C=OH,O=UnitTest,CN=victim007"));
+    (void)memcpy_s(victimProp.certType, MAX_LEN_CERT_TYPE, "ak", strlen("ak"));
+    victimProp.certStore = CM_PRI_CREDENTIAL_STORE;
+    victimProp.userId = 100; /* victim user */
+    victimProp.uid = 96101; /* victim app uid */
+    victimProp.level = CM_AUTH_STORAGE_LEVEL_EL1;
+
+    (void)CreateCertPropertyRdb();
+    int32_t ret = InsertCertProperty(&victimProp);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest007 insert victim rdb failed, retcode:" << ret;
+
+    uint8_t keyUriBuf[MAX_LEN_URI] = {0};
+    (void)memcpy_s(keyUriBuf, MAX_LEN_URI, victimUri, strlen(victimUri) + 1);
+    struct CmBlob keyUri = { sizeof(keyUriBuf), keyUriBuf };
+
+    /* caller(user 0, uid 0) uninstalling another app's private credential must be denied */
+    ret = CmUninstallAppCert(&keyUri, CM_PRI_CREDENTIAL_STORE);
+    EXPECT_EQ(ret, CMR_ERROR_PERMISSION_DENIED)
+        << "AppCertUnInstallAbnormalTest007 test failed, retcode:" << ret;
+
+    /* victim's rdb record must not be deleted by unauthorized uninstall */
+    struct CertProperty queryProp;
+    (void)memset_s(&queryProp, sizeof(struct CertProperty), 0, sizeof(struct CertProperty));
+    ret = QueryCertProperty(victimUri, &queryProp);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest007 query rdb failed, retcode:" << ret;
+    EXPECT_TRUE(strlen(queryProp.uri) != 0)
+        << "AppCertUnInstallAbnormalTest007 rdb record was deleted by unauthorized uninstall";
+
+    /* cleanup: remove the simulated victim record */
+    ret = DeleteCertProperty(victimUri);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest007 cleanup failed, retcode:" << ret;
+}
+
+/**
  * @tc.name: AppCertUnInstallAllAppCertBaseTest001
  * @tc.desc: Test CertManager unInstall all app cert interface base function
  * @tc.type: FUNC

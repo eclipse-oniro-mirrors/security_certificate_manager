@@ -252,8 +252,8 @@ int32_t CertManagerFindCertFileNameByUri(const struct CmContext *context, const 
     return ret;
 }
 
-static int32_t GetRdbCertLevelAndCheckStore(const struct CmBlob *keyUri, const uint32_t store,
-    enum CmAuthStorageLevel *level)
+static int32_t GetRdbCertLevelAndCheckStore(const struct CmContext *context, const struct CmBlob *keyUri,
+    const uint32_t store, enum CmAuthStorageLevel *level)
 {
     struct CertProperty certProp;
     (void)memset_s(&certProp, sizeof(struct CertProperty), 0, sizeof(struct CertProperty));
@@ -276,6 +276,12 @@ static int32_t GetRdbCertLevelAndCheckStore(const struct CmBlob *keyUri, const u
             CM_LOG_E("cert store %u mismatch input store %u", (uint32_t)certProp.certStore, store);
             return CMR_ERROR_NOT_EXIST;
         }
+        if ((store == CM_PRI_CREDENTIAL_STORE) &&
+            (((uint32_t)certProp.userId != context->userId) || ((uint32_t)certProp.uid != context->uid))) {
+            CM_LOG_E("private credential does not belong to caller, rdb userId %u uid %u",
+                (uint32_t)certProp.userId, (uint32_t)certProp.uid);
+            return CMR_ERROR_PERMISSION_DENIED;
+        }
     }
     return CM_SUCCESS;
 }
@@ -286,7 +292,7 @@ int32_t CmRemoveAppCert(const struct CmContext *context, const struct CmBlob *ke
     ASSERT_ARGS(context && keyUri && keyUri->data && keyUri->size);
 
     enum CmAuthStorageLevel level;
-    int32_t ret = GetRdbCertLevelAndCheckStore(keyUri, store, &level);
+    int32_t ret = GetRdbCertLevelAndCheckStore(context, keyUri, store, &level);
     if (ret != CM_SUCCESS) {
         return ret;
     }
