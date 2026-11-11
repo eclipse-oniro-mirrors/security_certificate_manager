@@ -58,6 +58,10 @@ int32_t AuthenticateUser(int32_t userId);
 
 int32_t AuthenticateAdmin();
 
+int32_t AuthenticateCurrentUser(int32_t userId);
+
+int32_t AuthenticateForCertFile(bool hasG, int32_t &userId);
+
 int32_t GetCertSha256Hex(const struct CmBlob &certData, std::string &sha256Hex);
 
 int32_t GetCertPemString(const struct CmBlob &certData, std::string &pemStr);
@@ -98,7 +102,6 @@ protected:
 
 private:
     int32_t ReadCertData(struct CmBlob &certBlob);
-    int32_t AuthenticateAndCheckPermission(int32_t &userId);
     int32_t InstallPemDer(const struct CmBlob &certBlob, int32_t userId);
     int32_t InstallP7B(const struct CmBlob &certBlob, int32_t userId);
 

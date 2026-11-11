@@ -623,6 +623,37 @@ int32_t AuthenticateAdmin()
     return CM_CMD_ERR_INTERNAL_ERROR;
 }
 
+int32_t AuthenticateCurrentUser(int32_t userId)
+{
+#ifdef SUPPORT_USERIAM
+    return AuthenticateUser(userId);
+#else
+    WriteError(CM_CMD_ERR_INTERNAL_ERROR, "User authentication is not supported in this build");
+    return CM_CMD_ERR_INTERNAL_ERROR;
+#endif
+}
+
+int32_t AuthenticateForCertFile(bool hasG, int32_t &userId)
+{
+    int32_t currentUserId = CertMgrCommand::GetUserId();
+    if (currentUserId < 0) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
+
+    if (hasG) {
+        int32_t ret = CheckGlobalUserCaPermission(currentUserId);
+        if (ret != CM_CMD_SUCCESS) {
+            return ret;
+        }
+        userId = 0;
+        return AuthenticateAdmin();
+    }
+
+    userId = static_cast<int32_t>(INIT_INVALID_VALUE);
+    return AuthenticateCurrentUser(currentUserId);
+}
+
 int32_t CertMgrCommand::Execute(int argc, char *argv[])
 {
     int32_t ret = ParseArgs(argc, argv);
@@ -742,32 +773,6 @@ int32_t InstallUserCACommand::ReadCertData(struct CmBlob &certBlob)
     return ReadPipeData(certBlob);
 }
 
-int32_t InstallUserCACommand::AuthenticateAndCheckPermission(int32_t &userId)
-{
-    int32_t authUserId = GetUserId();
-    if (authUserId < 0) {
-        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
-        return CM_CMD_ERR_INTERNAL_ERROR;
-    }
-
-    if (hasG_) {
-        int32_t ret = CheckGlobalUserCaPermission(authUserId);
-        if (ret != CM_CMD_SUCCESS) {
-            return ret;
-        }
-        userId = 0;
-        return AuthenticateAdmin();
-    }
-
-    userId = static_cast<int32_t>(INIT_INVALID_VALUE);
-#ifdef SUPPORT_USERIAM
-    return AuthenticateUser(authUserId);
-#else
-    WriteError(CM_CMD_ERR_INTERNAL_ERROR, "User authentication is not supported in this build");
-    return CM_CMD_ERR_INTERNAL_ERROR;
-#endif
-}
-
 int32_t InstallUserCACommand::InstallPemDer(const struct CmBlob &certBlob, int32_t userId)
 {
     static const uint8_t emptyAlias[] = { '\0' };
@@ -831,7 +836,7 @@ int32_t InstallUserCACommand::Run()
     }
 
     int32_t userId;
-    ret = AuthenticateAndCheckPermission(userId);
+    ret = AuthenticateForCertFile(hasG_, userId);
     if (ret != CM_CMD_SUCCESS) {
         free(certBlob.data);
         return ret;
@@ -1110,22 +1115,16 @@ int32_t UninstallUserCACommand::Validate()
 int32_t UninstallUserCACommand::AuthenticateForUninstall(
     int32_t uriUserId, bool hasUriUserId, int32_t &authUserId)
 {
-    int32_t currentUserId = GetUserId();
-    if (currentUserId < 0) {
-        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
-        return CM_CMD_ERR_INTERNAL_ERROR;
-    }
-
     if (hasUriUserId) {
+        int32_t currentUserId = GetUserId();
+        if (currentUserId < 0) {
+            WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
+            return CM_CMD_ERR_INTERNAL_ERROR;
+        }
         if (uriUserId == 0) {
             return AuthenticateAdmin();
         } else if (uriUserId == currentUserId) {
-#ifdef SUPPORT_USERIAM
-            return AuthenticateUser(currentUserId);
-#else
-            WriteError(CM_CMD_ERR_INTERNAL_ERROR, "User authentication is not supported in this build");
-            return CM_CMD_ERR_INTERNAL_ERROR;
-#endif
+            return AuthenticateCurrentUser(currentUserId);
         } else {
             WriteError(CM_CMD_ERR_PERMISSION_DENIED,
                 "The current user does not have permission to uninstall this CA certificate");
@@ -1133,22 +1132,7 @@ int32_t UninstallUserCACommand::AuthenticateForUninstall(
         }
     }
 
-    if (hasG_) {
-        int32_t ret = CheckGlobalUserCaPermission(currentUserId);
-        if (ret != CM_CMD_SUCCESS) {
-            return ret;
-        }
-        authUserId = 0;
-        return AuthenticateAdmin();
-    }
-
-    authUserId = static_cast<int32_t>(INIT_INVALID_VALUE);
-#ifdef SUPPORT_USERIAM
-    return AuthenticateUser(currentUserId);
-#else
-    WriteError(CM_CMD_ERR_INTERNAL_ERROR, "User authentication is not supported in this build");
-    return CM_CMD_ERR_INTERNAL_ERROR;
-#endif
+    return AuthenticateForCertFile(hasG_, authUserId);
 }
 
 int32_t UninstallUserCACommand::FindCertUriByHash(
