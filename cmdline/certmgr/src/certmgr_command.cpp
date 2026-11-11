@@ -1152,6 +1152,8 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
     request.certTypes = &certType;
     request.scope = hasG_ ? CM_FIND_CERT_SCOPE_GLOBAL : CM_FIND_CERT_SCOPE_CURRENT_USER;
     request.countLimit = 0;
+    (void)memcpy_s(request.certHash, MAX_LEN_FIND_CERT_HASH,
+        certFileHash.c_str(), certFileHash.size() + 1);
 
     struct FindCertResult result;
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
@@ -1163,32 +1165,15 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
         return cmdErr;
     }
 
-    bool found = false;
-    for (uint32_t i = 0; i < result.count; i++) {
-        if (result.certInfos[i].certData.data == nullptr || result.certInfos[i].certData.size == 0) {
-            continue;
-        }
-        struct CmBlob certData = { result.certInfos[i].certData.size, result.certInfos[i].certData.data };
-        std::string certHash;
-        int32_t hashRet = GetCertSha256Hex(certData, certHash);
-        if (hashRet != CM_SUCCESS) {
-            continue;
-        }
-        if (certHash == certFileHash) {
-            outCertUri = std::string(result.certInfos[i].uri);
-            found = true;
-            break;
-        }
-    }
-
-    CmFreeFindCertResult(&result);
-
-    if (!found) {
+    if (result.count == 0 || result.certInfos == nullptr) {
+        CmFreeFindCertResult(&result);
         WriteError(CM_CMD_ERR_INTERNAL_ERROR,
             "No matching user CA certificate found for the specified certFile");
         return CM_CMD_ERR_INTERNAL_ERROR;
     }
 
+    outCertUri = std::string(result.certInfos[0].uri);
+    CmFreeFindCertResult(&result);
     return CM_CMD_SUCCESS;
 }
 

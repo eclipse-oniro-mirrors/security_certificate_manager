@@ -1565,7 +1565,7 @@ static int32_t FindCertInitOutData(struct CmBlob *outBlob)
    writes certTypesCount, certTypes[], scope, nameLen+name, countLimit,
    certIdLen+certId. Returns the number of bytes written via *outOffset. */
 static int32_t SerializeFindCertFields(const struct FindCertRequest *request,
-    uint8_t *requestBuf, uint32_t nameLen, uint32_t certIdLen, uint32_t *outOffset)
+    uint8_t *requestBuf, uint32_t nameLen, uint32_t certIdLen, uint32_t certHashLen, uint32_t *outOffset)
 {
     uint32_t offset = 0;
     *(uint32_t *)(requestBuf + offset) = request->certTypesCount;
@@ -1597,6 +1597,14 @@ static int32_t SerializeFindCertFields(const struct FindCertRequest *request,
         }
         offset += certIdLen;
     }
+    *(uint32_t *)(requestBuf + offset) = certHashLen;
+    offset += sizeof(uint32_t);
+    if (certHashLen > 0) {
+        if (memcpy_s(requestBuf + offset, certHashLen, request->certHash, certHashLen) != EOK) {
+            return CMR_ERROR_MEM_OPERATION_COPY;
+        }
+        offset += certHashLen;
+    }
     *outOffset = offset;
     return CM_SUCCESS;
 }
@@ -1610,10 +1618,12 @@ static int32_t PackFindCertRequest(const struct FindCertRequest *request,
 {
     uint32_t nameLen = (request->name[0] != '\0') ? (strlen(request->name) + 1) : 0;
     uint32_t certIdLen = (request->certId[0] != '\0') ? (strlen(request->certId) + 1) : 0;
+    uint32_t certHashLen = (request->certHash[0] != '\0') ? (strlen(request->certHash) + 1) : 0;
     uint32_t requestBufSize = sizeof(uint32_t) +
         sizeof(enum CmFindCertType) * request->certTypesCount +
         sizeof(uint32_t) + sizeof(uint32_t) + nameLen +
-        sizeof(uint32_t) + sizeof(uint32_t) + certIdLen;
+        sizeof(uint32_t) + sizeof(uint32_t) + certIdLen +
+        sizeof(uint32_t) + certHashLen;
 
     uint8_t *requestBuf = (uint8_t *)CmMalloc(requestBufSize);
     if (requestBuf == NULL) {
@@ -1623,7 +1633,7 @@ static int32_t PackFindCertRequest(const struct FindCertRequest *request,
     (void)memset_s(requestBuf, requestBufSize, 0, requestBufSize);
 
     uint32_t offset = 0;
-    int32_t ret = SerializeFindCertFields(request, requestBuf, nameLen, certIdLen, &offset);
+    int32_t ret = SerializeFindCertFields(request, requestBuf, nameLen, certIdLen, certHashLen, &offset);
     if (ret != CM_SUCCESS) {
         CM_FREE_PTR(requestBuf);
         return ret;
