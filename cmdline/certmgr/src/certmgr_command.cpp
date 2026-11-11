@@ -1145,43 +1145,47 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
         return CM_CMD_ERR_INVALID_CERT_FORMAT;
     }
 
-    enum CmFindCertType certType = CM_FIND_CERT_TYPE_USER_CA;
-    struct FindCertRequest request;
-    (void)memset_s(&request, sizeof(request), 0, sizeof(request));
-    request.certTypesCount = 1;
-    request.certTypes = &certType;
-    request.scope = hasG_ ? CM_FIND_CERT_SCOPE_GLOBAL : CM_FIND_CERT_SCOPE_CURRENT_USER;
-    request.countLimit = 0;
+    struct UserCAProperty property;
+    property.userId = hasG_ ? 0 : static_cast<uint32_t>(INIT_INVALID_VALUE);
+    property.scope = hasG_ ? CM_GLOBAL_USER : CM_CURRENT_USER;
 
-    struct FindCertResult result;
-    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
-
-    ret = CmFindCertificate(&request, &result);
+    struct CertList certList = { 0, nullptr };
+    ret = CmGetUserCACertList(&property, &certList);
     if (ret != CM_SUCCESS) {
         int32_t cmdErr = MapSdkErrToCmdErr(ret);
-        WriteError(cmdErr, "Failed to find certificates");
+        WriteError(cmdErr, "Failed to get user CA cert list");
         return cmdErr;
     }
 
     bool found = false;
-    for (uint32_t i = 0; i < result.count; i++) {
-        if (result.certInfos[i].certData.data == nullptr || result.certInfos[i].certData.size == 0) {
+    for (uint32_t i = 0; i < certList.certsCount; i++) {
+        struct CmBlob certUri;
+        certUri.size = static_cast<uint32_t>(strlen(certList.certAbstract[i].uri)) + 1;
+        certUri.data = reinterpret_cast<uint8_t *>(certList.certAbstract[i].uri);
+
+        struct CertInfo certInfo;
+        (void)memset_s(&certInfo, sizeof(certInfo), 0, sizeof(certInfo));
+        int32_t infoRet = CmGetCertInfo(&certUri, CM_USER_TRUSTED_STORE, &certInfo);
+        if (infoRet != CM_SUCCESS || certInfo.certInfo.data == nullptr || certInfo.certInfo.size == 0) {
             continue;
         }
-        struct CmBlob certData = { result.certInfos[i].certData.size, result.certInfos[i].certData.data };
+
+        struct CmBlob certData = { certInfo.certInfo.size, certInfo.certInfo.data };
         std::string certHash;
         int32_t hashRet = GetCertSha256Hex(certData, certHash);
+        free(certInfo.certInfo.data);
         if (hashRet != CM_SUCCESS) {
             continue;
         }
+
         if (certHash == certFileHash) {
-            outCertUri = std::string(result.certInfos[i].uri);
+            outCertUri = std::string(certList.certAbstract[i].uri);
             found = true;
             break;
         }
     }
 
-    CmFreeFindCertResult(&result);
+    free(certList.certAbstract);
 
     if (!found) {
         WriteError(CM_CMD_ERR_INTERNAL_ERROR,
