@@ -29,9 +29,8 @@ namespace {
 /* records the last event handed to the publish seam */
 struct PublishRecord {
     std::string action;
-    std::string certUri;
-    bool enabled = false;
-    bool hasEnabledParam = false;
+    int changeType = -1;
+    bool hasChangeTypeParam = false;
     int32_t callCount = 0;
     bool publishResult = true;
 };
@@ -72,9 +71,8 @@ void RunAllPooledTasksOnce()
 bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want)
 {
     g_publishRecord.action = want.GetActionRef();
-    g_publishRecord.certUri = want.GetStringParam(CM_EVENT_PARAM_CERT_URI);
-    g_publishRecord.enabled = want.GetBoolParam(CM_EVENT_PARAM_ENABLED, true);
-    g_publishRecord.hasEnabledParam = want.HasParameter(CM_EVENT_PARAM_ENABLED);
+    g_publishRecord.changeType = want.GetIntParam(CM_EVENT_PARAM_CHANGE_TYPE, -1);
+    g_publishRecord.hasChangeTypeParam = want.HasParameter(CM_EVENT_PARAM_CHANGE_TYPE);
     g_publishRecord.callCount++;
     return g_publishRecord.publishResult;
 }
@@ -124,87 +122,62 @@ void CmCertStatusEventTest::TearDown()
 
 /**
 * @tc.name: CmCertStatusEventTest001
-* @tc.desc: disabled status publishes event carrying the uri and enabled=false
+* @tc.desc: user change publishes the event carrying changeType=0
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest001, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent("system://ca0", CERT_STATUS_DISABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
     EXPECT_EQ(ret, CM_SUCCESS);
     EXPECT_EQ(g_publishRecord.callCount, 1);
     EXPECT_EQ(g_publishRecord.action, std::string(CM_EVENT_ACTION_SYSTEM_CA_STATUS_CHANGED));
-    EXPECT_EQ(g_publishRecord.certUri, std::string("system://ca0"));
-    EXPECT_FALSE(g_publishRecord.enabled);
-    EXPECT_TRUE(g_publishRecord.hasEnabledParam);
+    EXPECT_EQ(g_publishRecord.changeType, CM_SYSTEM_CA_STATUS_CHANGE_USER);
+    EXPECT_TRUE(g_publishRecord.hasChangeTypeParam);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest002
-* @tc.desc: enabled status publishes event carrying enabled=true
+* @tc.desc: cloud change type (reserved, no publisher yet) round-trips changeType=1
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest002, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent("system://ca1", CERT_STATUS_ENABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_CLOUD);
     EXPECT_EQ(ret, CM_SUCCESS);
     EXPECT_EQ(g_publishRecord.callCount, 1);
     EXPECT_EQ(g_publishRecord.action, std::string(CM_EVENT_ACTION_SYSTEM_CA_STATUS_CHANGED));
-    EXPECT_EQ(g_publishRecord.certUri, std::string("system://ca1"));
-    EXPECT_TRUE(g_publishRecord.enabled);
-    EXPECT_TRUE(g_publishRecord.hasEnabledParam);
+    EXPECT_EQ(g_publishRecord.changeType, CM_SYSTEM_CA_STATUS_CHANGE_CLOUD);
+    EXPECT_TRUE(g_publishRecord.hasChangeTypeParam);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest003
-* @tc.desc: null uri is rejected without publishing
+* @tc.desc: changeType above the defined range is rejected without publishing
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest003, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent(nullptr, CERT_STATUS_DISABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_CLOUD + 1);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(g_publishRecord.callCount, 0);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest004
-* @tc.desc: empty uri is rejected without publishing
+* @tc.desc: the largest uint32 changeType is rejected without publishing
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest004, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent("", CERT_STATUS_DISABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(0xffffffffu); // not a defined change type
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(g_publishRecord.callCount, 0);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest005
-* @tc.desc: uri longer than MAX_LEN_URI is rejected without publishing
+* @tc.desc: first publish failure enqueues one delayed retry and returns success
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest005, TestSize.Level0)
 {
-    std::string tooLongUri(MAX_LEN_URI, 'a');
-    int32_t ret = CmPublishSystemCaStatusEvent(tooLongUri.c_str(), CERT_STATUS_DISABLED);
-    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(g_publishRecord.callCount, 0);
-}
-
-/**
-* @tc.name: CmCertStatusEventTest006
-* @tc.desc: status other than enabled/disabled is rejected without publishing
-*/
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest006, TestSize.Level0)
-{
-    int32_t ret = CmPublishSystemCaStatusEvent("system://ca0", 2); // 2 is not a valid status
-    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(g_publishRecord.callCount, 0);
-}
-
-/**
-* @tc.name: CmCertStatusEventTest007
-* @tc.desc: first publish failure enqueues one delayed retry and returns success
-*/
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest007, TestSize.Level0)
-{
     g_publishRecord.publishResult = false;
-    int32_t ret = CmPublishSystemCaStatusEvent("system://ca0", CERT_STATUS_DISABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
     EXPECT_EQ(ret, CM_SUCCESS);
     EXPECT_EQ(g_publishRecord.callCount, 1);
     ASSERT_EQ(g_pooledTasks.size(), 1);
@@ -212,13 +185,13 @@ HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest007, TestSize.Level0)
 }
 
 /**
-* @tc.name: CmCertStatusEventTest008
+* @tc.name: CmCertStatusEventTest006
 * @tc.desc: retry chain stops after the next attempt succeeds
 */
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest008, TestSize.Level0)
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest006, TestSize.Level0)
 {
     g_publishRecord.publishResult = false;
-    int32_t ret = CmPublishSystemCaStatusEvent("system://ca0", CERT_STATUS_DISABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
     EXPECT_EQ(ret, CM_SUCCESS);
 
     /* the retry attempt succeeds */
@@ -230,13 +203,13 @@ HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest008, TestSize.Level0)
 }
 
 /**
-* @tc.name: CmCertStatusEventTest009
+* @tc.name: CmCertStatusEventTest007
 * @tc.desc: retries are capped: 1 immediate attempt plus at most 3 retries
 */
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest009, TestSize.Level0)
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest007, TestSize.Level0)
 {
     g_publishRecord.publishResult = false;
-    int32_t ret = CmPublishSystemCaStatusEvent("system://ca0", CERT_STATUS_DISABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
     EXPECT_EQ(ret, CM_SUCCESS);
 
     RunAllPooledTasksOnce();
@@ -246,14 +219,14 @@ HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest009, TestSize.Level0)
 }
 
 /**
-* @tc.name: CmCertStatusEventTest010
+* @tc.name: CmCertStatusEventTest008
 * @tc.desc: pool rejection makes the publish report failure, no retry scheduled
 */
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest010, TestSize.Level0)
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest008, TestSize.Level0)
 {
     g_publishRecord.publishResult = false;
     g_acceptPoolTask = false;
-    int32_t ret = CmPublishSystemCaStatusEvent("system://ca0", CERT_STATUS_DISABLED);
+    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
     EXPECT_EQ(ret, CMR_ERROR);
     EXPECT_EQ(g_publishRecord.callCount, 1);
     EXPECT_EQ(g_addTaskCallCount, 1);

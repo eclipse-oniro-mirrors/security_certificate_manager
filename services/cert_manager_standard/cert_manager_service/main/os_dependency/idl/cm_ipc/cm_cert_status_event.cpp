@@ -15,9 +15,7 @@
 
 #include "cm_cert_status_event.h"
 
-#include <cstring>
 #include <functional>
-#include <string>
 
 #include "want.h"
 
@@ -55,35 +53,25 @@ void CmRetrySystemCaStatusEvent(OHOS::AAFwk::Want want, uint32_t remainingRetry)
 }
 } // namespace
 
-int32_t CmPublishSystemCaStatusEvent(const char *certUri, uint32_t status)
+int32_t CmPublishSystemCaStatusEvent(uint32_t changeType)
 {
-    if (certUri == nullptr || certUri[0] == '\0') {
-        CM_LOG_E("invalid cert uri for system ca status event");
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-    if (strlen(certUri) >= MAX_LEN_URI) {
-        CM_LOG_E("cert uri too long for system ca status event");
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-    if (status != CERT_STATUS_ENABLED && status != CERT_STATUS_DISABLED) {
-        CM_LOG_E("invalid status for system ca status event, status = %u", status);
+    if (changeType != CM_SYSTEM_CA_STATUS_CHANGE_USER && changeType != CM_SYSTEM_CA_STATUS_CHANGE_CLOUD) {
+        CM_LOG_E("invalid change type for system ca status event, changeType = %u", changeType);
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
-    bool enabled = (status == CERT_STATUS_ENABLED);
     OHOS::AAFwk::Want want;
     want.SetAction(CM_EVENT_ACTION_SYSTEM_CA_STATUS_CHANGED);
-    want.SetParam(CM_EVENT_PARAM_CERT_URI, std::string(certUri));
-    want.SetParam(CM_EVENT_PARAM_ENABLED, enabled);
+    want.SetParam(CM_EVENT_PARAM_CHANGE_TYPE, static_cast<int>(changeType));
 
     if (CmPublishSystemCaStatusEventNow(want)) {
-        CM_LOG_I("publish system ca status event, uri = %s, enabled = %d", certUri, enabled);
+        CM_LOG_I("publish system ca status event, changeType = %u", changeType);
         return CM_SUCCESS;
     }
 
     /* first attempt failed: hand the retry chain to the generic pool so the
      * IPC thread returns immediately; delivery stays best-effort */
-    CM_LOG_E("publish system ca status event failed, uri = %s, enqueue retry", certUri);
+    CM_LOG_E("publish system ca status event failed, changeType = %u, enqueue retry", changeType);
     int32_t ret = CmThreadPoolPost(
         std::bind(CmRetrySystemCaStatusEvent, want, CM_STATUS_EVENT_MAX_RETRY_COUNT - 1),
         CM_STATUS_EVENT_RETRY_DELAY_MS);

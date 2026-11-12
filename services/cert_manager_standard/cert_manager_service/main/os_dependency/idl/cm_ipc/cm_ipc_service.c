@@ -222,8 +222,10 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
 
         /* the status change is committed; notify subscribers best-effort:
          * the event wrapper logs failures internally and a failed broadcast
-         * must not fail the already committed status update */
-        (void)CmPublishSystemCaStatusEvent((const char *)certUri.data, status);
+         * must not fail the already committed status update. The user is the
+         * only change source today: cloud updates will publish
+         * CM_SYSTEM_CA_STATUS_CHANGE_CLOUD once they exist */
+        (void)CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
     } while (0);
     CmReport(__func__, &cmContext, &certUri, ret);
 
