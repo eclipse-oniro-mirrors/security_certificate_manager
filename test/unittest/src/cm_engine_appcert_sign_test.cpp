@@ -201,11 +201,16 @@ void MakeMessageBlob(struct CmBlob *message)
     message->data = msg;
 }
 
-/* copy a uri string into the caller supplied buffer and wrap it as a blob */
-struct CmBlob UriBlobOn(const std::string &uri, uint8_t (&buf)[MAX_LEN_URI])
+/* copy a nul terminated string into the caller supplied buffer and wrap it as
+   a blob; returns a size 0 blob on a bad copy so the follow-up call fails loudly */
+struct CmBlob StringBlobOn(const char *text, uint8_t *buf, uint32_t bufSize)
 {
-    EXPECT_EQ(strcpy_s(reinterpret_cast<char *>(buf), MAX_LEN_URI, uri.c_str()), EOK);
-    struct CmBlob blob = { uri.size() + 1, buf };
+    struct CmBlob blob = { 0, nullptr };
+    size_t len = strlen(text) + 1;
+    if (len <= bufSize && memcpy_s(buf, bufSize, text, len) == EOK) {
+        blob.size = len;
+        blob.data = buf;
+    }
     return blob;
 }
 } // namespace
@@ -631,12 +636,12 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
     ASSERT_NE(macPos, std::string::npos);
     tampered[macPos + 3] = (tampered[macPos + 3] == '0') ? '1' : '0';
     uint8_t tamperedBuf[MAX_LEN_URI] = { 0 };
-    struct CmBlob tamperedUri = UriBlobOn(tampered, tamperedBuf);
+    struct CmBlob tamperedUri = StringBlobOn(tampered.c_str(), tamperedBuf, sizeof(tamperedBuf));
     EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &tamperedUri), CMR_ERROR_AUTH_FAILED_MAC_MISMATCH);
 
     /* an uri without client app and mac is not an auth uri */
     uint8_t plainBuf[MAX_LEN_URI] = { 0 };
-    struct CmBlob plainUri = UriBlobOn("oh:t=ak;o=EngineGrant;u=0;a=889901", plainBuf);
+    struct CmBlob plainUri = StringBlobOn("oh:t=ak;o=EngineGrant;u=0;a=889901", plainBuf, sizeof(plainBuf));
     EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &plainUri), CMR_ERROR_INVALID_ARGUMENT_URI);
 
     /* revoke the grant */
@@ -652,7 +657,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
 
     /* granting for a missing credential fails */
     uint8_t missingBuf[MAX_LEN_URI] = { 0 };
-    struct CmBlob missingUri = UriBlobOn("oh:t=ak;o=EngineMissing;u=0;a=889901", missingBuf);
+    struct CmBlob missingUri = StringBlobOn("oh:t=ak;o=EngineMissing;u=0;a=889901", missingBuf, sizeof(missingBuf));
     uint8_t outBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob outAuthUri = { sizeof(outBuf), outBuf };
     EXPECT_NE(CmServiceGrantAppCertificate(&context, &missingUri, TEST_APPCERT_OTHER_UID,
@@ -978,8 +983,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallUnsupportedEd448_001, TestSize.Leve
         reinterpret_cast<uint8_t *>(g_ed448PEMPrivKey) };
     struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineEd448");
-    struct CmBlob certAlias = { strlen(reinterpret_cast<char *>(aliasBuf)) + 1, aliasBuf };
+    struct CmBlob certAlias = StringBlobOn("EngineEd448", aliasBuf, sizeof(aliasBuf));
 
     struct CmAppCertParam param = BuildAppCertParam(&certChain, &appCertPwd, &certAlias,
         CM_PRI_CREDENTIAL_STORE, INIT_INVALID_VALUE, CM_AUTH_STORAGE_LEVEL_EL1, CHAIN_KEY, &privKey);

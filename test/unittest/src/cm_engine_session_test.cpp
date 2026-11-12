@@ -36,6 +36,7 @@ constexpr uint32_t TEST_SESSION_UID_A1 = 778801;
 constexpr uint32_t TEST_SESSION_UID_A2 = 778802;
 constexpr uint32_t TEST_SESSION_UID_B1 = 778901;
 constexpr uint32_t TEST_SESSION_LIMIT = 15; /* MAX_OPERATIONS_COUNT */
+constexpr uint32_t TEST_SESSION_GUARD_INDEX = TEST_SESSION_LIMIT + 2; /* highest handle index ever used */
 constexpr uint64_t TEST_SESSION_HANDLE_BASE = 0x7788000000000000ULL;
 
 struct CmSessionNodeInfo BuildNodeInfo(uint32_t userId, uint32_t uid, uint8_t *uriData,
@@ -64,6 +65,14 @@ uint64_t HandleValue(uint32_t index)
     return TEST_SESSION_HANDLE_BASE + index;
 }
 
+/* copy a uri literal into a fixed buffer; the caller asserts the result so a
+   failed copy fails the case instead of feeding the engine a stale buffer */
+bool CopyUriTo(uint8_t *buf, uint32_t bufSize, const char *uri)
+{
+    size_t len = strlen(uri) + 1;
+    return (len <= bufSize) && (memcpy_s(buf, bufSize, uri, len) == EOK);
+}
+
 void DeleteSessions(uint32_t from, uint32_t to)
 {
     for (uint32_t i = from; i <= to; ++i) {
@@ -87,12 +96,12 @@ class CmEngineSessionTest : public testing::Test {
 public:
     void SetUp() override
     {
-        DeleteSessions(0, TEST_SESSION_LIMIT + 2); /* start from a clean shared list */
+        DeleteSessions(0, TEST_SESSION_GUARD_INDEX); /* start from a clean shared list */
     }
 
     void TearDown() override
     {
-        DeleteSessions(0, TEST_SESSION_LIMIT + 2);
+        DeleteSessions(0, TEST_SESSION_GUARD_INDEX);
     }
 
 protected:
@@ -108,7 +117,7 @@ protected:
  */
 HWTEST_F(CmEngineSessionTest, CmEngineSessionCreateQueryDelete_001, TestSize.Level0)
 {
-    (void)strcpy_s(reinterpret_cast<char *>(uriA_), sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801");
+    ASSERT_TRUE(CopyUriTo(uriA_, sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801"));
     struct CmSessionNodeInfo info = BuildNodeInfo(TEST_SESSION_USER_A, TEST_SESSION_UID_A1,
         uriA_, strlen(reinterpret_cast<char *>(uriA_)) + 1);
     uint64_t value = HandleValue(0);
@@ -134,7 +143,7 @@ HWTEST_F(CmEngineSessionTest, CmEngineSessionCreateQueryDelete_001, TestSize.Lev
  */
 HWTEST_F(CmEngineSessionTest, CmEngineSessionQueryMismatch_001, TestSize.Level0)
 {
-    (void)strcpy_s(reinterpret_cast<char *>(uriA_), sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801");
+    ASSERT_TRUE(CopyUriTo(uriA_, sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801"));
     struct CmSessionNodeInfo info = BuildNodeInfo(TEST_SESSION_USER_A, TEST_SESSION_UID_A1,
         uriA_, strlen(reinterpret_cast<char *>(uriA_)) + 1);
     uint64_t value = HandleValue(0);
@@ -171,7 +180,7 @@ HWTEST_F(CmEngineSessionTest, CmEngineSessionQueryMismatch_001, TestSize.Level0)
  */
 HWTEST_F(CmEngineSessionTest, CmEngineSessionLimitNonAbortable_001, TestSize.Level0)
 {
-    (void)strcpy_s(reinterpret_cast<char *>(uriA_), sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801");
+    ASSERT_TRUE(CopyUriTo(uriA_, sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801"));
     struct CmSessionNodeInfo info = BuildNodeInfo(TEST_SESSION_USER_A, TEST_SESSION_UID_A1,
         uriA_, strlen(reinterpret_cast<char *>(uriA_)) + 1);
 
@@ -199,7 +208,7 @@ HWTEST_F(CmEngineSessionTest, CmEngineSessionLimitNonAbortable_001, TestSize.Lev
  */
 HWTEST_F(CmEngineSessionTest, CmEngineSessionEvictOldestAbortable_001, TestSize.Level0)
 {
-    (void)strcpy_s(reinterpret_cast<char *>(uriA_), sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801");
+    ASSERT_TRUE(CopyUriTo(uriA_, sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801"));
     struct CmSessionNodeInfo info = BuildNodeInfo(TEST_SESSION_USER_A, TEST_SESSION_UID_A1,
         uriA_, strlen(reinterpret_cast<char *>(uriA_)) + 1);
 
@@ -230,9 +239,9 @@ HWTEST_F(CmEngineSessionTest, CmEngineSessionEvictOldestAbortable_001, TestSize.
  */
 HWTEST_F(CmEngineSessionTest, CmEngineSessionDeleteByNodeInfo_001, TestSize.Level0)
 {
-    (void)strcpy_s(reinterpret_cast<char *>(uriA_), sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801");
-    (void)strcpy_s(reinterpret_cast<char *>(uriB_), sizeof(uriB_), "oh:t=ak;o=sesB;u=7788;a=778802");
-    (void)strcpy_s(reinterpret_cast<char *>(uriC_), sizeof(uriC_), "oh:t=ak;o=sesC;u=7789;a=778901");
+    ASSERT_TRUE(CopyUriTo(uriA_, sizeof(uriA_), "oh:t=ak;o=sesA;u=7788;a=778801"));
+    ASSERT_TRUE(CopyUriTo(uriB_, sizeof(uriB_), "oh:t=ak;o=sesB;u=7788;a=778802"));
+    ASSERT_TRUE(CopyUriTo(uriC_, sizeof(uriC_), "oh:t=ak;o=sesC;u=7789;a=778901"));
     struct CmSessionNodeInfo infoA = BuildNodeInfo(TEST_SESSION_USER_A, TEST_SESSION_UID_A1,
         uriA_, strlen(reinterpret_cast<char *>(uriA_)) + 1);
     struct CmSessionNodeInfo infoB = BuildNodeInfo(TEST_SESSION_USER_A, TEST_SESSION_UID_A2,
