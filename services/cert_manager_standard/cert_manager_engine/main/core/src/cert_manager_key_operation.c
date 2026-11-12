@@ -630,9 +630,14 @@ int32_t CmKeyOpProcess(enum CmSignVerifyCmd cmdId, const struct CmContext *conte
             /* Another operation owns the session: this command (for Abort,
              * including its HksAbort) did not run, so reporting success
              * would be a lie. The session becomes claimable again once the
-             * in-flight operation completes; the caller may retry. */
+             * in-flight operation completes; the caller may retry.
+             * Abort reports KEY_ABORT_FAILED rather than NOT_EXIST: the
+             * public JS contract for abort only allows inner errors, and
+             * NOT_EXIST has never been an observable abort result (a gone
+             * session is an idempotent success below), whereas Update and
+             * Finish already surface NOT_EXIST for a missing session. */
             CM_LOG_E("session busy, another operation in flight");
-            return CMR_ERROR_NOT_EXIST;
+            return (cmdId == SIGN_VERIFY_CMD_ABORT) ? CMR_ERROR_KEY_ABORT_FAILED : CMR_ERROR_NOT_EXIST;
         }
         CM_LOG_E("session handle not exist");
         /* aborting a session that is already gone achieved its goal */
