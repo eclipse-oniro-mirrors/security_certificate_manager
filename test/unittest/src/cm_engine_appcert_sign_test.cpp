@@ -78,6 +78,12 @@ std::vector<std::string> UserSubtrees()
         std::string(CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_USER),
         std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_USER),
         std::string(SYS_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_USER),
+        /* the EL2 private-credential case must borrow the real front user,
+         * so it only ever owns its synthetic uid directories under it */
+        std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_FRONT_USER) + "/" +
+            std::to_string(TEST_APPCERT_UID),
+        std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_FRONT_USER) + "/" +
+            std::to_string(TEST_APPCERT_OTHER_UID),
     };
 }
 
@@ -251,6 +257,9 @@ public:
         for (const auto &subtree : UserSubtrees()) {
             RemoveTree(subtree);
         }
+        /* the borrowed front-user store directory is only removed when it
+         * became empty, so any real device content under it survives */
+        (void)rmdir((std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_FRONT_USER)).c_str());
         DeleteInstalledRdbRowsQuietly();
     }
 };

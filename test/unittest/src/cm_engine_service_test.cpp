@@ -57,6 +57,7 @@ const std::vector<std::string> NEEDED_ROOTS = {
     CERT_BACKUP_CONFIG_ROOT_DIR,
     CERT_BACKUP_ROOT_DIR,
     CREDNTIAL_STORE,
+    PRI_CREDNTIAL_STORE,
     SYS_CREDNTIAL_STORE,
     "/data/service/el1/public/cert_manager_service/rdb",
 };
@@ -76,6 +77,9 @@ std::vector<std::string> UserSubtrees()
         std::string(CERT_BACKUP_CONFIG_ROOT_DIR) + "/" + std::to_string(TEST_SERVICE_USER),
         std::string(CERT_BACKUP_ROOT_DIR) + "/" + std::to_string(TEST_SERVICE_USER),
         std::string(CREDNTIAL_STORE) + std::to_string(TEST_SERVICE_USER),
+        /* the private-credential query cases construct their uid directory
+         * even when they only assert its absence afterwards */
+        std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_SERVICE_USER),
         std::string(SYS_CREDNTIAL_STORE) + std::to_string(TEST_SERVICE_USER),
     };
 }
