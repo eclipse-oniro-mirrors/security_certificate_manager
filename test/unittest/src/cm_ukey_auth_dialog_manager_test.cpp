@@ -395,6 +395,11 @@ public:
     int OnRemoteRequest(uint32_t code, MessageParcel &data, MessageParcel &reply,
         MessageOption &option) override
     {
+        lastRawCode_ = code;
+        rawCalled_++;
+        if (sendRet_ != 0) {
+            return sendRet_; /* simulate the ipc failing before the parcel is read */
+        }
         if (code == IAbilityConnection::ON_ABILITY_CONNECT_DONE) {
             int32_t size = data.ReadInt32();
             for (int32_t i = 0; i < size; ++i) {
@@ -404,6 +409,9 @@ public:
         }
         return 0;
     }
+    int32_t sendRet_ = 0;
+    int rawCalled_ = 0; /* every SendRequest attempt, regardless of the command */
+    uint32_t lastRawCode_ = 0;
     std::vector<std::string> keys_;
     std::vector<std::string> values_;
 };
@@ -614,5 +622,92 @@ HWTEST_F(CmUkeyAuthDialogManagerTest, GraceTimerPostFailFinishesSession, testing
     EXPECT_EQ(manager_->GetRequestIdForTest(), "");
     EXPECT_EQ(launcher_->disconnectCount_, 1);
     manager_->SetTimerPostFailForTest(false);
+}
+
+/* ---- direct CmSystemDialogConnection behaviour ---- */
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionNullRemoteReportsDisconnect, testing::ext::TestSize.Level0)
+{
+    /* a null remote object can still arrive from the framework: the
+     * connection must report the disconnect instead of dereferencing it */
+    CmSystemDialogConnection conn("req-unknown", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), nullptr, 0);
+    /* the unknown request id is dropped by the manager: nothing else to do */
+    SUCCEED();
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionSendFailReportsDisconnect, testing::ext::TestSize.Level0)
+{
+    /* the start command fails on the service side: the parcel is never read
+     * and the connection reports the disconnect for the request id */
+    sptr<FakeDialogService> svc = sptr<FakeDialogService>(new FakeDialogService());
+    svc->sendRet_ = -1;
+    CmSystemDialogConnection conn("req-unknown", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), svc, 0);
+    EXPECT_EQ(svc->rawCalled_, 1); /* the start command was attempted */
+    EXPECT_TRUE(svc->keys_.empty()); /* ... and aborted before the parcel was read */
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionConnectIgnoredAfterRelease, testing::ext::TestSize.Level0)
+{
+    /* ReleaseWindow marks the connection as released: a late connect done
+     * callback must not send the start command anymore */
+    sptr<FakeDialogService> svc = sptr<FakeDialogService>(new FakeDialogService());
+    CmSystemDialogConnection conn("req-rel", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.ReleaseWindow(nullptr); /* nothing stored yet: pure flag set */
+    EXPECT_EQ(svc->rawCalled_, 0);
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), svc, 0);
+    EXPECT_EQ(svc->rawCalled_, 0); /* released: the start command is suppressed */
+    EXPECT_TRUE(svc->keys_.empty());
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionReleaseWithoutStoredRemote, testing::ext::TestSize.Level0)
+{
+    /* releasing before any connect done holds no remote object: the null
+     * target takes the early exit; an explicit remote still goes out */
+    sptr<FakeDialogService> svc = sptr<FakeDialogService>(new FakeDialogService());
+    CmSystemDialogConnection conn("req-silent", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.ReleaseWindow(nullptr); /* no explicit and no stored remote: silent */
+    EXPECT_EQ(svc->rawCalled_, 0);
+    conn.ReleaseWindow(svc); /* an explicit remote goes out exactly once */
+    EXPECT_EQ(svc->rawCalled_, 1);
+    EXPECT_EQ(svc->lastRawCode_, static_cast<uint32_t>(IAbilityConnection::ON_REMOTE_STATE_CHANGED));
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionReleasePrefersExplicitRemote, testing::ext::TestSize.Level0)
+{
+    /* the explicit remote wins over the one stored at connect time */
+    sptr<FakeDialogService> startSvc = sptr<FakeDialogService>(new FakeDialogService());
+    sptr<FakeDialogService> releaseSvc = sptr<FakeDialogService>(new FakeDialogService());
+    CmSystemDialogConnection conn("req-x", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), startSvc, 0);
+    EXPECT_EQ(startSvc->rawCalled_, 1);
+    conn.ReleaseWindow(releaseSvc);
+    EXPECT_EQ(releaseSvc->rawCalled_, 1);
+    EXPECT_EQ(releaseSvc->lastRawCode_, static_cast<uint32_t>(IAbilityConnection::ON_REMOTE_STATE_CHANGED));
+    EXPECT_EQ(startSvc->rawCalled_, 1); /* the stored remote was not reused */
+    /* a second release finds the slot cleared: no further command */
+    conn.ReleaseWindow(nullptr);
+    EXPECT_EQ(releaseSvc->rawCalled_, 1);
+    EXPECT_EQ(startSvc->rawCalled_, 1);
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionDisconnectDoneReportsDisconnect, testing::ext::TestSize.Level0)
+{
+    /* the framework delivered disconnect notification forwards straight to
+     * the manager; an unknown request id is dropped safely */
+    CmSystemDialogConnection conn("req-unknown", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityDisconnectDone(AppExecFwk::ElementName(), 0);
+    SUCCEED();
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, RealLauncherRejectsNullConnection, testing::ext::TestSize.Level0)
+{
+    /* the real launcher only guards its arguments here: a null connection is
+     * rejected without touching the ability manager */
+    RealSystemDialogLauncher launcher;
+    EXPECT_EQ(launcher.Connect(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    launcher.Disconnect(nullptr); /* must stay a safe no-op */
+    SUCCEED();
 }
 }

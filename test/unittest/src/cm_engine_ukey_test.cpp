@@ -132,3 +132,37 @@ HWTEST_F(CmEngineUkeyTest, CmEngineUkeyHksFailure_001, TestSize.Level0)
     ret = CmServiceImportUkeyCert(&provider, &cert, CM_CERT_PURPOSE_ENCRYPT);
     EXPECT_NE(ret, CM_SUCCESS);
 }
+
+/**
+ * @tc.name: CmEngineUkeyEmptyProvider_001
+ * @tc.desc: an empty provider name skips the buffer copy and still fails cleanly.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineUkeyTest, CmEngineUkeyEmptyProvider_001, TestSize.Level0)
+{
+    uint8_t emptyBuf[1] = { 0 };
+    struct CmBlob emptyProvider = { 0, emptyBuf }; /* size zero: no provider name copy */
+    struct CredentialDetailList list;
+    (void)memset_s(&list, sizeof(list), 0, sizeof(list));
+
+    /* the zero size branch of the parameter builder is taken and the query
+     * still reaches huks, fails there and cleans up without leaking */
+    int32_t ret = CmGetUkeyCertListByHksCertInfoSet(&emptyProvider, CM_CERT_PURPOSE_ALL, &list);
+    FreeListIfPresent(&list);
+    EXPECT_NE(ret, CM_SUCCESS);
+
+    /* the service wrapper propagates the same failure */
+    ret = CmServiceGetUkeyCertList(&emptyProvider, CM_CERT_PURPOSE_ALL, &list);
+    FreeListIfPresent(&list);
+    EXPECT_NE(ret, CM_SUCCESS);
+
+    /* the single certificate query and the import take the same path */
+    ret = CmGetUkeyCertByHksCertInfoSet(&emptyProvider, CM_CERT_PURPOSE_SIGN, &list);
+    FreeListIfPresent(&list);
+    EXPECT_NE(ret, CM_SUCCESS);
+
+    uint8_t certData[] = "certdata";
+    struct CmBlob cert = { sizeof(certData) - 1, certData };
+    ret = CmServiceImportUkeyCert(&emptyProvider, &cert, CM_CERT_PURPOSE_ENCRYPT);
+    EXPECT_NE(ret, CM_SUCCESS);
+}

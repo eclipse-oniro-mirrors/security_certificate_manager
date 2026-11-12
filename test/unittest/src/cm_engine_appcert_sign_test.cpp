@@ -29,6 +29,9 @@
 #include "cert_manager_service.h"
 #include "cert_manager_storage.h"
 #include "cm_cert_data_chain_key.h"
+#include "cm_cert_data_ecc.h"
+#include "cm_cert_data_ed25519.h"
+#include "cm_cert_data_ed448.h"
 #include "cm_cert_data_part1_rsa.h"
 #include "cm_cert_property_rdb.h"
 #include "cm_config_rdb.h"
@@ -805,4 +808,232 @@ HWTEST_F(CmEngineAppCertTest, CmEngineRemoveAllAppCert_001, TestSize.Level0)
     level = CM_AUTH_STORAGE_LEVEL_EL1;
     ASSERT_EQ(GetRdbAuthStorageLevel(&sysKeyUri, &level), CM_SUCCESS);
     EXPECT_EQ(level, ERROR_LEVEL);
+}
+
+namespace {
+/* install a caller supplied p12 blob through the service entry point */
+int32_t InstallP12Blob(struct CmBlob *appCert, struct CmBlob *appCertPwd, const std::string &alias,
+    uint32_t store, enum CmAuthStorageLevel level, struct CmContext *context, struct CmBlob *keyUri)
+{
+    uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    struct CmBlob certAlias = { alias.size() + 1, aliasBuf };
+    struct CmBlob emptyKey = { 0, nullptr };
+
+    struct CmAppCertParam param = BuildAppCertParam(appCert, appCertPwd, &certAlias,
+        store, INIT_INVALID_VALUE, level, FILE_P12, &emptyKey);
+    int32_t ret = CmServicInstallAppCert(context, &param, keyUri);
+    if (ret == CM_SUCCESS) {
+        TrackInstalledUri(keyUri);
+    }
+    return ret;
+}
+
+/* sign a fixed message with the installed credential and verify the signature
+ * again; the plain spec { purpose, 0, 0 } matches the ecc/ed25519 hks calls */
+int32_t SignAndVerifyRoundtrip(struct CmContext *context, struct CmBlob *keyUri)
+{
+    struct CmSignatureSpec spec;
+    (void)memset_s(&spec, sizeof(spec), 0, sizeof(spec));
+    struct CmBlob message;
+    MakeMessageBlob(&message);
+    uint64_t handleValue = 0;
+    struct CmBlob handle = { sizeof(handleValue), reinterpret_cast<uint8_t *>(&handleValue) };
+    uint8_t signData[1024] = { 0 };
+    struct CmBlob signature = { sizeof(signData), signData };
+    struct CmBlob emptyIn = { 0, nullptr };
+
+    /* sign the message and abort the finished session */
+    spec.purpose = CM_KEY_PURPOSE_SIGN;
+    int32_t ret = CmServiceInit(context, keyUri, &spec, &handle);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    ret = CmServiceUpdate(context, &handle, &message);
+    if (ret != CM_SUCCESS) {
+        (void)CmServiceAbort(context, &handle);
+        return ret;
+    }
+    ret = CmServiceFinish(context, &handle, &emptyIn, &signature);
+    (void)CmServiceAbort(context, &handle);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    /* verify the signature just produced */
+    spec.purpose = CM_KEY_PURPOSE_VERIFY;
+    handleValue = 0;
+    ret = CmServiceInit(context, keyUri, &spec, &handle);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+    ret = CmServiceUpdate(context, &handle, &message);
+    if (ret != CM_SUCCESS) {
+        (void)CmServiceAbort(context, &handle);
+        return ret;
+    }
+    struct CmBlob sigIn = { signature.size, signature.data };
+    struct CmBlob verifyOut = { 0, nullptr };
+    ret = CmServiceFinish(context, &handle, &sigIn, &verifyOut);
+    (void)CmServiceAbort(context, &handle);
+    return ret;
+}
+} // namespace
+
+/**
+ * @tc.name: CmEngineInstallEccP256AndSign_001
+ * @tc.desc: an ecc p256 p12 installs and completes a sign and verify roundtrip.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallEccP256AndSign_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+
+    struct CmBlob appCert = { sizeof(g_eccP256P12CertInfo), const_cast<uint8_t *>(g_eccP256P12CertInfo) };
+    struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
+    ASSERT_EQ(InstallP12Blob(&appCert, &appCertPwd, "EngineEcc", CM_CREDENTIAL_STORE,
+        CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
+
+    /* the ecc import path is exercised through the sign and verify session */
+    ASSERT_EQ(SignAndVerifyRoundtrip(&context, &keyUri), CM_SUCCESS);
+
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmEngineInstallEd25519AndSign_001
+ * @tc.desc: an ed25519 p12 installs and completes a sign and verify roundtrip.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallEd25519AndSign_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+
+    struct CmBlob appCert = { sizeof(g_ed25519P12CertInfo),
+        const_cast<uint8_t *>(g_ed25519P12CertInfo) };
+    struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
+    ASSERT_EQ(InstallP12Blob(&appCert, &appCertPwd, "EngineEd25519", CM_CREDENTIAL_STORE,
+        CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
+
+    /* the certificate has no CN: the alias is used and the install still works */
+    ASSERT_EQ(SignAndVerifyRoundtrip(&context, &keyUri), CM_SUCCESS);
+
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmEngineInstallSm2_001
+ * @tc.desc: an sm2 p12 installs through the sm2 curve branch of the ecc import.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallSm2_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+
+    struct CmBlob appCert = { sizeof(g_sm2PfxCertInfo), const_cast<uint8_t *>(g_sm2PfxCertInfo) };
+    struct CmBlob appCertPwd = { sizeof(g_sm2certPwd), const_cast<uint8_t *>(g_sm2certPwd) };
+    ASSERT_EQ(InstallP12Blob(&appCert, &appCertPwd, "EngineSm2", CM_CREDENTIAL_STORE,
+        CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
+
+    /* the sm2 credential is visible as an installed credential */
+    uint8_t certBuf[MAX_LEN_APP_CERT] = { 0 };
+    struct CmBlob certBlob = { sizeof(certBuf), certBuf };
+    struct CmBlob uriCopy = { sizeof(uriBuf), uriBuf };
+    ASSERT_EQ(CmServiceGetAppCert(&context, CM_CREDENTIAL_STORE, &uriCopy, &certBlob), CM_SUCCESS);
+    EXPECT_EQ((reinterpret_cast<struct AppCert *>(certBlob.data))->keyCount, 1u);
+    CmFree(certBlob.data);
+
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmEngineInstallUnsupportedEd448_001
+ * @tc.desc: a self consistent but unsupported ed448 key pair stops at the import switch.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallUnsupportedEd448_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(TEST_APPCERT_USER, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+
+    /* the chain and the key match each other, so parsing succeeds and the
+     * unsupported key type rejects the import before anything is stored */
+    struct CmBlob certChain = { strlen(g_ed448PEMCertChain) + 1,
+        reinterpret_cast<uint8_t *>(g_ed448PEMCertChain) };
+    struct CmBlob privKey = { strlen(g_ed448PEMPrivKey) + 1,
+        reinterpret_cast<uint8_t *>(g_ed448PEMPrivKey) };
+    struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
+    uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
+    (void)strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineEd448");
+    struct CmBlob certAlias = { strlen(reinterpret_cast<char *>(aliasBuf)) + 1, aliasBuf };
+
+    struct CmAppCertParam param = BuildAppCertParam(&certChain, &appCertPwd, &certAlias,
+        CM_PRI_CREDENTIAL_STORE, INIT_INVALID_VALUE, CM_AUTH_STORAGE_LEVEL_EL1, CHAIN_KEY, &privKey);
+    EXPECT_EQ(CmServicInstallAppCert(&context, &param, &keyUri), CMR_ERROR_INVALID_ARGUMENT_APP_CERT);
+}
+
+/**
+ * @tc.name: CmEngineInstallCredUserMapping_001
+ * @tc.desc: credentials of a live front user resolve the service uid, unknown users fail.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredUserMapping_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmBlob appCert = { sizeof(g_rsa2048P12CertInfo),
+        const_cast<uint8_t *>(g_rsa2048P12CertInfo) };
+    struct CmBlob goodPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
+    uint8_t wrongPwdBuf[] = "12345678";
+    struct CmBlob wrongPwd = { sizeof(wrongPwdBuf), wrongPwdBuf };
+
+    /* the front user exists: the service uid is resolved and parsing continues
+     * until the wrong password is rejected by the p12 parser */
+    {
+        struct CmContext context = BuildContext(TEST_APPCERT_FRONT_USER, TEST_APPCERT_UID);
+        uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+        struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+        EXPECT_EQ(InstallP12Blob(&appCert, &wrongPwd, "EngineFront", CM_CREDENTIAL_STORE,
+            CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CMR_ERROR_PASSWORD_IS_ERR);
+    }
+
+    /* a user without the certmanager app cannot be mapped to a service uid */
+    {
+        struct CmContext context = BuildContext(TEST_APPCERT_USER + 1100, TEST_APPCERT_UID);
+        uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+        struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+        EXPECT_EQ(InstallP12Blob(&appCert, &goodPwd, "EngineGhost", CM_CREDENTIAL_STORE,
+            CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_FAILURE);
+    }
+}
+
+/**
+ * @tc.name: CmEngineInstallKeyUriTooSmall_001
+ * @tc.desc: a caller key uri buffer smaller than the constructed uri is rejected.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallKeyUriTooSmall_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { 1, uriBuf }; /* smaller than any constructed uri */
+
+    struct CmBlob appCert = { sizeof(g_rsa2048P12CertInfo),
+        const_cast<uint8_t *>(g_rsa2048P12CertInfo) };
+    struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
+    EXPECT_EQ(InstallP12Blob(&appCert, &appCertPwd, "EngineSmall", CM_CREDENTIAL_STORE,
+        CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CMR_ERROR_BUFFER_TOO_SMALL);
 }
