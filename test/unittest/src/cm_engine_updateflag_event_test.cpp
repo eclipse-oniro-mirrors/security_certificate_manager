@@ -196,9 +196,15 @@ int32_t InsertCertRow(const struct CmContext *context, const std::string &uri, c
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     uint8_t subjectBuf[MAX_LEN_SUBJECT_NAME] = { 0 };
     const std::string subject = "CN=" + alias;
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), alias.c_str());
-    (void)strcpy_s((char *)subjectBuf, sizeof(subjectBuf), subject.c_str());
+    if (strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (strcpy_s(reinterpret_cast<char *>(subjectBuf), sizeof(subjectBuf), subject.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     struct CmBlob uriBlob = { uri.size() + 1, uriBuf };
     struct CmBlob aliasBlob = { alias.size() + 1, aliasBuf };
     struct CmBlob subjectBlob = { subject.size() + 1, subjectBuf };
@@ -212,7 +218,9 @@ int32_t InstallPublicCredential(const std::string &alias, struct CmContext *cont
     struct CmBlob appCert = { sizeof(g_rsa2048P12CertInfo), const_cast<uint8_t *>(g_rsa2048P12CertInfo) };
     struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), alias.c_str());
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     struct CmBlob certAlias = { alias.size() + 1, aliasBuf };
     struct CmBlob emptyKey = { 0, nullptr };
 
@@ -229,7 +237,7 @@ int32_t InstallPublicCredential(const std::string &alias, struct CmContext *cont
     param.aliasFormat = DEFAULT_FORMAT;
     int32_t ret = CmServicInstallAppCert(context, &param, keyUri);
     if (ret == CM_SUCCESS) {
-        TrackRdbUri(std::string((char *)keyUri->data));
+        TrackRdbUri(std::string(reinterpret_cast<char *>(keyUri->data)));
     }
     return ret;
 }
@@ -296,7 +304,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineConstructContextFromUri_001, TestSize.
 
     /* the scheme is checked before anything else */
     uint8_t garbage[] = "garbage";
-    EXPECT_EQ(CmConstructContextFromUri((char *)garbage, &context), CMR_ERROR_INVALID_ARGUMENT_URI);
+    EXPECT_EQ(CmConstructContextFromUri(reinterpret_cast<char *>(garbage), &context), CMR_ERROR_INVALID_ARGUMENT_URI);
 
     /* non numeric user field */
     EXPECT_EQ(CmConstructContextFromUri("oh:t=c;o=EngineCtx;u=abc;a=889901", &context),
@@ -315,7 +323,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineIsCertNeedBackup_001, TestSize.Level0)
 {
     const std::string uri = "oh:t=c;o=EngineNeedBk;u=8899;a=889901";
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     bool needUpdate = false;
 
@@ -339,9 +347,9 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineIsCertNeedBackup_001, TestSize.Level0)
     ASSERT_EQ(CmGetCertBackupDir(TEST_UE_USER, backupDir, sizeof(backupDir)), CM_SUCCESS);
     const std::string backupName = "manualbackup.0";
     const std::string backupPath = std::string(backupDir) + "/" + backupName;
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(backupDir, backupName.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
-    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, (const uint8_t *)backupPath.c_str(), backupPath.size()),
+    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, reinterpret_cast<const uint8_t *>(backupPath.c_str()), backupPath.size()),
         CMR_OK);
 
     ASSERT_EQ(IsCertNeedBackup(TEST_UE_USER, TEST_UE_UID, &certUri, &needUpdate), CM_SUCCESS);
@@ -379,7 +387,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineBackupUserCert_001, TestSize.Level0)
     uint8_t garbage[] = "garbage";
     struct CmBlob garbageBlob = { sizeof(garbage) - 1, garbage };
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), "oh:t=c;o=EngineBkDer;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), "oh:t=c;o=EngineBkDer;u=8899;a=889901"), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     EXPECT_EQ(CmBackupUserCert(&context, &certUri, &garbageBlob), CMR_ERROR_INVALID_CERT_FORMAT);
 
@@ -391,7 +399,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineBackupUserCert_001, TestSize.Level0)
     EXPECT_EQ(CmIsFileExist(nullptr, confPath), CMR_OK);
 
     char backupPath[CERT_MAX_PATH_LEN] = { 0 };
-    uint32_t readSize = CmFileRead(nullptr, confPath, 0, (uint8_t *)backupPath, sizeof(backupPath) - 1);
+    uint32_t readSize = CmFileRead(nullptr, confPath, 0, reinterpret_cast<uint8_t *>(backupPath), sizeof(backupPath) - 1);
     EXPECT_GT(readSize, 0u);
     EXPECT_EQ(CmIsFileExist(nullptr, backupPath), CMR_OK);
 
@@ -405,9 +413,9 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineBackupUserCert_001, TestSize.Level0)
     EXPECT_EQ(CountRegularFiles(backupDir), 1);
 
     /* a pem certificate passes through without conversion */
-    struct CmBlob pemCert = { strlen(g_certData06) + 1, (uint8_t *)g_certData06 };
+    struct CmBlob pemCert = { strlen(g_certData06) + 1, reinterpret_cast<uint8_t *>(g_certData06) };
     uint8_t pemUriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)pemUriBuf, sizeof(pemUriBuf), "oh:t=c;o=EngineBkPem;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(pemUriBuf), sizeof(pemUriBuf), "oh:t=c;o=EngineBkPem;u=8899;a=889901"), EOK);
     struct CmBlob pemUri = { sizeof(pemUriBuf), pemUriBuf };
     ASSERT_EQ(CmBackupUserCert(&context, &pemUri, &pemCert), CM_SUCCESS);
     EXPECT_EQ(CountRegularFiles(backupDir), 2);
@@ -422,11 +430,11 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineReadCertData_001, TestSize.Level0)
 {
     const std::string uri = "oh:t=c;o=EngineRd;u=8899;a=889901";
     const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_UE_USER, TEST_UE_UID);
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), uri.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     struct CmContext context = BuildContext(TEST_UE_USER, TEST_UE_UID);
 
@@ -439,7 +447,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineReadCertData_001, TestSize.Level0)
 
     /* a missing certificate file is an error */
     uint8_t missBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)missBuf, sizeof(missBuf), "oh:t=c;o=EngineRdMiss;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), "oh:t=c;o=EngineRdMiss;u=8899;a=889901"), EOK);
     struct CmBlob missUri = { sizeof(missBuf), missBuf };
     struct CmBlob missData = { 0, nullptr };
     EXPECT_NE(CmReadCertData(CM_USER_TRUSTED_STORE, &context, &missUri, &missData), CM_SUCCESS);
@@ -457,7 +465,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineBackupAllSaUserCerts_001, TestSize.Lev
 {
     SnapshotUpdateFlag();
     const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_UE_USER, TEST_UE_UID);
-    const uint8_t *derData = (const uint8_t *)g_certData01;
+    const uint8_t *derData = reinterpret_cast<const uint8_t *>(g_certData01);
 
     const std::string uri1 = "oh:t=c;o=EngineFlagOne;u=8899;a=889901";
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), uri1.c_str(), 0, derData, sizeof(g_certData01)), CMR_OK);
@@ -507,11 +515,11 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineSetStatusBackupCert_001, TestSize.Leve
 {
     const std::string uri = "oh:t=c;o=EngineStatus;u=8899;a=889901";
     const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_UE_USER, TEST_UE_UID);
-    const uint8_t *derData = (const uint8_t *)g_certData01;
+    const uint8_t *derData = reinterpret_cast<const uint8_t *>(g_certData01);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), uri.c_str(), 0, derData, sizeof(g_certData01)), CMR_OK);
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     struct CmContext context = BuildContext(TEST_UE_USER, TEST_UE_UID);
 
@@ -557,7 +565,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineDeleteProcessInfoUser_001, TestSize.Le
     /* user ca certificate with a property row and a backup */
     const std::string caUri = "oh:t=c;o=EngineEvCa;u=8899;a=889901";
     const std::string caUidDir = MakeStoreUidDir(USER_CA_STORE, TEST_UE_USER, TEST_UE_UID);
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(caUidDir.c_str(), caUri.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
 
     struct CmContext context = BuildContext(TEST_UE_USER, TEST_UE_UID);
@@ -565,9 +573,9 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineDeleteProcessInfoUser_001, TestSize.Le
         CM_SUCCESS);
 
     uint8_t caUriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)caUriBuf, sizeof(caUriBuf), caUri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(caUriBuf), sizeof(caUriBuf), caUri.c_str()), EOK);
     struct CmBlob caUriBlob = { sizeof(caUriBuf), caUriBuf };
-    struct CmBlob caCertData = { strlen(g_certData06) + 1, (uint8_t *)g_certData06 };
+    struct CmBlob caCertData = { strlen(g_certData06) + 1, reinterpret_cast<uint8_t *>(g_certData06) };
     ASSERT_EQ(CmBackupUserCert(&context, &caUriBlob, &caCertData), CM_SUCCESS);
 
     struct CertProperty prop;
@@ -624,7 +632,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineDeleteProcessInfoUser_001, TestSize.Le
  */
 HWTEST_F(CmEngineUpdateEventTest, CmEngineDeleteProcessInfoPackage_001, TestSize.Level0)
 {
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     const uint32_t pemLen = strlen(g_certData06);
 
     /* private credentials of the deleted uid and of another uid */
@@ -695,7 +703,7 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineDeleteProcessInfoGrant_001, TestSize.L
 
     /* the credential itself survives, only the grant is gone */
     EXPECT_EQ(CmIsFileExist((std::string(CREDNTIAL_STORE) + "0/" + std::to_string(TEST_UE_UID)).c_str(),
-        (char *)uriBuf), CMR_OK);
+        reinterpret_cast<char *>(uriBuf)), CMR_OK);
     appUids[0] = 0;
     appUidList.appUidCount = AUTH_UID_CAPACITY;
     ASSERT_EQ(CmServiceGetAuthorizedAppList(&context, &keyUri, &appUidList), CM_SUCCESS);

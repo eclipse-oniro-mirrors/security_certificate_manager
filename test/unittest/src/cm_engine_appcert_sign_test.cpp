@@ -121,7 +121,7 @@ struct CmAppCertParam BuildAppCertParam(struct CmBlob *appCert, struct CmBlob *a
 void TrackInstalledUri(const struct CmBlob *keyUri)
 {
     if (keyUri != nullptr && keyUri->data != nullptr) {
-        g_installedUris.emplace_back((char *)keyUri->data);
+        g_installedUris.emplace_back(reinterpret_cast<char *>(keyUri->data));
     }
 }
 
@@ -141,7 +141,9 @@ int32_t InstallP12Cert(const std::string &alias, uint32_t store, uint32_t paramU
         const_cast<uint8_t *>(g_rsa2048P12CertInfo) };
     struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), alias.c_str());
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     struct CmBlob certAlias = { alias.size() + 1, aliasBuf };
     struct CmBlob emptyKey = { 0, nullptr };
 
@@ -164,7 +166,9 @@ int32_t InstallChainKeyCert(const std::string &alias, uint32_t store, uint32_t p
         reinterpret_cast<uint8_t *>(g_rsa2048PEMPrivKey) };
     struct CmBlob appCertPwd = { sizeof(g_certPwd), const_cast<uint8_t *>(g_certPwd) };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), alias.c_str());
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     struct CmBlob certAlias = { alias.size() + 1, aliasBuf };
 
     struct CmAppCertParam param = BuildAppCertParam(&certChain, &appCertPwd, &certAlias,
@@ -234,7 +238,7 @@ public:
 
 /**
  * @tc.name: CmEngineInstallCredAppCert_001
- * @tc.desc: install, query and uninstall a public credential end to end.
+ * @tc.desc: install a public credential, check its level and reinstall it idempotently.
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_001, TestSize.Level0)
@@ -249,8 +253,8 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_001, TestSize.Level0)
     /* install */
     ASSERT_EQ(InstallP12Cert("EngineCred", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
         CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
-    EXPECT_EQ(std::string((char *)uriBuf), expectUri);
-    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), (char *)uriBuf), CMR_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf)), expectUri);
+    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(uriBuf)), CMR_OK);
 
     /* the public credential defaults to level el2 when the row is fresh */
     enum CmAuthStorageLevel level = static_cast<enum CmAuthStorageLevel>(ERROR_LEVEL);
@@ -262,18 +266,35 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_001, TestSize.Level0)
     struct CmBlob keyUri2 = { sizeof(uriBuf2), uriBuf2 };
     ASSERT_EQ(InstallP12Cert("EngineCred", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
         CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri2), CM_SUCCESS);
-    EXPECT_EQ(strcmp((char *)uriBuf2, (char *)uriBuf), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(uriBuf2), reinterpret_cast<char *>(uriBuf)), 0);
+}
+
+/**
+ * @tc.name: CmEngineInstallCredAppCert_002
+ * @tc.desc: read an installed public credential back and find it in the uid file list.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_002, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+
+    /* install the credential the queries below read back */
+    ASSERT_EQ(InstallP12Cert("EngineCred", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
 
     /* the producer reads the stored app cert back */
     uint8_t certBuf[MAX_LEN_APP_CERT] = { 0 };
     struct CmBlob certBlob = { sizeof(certBuf), certBuf };
     struct CmBlob uriCopy = { sizeof(uriBuf), uriBuf };
     ASSERT_EQ(CmServiceGetAppCert(&context, CM_CREDENTIAL_STORE, &uriCopy, &certBlob), CM_SUCCESS);
-    struct AppCert *appCert = (struct AppCert *)certBlob.data;
+    struct AppCert *appCert = reinterpret_cast<struct AppCert *>(certBlob.data);
     EXPECT_GE(appCert->certCount, 1u);
     EXPECT_EQ(appCert->keyCount, 1u);
     EXPECT_GT(appCert->certSize, 0u);
-    EXPECT_EQ(uriCopy.size, strlen((char *)uriBuf) + 1);
+    EXPECT_EQ(uriCopy.size, strlen(reinterpret_cast<char *>(uriBuf)) + 1);
     CmFree(certBlob.data);
     certBlob.data = nullptr;
     certBlob.size = 0;
@@ -288,19 +309,39 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_001, TestSize.Level0)
     EXPECT_GE(fileCount, 1u);
     bool seen = false;
     for (uint32_t i = 0; i < fileCount; i++) {
-        seen = seen || (strstr((char *)fileNames[i].data, (char *)uriBuf) != nullptr);
+        seen = seen || (strstr(reinterpret_cast<char *>(fileNames[i].data), reinterpret_cast<char *>(uriBuf)) != nullptr);
     }
     EXPECT_TRUE(seen);
     CmFreeFileNames(fileNames, MAX_COUNT_CERTIFICATE);
+}
+
+/**
+ * @tc.name: CmEngineInstallCredAppCert_003
+ * @tc.desc: uninstall a public credential and observe the removed file, row and empty list.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_003, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+    const std::string uidDir = std::string(CREDNTIAL_STORE) + "0/" + std::to_string(TEST_APPCERT_UID);
+
+    /* install the credential the uninstall below removes */
+    ASSERT_EQ(InstallP12Cert("EngineCred", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
 
     /* uninstall removes file and rdb row and stays observable */
     ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
-    EXPECT_NE(CmIsFileExist(uidDir.c_str(), (char *)uriBuf), CMR_OK);
+    EXPECT_NE(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(uriBuf)), CMR_OK);
 
-    level = CM_AUTH_STORAGE_LEVEL_EL2;
+    enum CmAuthStorageLevel level = CM_AUTH_STORAGE_LEVEL_EL2;
     ASSERT_EQ(GetRdbAuthStorageLevel(&keyUri, &level), CM_SUCCESS);
     EXPECT_EQ(level, ERROR_LEVEL);
 
+    uint8_t certBuf[MAX_LEN_APP_CERT] = { 0 };
+    struct CmBlob certBlob = { sizeof(certBuf), certBuf };
     struct CmBlob uriCopy2 = { sizeof(uriBuf), uriBuf };
     EXPECT_EQ(CmServiceGetAppCert(&context, CM_CREDENTIAL_STORE, &uriCopy2, &certBlob),
         CMR_ERROR_NOT_EXIST);
@@ -309,8 +350,9 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_001, TestSize.Level0)
     EXPECT_NE(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
 
     /* the list is empty again for this caller */
+    struct CmBlob fileNames[MAX_COUNT_CERTIFICATE];
     (void)memset_s(fileNames, sizeof(fileNames), 0, sizeof(fileNames));
-    fileCount = 0;
+    uint32_t fileCount = 0;
     ASSERT_EQ(CmServiceGetAppCertList(&context, CM_CREDENTIAL_STORE, fileNames,
         MAX_COUNT_CERTIFICATE, &fileCount), CM_SUCCESS);
     EXPECT_EQ(fileCount, 0u);
@@ -383,8 +425,8 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
 
     ASSERT_EQ(InstallP12Cert("EnginePri", CM_PRI_CREDENTIAL_STORE, INIT_INVALID_VALUE,
         CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
-    EXPECT_EQ(std::string((char *)uriBuf), "oh:t=ak;o=EnginePri;u=8899;a=889901");
-    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), (char *)uriBuf), CMR_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf)), "oh:t=ak;o=EnginePri;u=8899;a=889901");
+    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(uriBuf)), CMR_OK);
 
     enum CmAuthStorageLevel level = static_cast<enum CmAuthStorageLevel>(ERROR_LEVEL);
     ASSERT_EQ(GetRdbAuthStorageLevel(&keyUri, &level), CM_SUCCESS);
@@ -395,7 +437,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
     struct CmBlob certBlob = { sizeof(certBuf), certBuf };
     struct CmBlob uriCopy = { sizeof(uriBuf), uriBuf };
     ASSERT_EQ(CmServiceGetAppCert(&context, CM_PRI_CREDENTIAL_STORE, &uriCopy, &certBlob), CM_SUCCESS);
-    EXPECT_EQ(((struct AppCert *)certBlob.data)->keyCount, 1u);
+    EXPECT_EQ((reinterpret_cast<struct AppCert *>(certBlob.data))->keyCount, 1u);
     CmFree(certBlob.data);
     certBlob.data = nullptr;
     certBlob.size = 0;
@@ -405,7 +447,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
     struct CmBlob uriCopy2 = { sizeof(uriBuf), uriBuf };
     ASSERT_EQ(CmServiceGetAppCert(&otherContext, CM_PRI_CREDENTIAL_STORE, &uriCopy2, &certBlob),
         CM_SUCCESS);
-    EXPECT_EQ(((struct AppCert *)certBlob.data)->keyCount, 1u);
+    EXPECT_EQ((reinterpret_cast<struct AppCert *>(certBlob.data))->keyCount, 1u);
     CmFree(certBlob.data);
     certBlob.data = nullptr;
     certBlob.size = 0;
@@ -427,7 +469,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
     EXPECT_EQ(level, CM_AUTH_STORAGE_LEVEL_EL1);
 
     ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_PRI_CREDENTIAL_STORE), CM_SUCCESS);
-    EXPECT_NE(CmIsFileExist(uidDir.c_str(), (char *)uriBuf), CMR_OK);
+    EXPECT_NE(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(uriBuf)), CMR_OK);
     level = CM_AUTH_STORAGE_LEVEL_EL1;
     ASSERT_EQ(GetRdbAuthStorageLevel(&keyUri, &level), CM_SUCCESS);
     EXPECT_EQ(level, ERROR_LEVEL);
@@ -449,7 +491,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallSysAppCert_001, TestSize.Level0)
     struct CmContext context = BuildContext(TEST_APPCERT_USER, TEST_APPCERT_UID);
     ASSERT_EQ(InstallP12Cert("EngineSys", CM_SYS_CREDENTIAL_STORE, INIT_INVALID_VALUE,
         CM_AUTH_STORAGE_LEVEL_EL1, &context, &keyUri), CM_SUCCESS);
-    EXPECT_EQ(std::string((char *)uriBuf), "oh:t=sk;o=EngineSys;u=8899;a=889901");
+    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf)), "oh:t=sk;o=EngineSys;u=8899;a=889901");
 
     /* the system credential key is imported at level el1 */
     enum CmAuthStorageLevel level = CM_AUTH_STORAGE_LEVEL_EL2;
@@ -462,7 +504,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallSysAppCert_001, TestSize.Level0)
     struct CmBlob keyUri2 = { sizeof(uriBuf2), uriBuf2 };
     ASSERT_EQ(InstallP12Cert("EngineSysSa", CM_SYS_CREDENTIAL_STORE, TEST_APPCERT_USER,
         CM_AUTH_STORAGE_LEVEL_EL1, &saContext, &keyUri2), CM_SUCCESS);
-    EXPECT_EQ(std::string((char *)uriBuf2), "oh:t=sk;o=EngineSysSa;u=8899;a=889902");
+    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf2)), "oh:t=sk;o=EngineSysSa;u=8899;a=889902");
 
     /* sa style caller must designate a user for system credentials */
     struct CmContext badSaContext = BuildContext(0, TEST_APPCERT_UID);
@@ -476,7 +518,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallSysAppCert_001, TestSize.Level0)
     struct CmBlob certBlob = { sizeof(certBuf), certBuf };
     struct CmBlob uriCopy = { sizeof(uriBuf), uriBuf };
     ASSERT_EQ(CmServiceGetAppCert(&context, CM_SYS_CREDENTIAL_STORE, &uriCopy, &certBlob), CM_SUCCESS);
-    EXPECT_EQ(((struct AppCert *)certBlob.data)->keyCount, 1u);
+    EXPECT_EQ((reinterpret_cast<struct AppCert *>(certBlob.data))->keyCount, 1u);
     CmFree(certBlob.data);
 
     /* both installs are removed again */
@@ -503,13 +545,13 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallChainKeyCert_001, TestSize.Level0)
 
     ASSERT_EQ(InstallChainKeyCert("EngineChain", CM_PRI_CREDENTIAL_STORE, INIT_INVALID_VALUE,
         CM_AUTH_STORAGE_LEVEL_EL1, &context, &keyUri), CM_SUCCESS);
-    EXPECT_EQ(std::string((char *)uriBuf), "oh:t=ak;o=EngineChain;u=8899;a=889901");
+    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf)), "oh:t=ak;o=EngineChain;u=8899;a=889901");
 
     uint8_t certBuf[MAX_LEN_APP_CERT] = { 0 };
     struct CmBlob certBlob = { sizeof(certBuf), certBuf };
     struct CmBlob uriCopy = { sizeof(uriBuf), uriBuf };
     ASSERT_EQ(CmServiceGetAppCert(&context, CM_PRI_CREDENTIAL_STORE, &uriCopy, &certBlob), CM_SUCCESS);
-    struct AppCert *appCert = (struct AppCert *)certBlob.data;
+    struct AppCert *appCert = reinterpret_cast<struct AppCert *>(certBlob.data);
     EXPECT_GE(appCert->certCount, 1u);
     EXPECT_EQ(appCert->keyCount, 1u);
     CmFree(certBlob.data);
@@ -550,7 +592,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
     struct CmBlob authUri = { sizeof(authUriBuf), authUriBuf };
     ASSERT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_OTHER_UID, &authUri),
         CM_SUCCESS);
-    const std::string authUriStr((char *)authUriBuf);
+    const std::string authUriStr(reinterpret_cast<char *>(authUriBuf));
     EXPECT_EQ(authUriStr.rfind("oh:t=ak;o=EngineGrant;u=0;a=889901", 0), 0u);
     EXPECT_NE(authUriStr.find("?ca=889902&m="), std::string::npos);
 
@@ -571,15 +613,15 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
     ASSERT_NE(macPos, std::string::npos);
     tampered[macPos + 3] = (tampered[macPos + 3] == '0') ? '1' : '0';
     uint8_t tamperedBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)tamperedBuf, sizeof(tamperedBuf), tampered.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(tamperedBuf), sizeof(tamperedBuf), tampered.c_str()), EOK);
     struct CmBlob tamperedUri = { tampered.size() + 1, tamperedBuf };
     EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &tamperedUri),
         CMR_ERROR_AUTH_FAILED_MAC_MISMATCH);
 
     /* an uri without client app and mac is not an auth uri */
     uint8_t plainBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)plainBuf, sizeof(plainBuf), "oh:t=ak;o=EngineGrant;u=0;a=889901");
-    struct CmBlob plainUri = { strlen((char *)plainBuf) + 1, plainBuf };
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(plainBuf), sizeof(plainBuf), "oh:t=ak;o=EngineGrant;u=0;a=889901"), EOK);
+    struct CmBlob plainUri = { strlen(reinterpret_cast<char *>(plainBuf)) + 1, plainBuf };
     EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &plainUri), CMR_ERROR_INVALID_ARGUMENT_URI);
 
     /* revoke the grant */
@@ -594,8 +636,8 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
 
     /* granting for a missing credential fails */
     uint8_t missingBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)missingBuf, sizeof(missingBuf), "oh:t=ak;o=EngineMissing;u=0;a=889901");
-    struct CmBlob missingUri = { strlen((char *)missingBuf) + 1, missingBuf };
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missingBuf), sizeof(missingBuf), "oh:t=ak;o=EngineMissing;u=0;a=889901"), EOK);
+    struct CmBlob missingUri = { strlen(reinterpret_cast<char *>(missingBuf)) + 1, missingBuf };
     uint8_t outBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob outAuthUri = { sizeof(outBuf), outBuf };
     EXPECT_NE(CmServiceGrantAppCertificate(&context, &missingUri, TEST_APPCERT_OTHER_UID,
@@ -622,7 +664,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineSignVerifyCred_001, TestSize.Level0)
     struct CmBlob message;
     MakeMessageBlob(&message);
     uint64_t handleValue = 0;
-    struct CmBlob handle = { sizeof(handleValue), (uint8_t *)&handleValue };
+    struct CmBlob handle = { sizeof(handleValue), reinterpret_cast<uint8_t *>(&handleValue) };
     uint8_t signData[1024] = { 0 };
     struct CmBlob signature = { sizeof(signData), signData };
     struct CmBlob emptyIn = { 0, nullptr };
@@ -689,7 +731,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineSignVerifyAuthedApp_001, TestSize.Level0)
     struct CmBlob message;
     MakeMessageBlob(&message);
     uint64_t handleValue = 0;
-    struct CmBlob handle = { sizeof(handleValue), (uint8_t *)&handleValue };
+    struct CmBlob handle = { sizeof(handleValue), reinterpret_cast<uint8_t *>(&handleValue) };
     uint8_t signData[1024] = { 0 };
     struct CmBlob signature = { sizeof(signData), signData };
     struct CmBlob emptyIn = { 0, nullptr };
@@ -741,8 +783,8 @@ HWTEST_F(CmEngineAppCertTest, CmEngineRemoveAllAppCert_001, TestSize.Level0)
         "/" + std::to_string(TEST_APPCERT_UID);
     const std::string sysDir = std::string(SYS_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_USER) +
         "/" + std::to_string(TEST_APPCERT_UID);
-    EXPECT_NE(CmIsFileExist(priDir.c_str(), (char *)priUriBuf), CMR_OK);
-    EXPECT_NE(CmIsFileExist(sysDir.c_str(), (char *)sysUriBuf), CMR_OK);
+    EXPECT_NE(CmIsFileExist(priDir.c_str(), reinterpret_cast<char *>(priUriBuf)), CMR_OK);
+    EXPECT_NE(CmIsFileExist(sysDir.c_str(), reinterpret_cast<char *>(sysUriBuf)), CMR_OK);
 
     enum CmAuthStorageLevel level = CM_AUTH_STORAGE_LEVEL_EL1;
     ASSERT_EQ(GetRdbAuthStorageLevel(&priKeyUri, &level), CM_SUCCESS);

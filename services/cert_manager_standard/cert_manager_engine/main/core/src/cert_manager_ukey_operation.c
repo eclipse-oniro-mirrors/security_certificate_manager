@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -45,8 +45,7 @@ static int32_t ConvertHuksErrCode(int32_t huksErrCode)
     }
 }
 
-static int32_t ParseParamsToHuksParamSet(uint32_t certPurpose, struct HksParamSet **paramSetIn,
-    uint32_t paramsCount)
+static int32_t ParseParamsToHuksParamSet(uint32_t certPurpose, struct HksParamSet **paramSetIn)
 {
     struct HksParam params[] = {
         { .tag = HKS_TAG_PURPOSE, .uint32Param = certPurpose },
@@ -57,7 +56,7 @@ static int32_t ParseParamsToHuksParamSet(uint32_t certPurpose, struct HksParamSe
         CM_LOG_E("HksInitParamSet failed");
         return ret;
     }
-    ret = HksAddParams(*paramSetIn, params, paramsCount - 1);
+    ret = HksAddParams(*paramSetIn, params, sizeof(params) / sizeof(struct HksParam));
     if (ret != CM_SUCCESS) {
         CM_LOG_E("HksAddParams failed");
         return ret;
@@ -71,7 +70,7 @@ static int32_t ParseParamsToHuksParamSet(uint32_t certPurpose, struct HksParamSe
 }
 
 static int32_t BuildCmBlobToHuksParams(const struct CmBlob *cmParam, uint32_t certPurpose,
-    uint32_t paramsCount, struct HksBlob *hksParam, struct HksParamSet **paramSetIn)
+    struct HksBlob *hksParam, struct HksParamSet **paramSetIn)
 {
     CM_LOG_I("enter BuildCmBlobToHuksParams");
     if (cmParam == NULL) {
@@ -90,7 +89,7 @@ static int32_t BuildCmBlobToHuksParams(const struct CmBlob *cmParam, uint32_t ce
             return CMR_ERROR_MEM_OPERATION_COPY;
         }
     }
-    int32_t ret = ParseParamsToHuksParamSet(certPurpose, paramSetIn, paramsCount);
+    int32_t ret = ParseParamsToHuksParamSet(certPurpose, paramSetIn);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("ParseParamsToHuksParamSet failed, ret = %d", ret);
         return ret;
@@ -254,7 +253,7 @@ static int32_t BuildCertSetToCmBlob(const struct HksExtCertInfoSet *certSet,
     return ret;
 }
 
-int32_t CmGetUkeyCertListByHksCertInfoSet(const struct CmBlob *ukeyProvider, uint32_t certPurpose, uint32_t paramsCount,
+int32_t CmGetUkeyCertListByHksCertInfoSet(const struct CmBlob *ukeyProvider, uint32_t certPurpose,
     struct CredentialDetailList *credentialDetailList)
 {
     if (ukeyProvider == NULL || credentialDetailList == NULL) {
@@ -266,7 +265,7 @@ int32_t CmGetUkeyCertListByHksCertInfoSet(const struct CmBlob *ukeyProvider, uin
     struct HksExtCertInfoSet certSet = { 0, NULL };
     int32_t ret = CM_SUCCESS;
     do {
-        ret = BuildCmBlobToHuksParams(ukeyProvider, certPurpose, paramsCount, &providerName, &paramSetIn);
+        ret = BuildCmBlobToHuksParams(ukeyProvider, certPurpose, &providerName, &paramSetIn);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("BuildCmBlobToHuksParams failed, ret = %d", ret);
             break;
@@ -289,7 +288,7 @@ int32_t CmGetUkeyCertListByHksCertInfoSet(const struct CmBlob *ukeyProvider, uin
     return ret;
 }
 
-int32_t CmGetUkeyCertByHksCertInfoSet(const struct CmBlob *keyUri, uint32_t certPurpose, uint32_t paramsCount,
+int32_t CmGetUkeyCertByHksCertInfoSet(const struct CmBlob *keyUri, uint32_t certPurpose,
     struct CredentialDetailList *credentialDetailList)
 {
     if (keyUri == NULL || keyUri->data == NULL || credentialDetailList == NULL) {
@@ -301,7 +300,7 @@ int32_t CmGetUkeyCertByHksCertInfoSet(const struct CmBlob *keyUri, uint32_t cert
     struct HksExtCertInfoSet certSet = { 0, NULL };
     int32_t ret = CM_SUCCESS;
     do {
-        ret = BuildCmBlobToHuksParams(keyUri, certPurpose, paramsCount, &index, &paramSetIn);
+        ret = BuildCmBlobToHuksParams(keyUri, certPurpose, &index, &paramSetIn);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("BuildCmBlobToHuksParams failed, ret = %d", ret);
             break;

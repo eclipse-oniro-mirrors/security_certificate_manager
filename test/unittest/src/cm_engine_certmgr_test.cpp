@@ -136,9 +136,15 @@ int32_t InsertCertRow(const struct CmContext *context, const std::string &uri, c
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     uint8_t subjectBuf[MAX_LEN_SUBJECT_NAME] = { 0 };
     const std::string subject = "CN=" + alias;
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), alias.c_str());
-    (void)strcpy_s((char *)subjectBuf, sizeof(subjectBuf), subject.c_str());
+    if (strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (strcpy_s(reinterpret_cast<char *>(subjectBuf), sizeof(subjectBuf), subject.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     struct CmBlob uriBlob = { uri.size() + 1, uriBuf };
     struct CmBlob aliasBlob = { alias.size() + 1, aliasBuf };
     struct CmBlob subjectBlob = { subject.size() + 1, subjectBuf };
@@ -163,9 +169,9 @@ void MakeConfigAndBackup(const std::string &uri, const std::string &backupName, 
     char backupDir[CERT_MAX_PATH_LEN] = { 0 };
     ASSERT_EQ(CmGetCertBackupDir(TEST_CM_USER, backupDir, sizeof(backupDir)), CM_SUCCESS);
     const std::string backupPath = std::string(backupDir) + "/" + backupName;
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(backupDir, backupName.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
-    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, (const uint8_t *)backupPath.c_str(), backupPath.size()),
+    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, reinterpret_cast<const uint8_t *>(backupPath.c_str()), backupPath.size()),
         CMR_OK);
 }
 } // namespace
@@ -245,12 +251,12 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineGetUri_001, TestSize.Level0)
 
     /* the basename behind the last slash becomes the uri */
     ASSERT_EQ(CmGetUri(filePath.c_str(), &uriBlob), CM_SUCCESS);
-    EXPECT_STREQ((char *)uriBlob.data, "oh:t=c;o=GetUri;u=8899;a=889901");
+    EXPECT_STREQ(reinterpret_cast<char *>(uriBlob.data), "oh:t=c;o=GetUri;u=8899;a=889901");
     EXPECT_EQ(uriBlob.size, strlen("oh:t=c;o=GetUri;u=8899;a=889901") + 1);
 
     /* a path without any slash is taken as a whole */
     ASSERT_EQ(CmGetUri("plainname", &uriBlob), CM_SUCCESS);
-    EXPECT_STREQ((char *)uriBlob.data, "plainname");
+    EXPECT_STREQ(reinterpret_cast<char *>(uriBlob.data), "plainname");
     EXPECT_EQ(uriBlob.size, strlen("plainname") + 1);
 
     /* a trailing slash yields an empty uri */
@@ -273,15 +279,15 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineFindCertFileNameByUri_001, TestSize.Level0
     struct CmContext context = BuildContext(TEST_CM_USER, TEST_CM_UID);
     const std::string uri = "oh:t=c;o=EngineFind;u=8899;a=889901";
     const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_CM_USER, TEST_CM_UID);
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), uri.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
 
     char pathBuf[CERT_MAX_PATH_LEN] = { 0 };
-    struct CmMutableBlob path = { sizeof(pathBuf), (uint8_t *)pathBuf };
+    struct CmMutableBlob path = { sizeof(pathBuf), reinterpret_cast<uint8_t *>(pathBuf) };
 
     /* null pointers are rejected */
     EXPECT_EQ(CertManagerFindCertFileNameByUri(nullptr, &certUri, CM_USER_TRUSTED_STORE, false, &path),
@@ -309,7 +315,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineFindCertFileNameByUri_001, TestSize.Level0
 
     /* an unknown uri is not found */
     uint8_t missBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)missBuf, sizeof(missBuf), "oh:t=c;o=EngineFindMiss;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), "oh:t=c;o=EngineFindMiss;u=8899;a=889901"), EOK);
     struct CmBlob missUri = { sizeof(missBuf), missBuf };
     EXPECT_EQ(CertManagerFindCertFileNameByUri(&context, &missUri, CM_USER_TRUSTED_STORE, false, &path),
         CMR_ERROR_NOT_FOUND);
@@ -349,7 +355,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineCheckCertCount_001, TestSize.Level0)
     ASSERT_EQ(CmCheckCertCount(&context, CM_USER_TRUSTED_STORE, "enginecnt000"), CM_SUCCESS);
 
     /* a single file is counted and still accepted */
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), "enginecnt000", 0, pemData, strlen(g_certData06)), CMR_OK);
     ASSERT_EQ(GetCertOrCredCount(&context, CM_USER_TRUSTED_STORE, &certCount), CM_SUCCESS);
     EXPECT_EQ(certCount, 1u);
@@ -366,7 +372,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineCheckCertCountMax_001, TestSize.Level0)
     struct CmContext context = BuildContext(TEST_CM_USER, TEST_CM_UID);
     const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_CM_USER, TEST_CM_UID);
     const std::string overwriteUri = "oh:t=c;o=EngineOvr;u=8899;a=889901";
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
 
     /* fill the store up to the cap: 255 numbered files plus the overwrite target */
     for (uint32_t i = 0; i < MAX_CERT_FILE_COUNT - 1; i++) {
@@ -386,18 +392,18 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineCheckCertCountMax_001, TestSize.Level0)
 
     /* the write helper enforces the same rule */
     char pathBuf[CERT_MAX_PATH_LEN] = { 0 };
-    (void)strcpy_s(pathBuf, sizeof(pathBuf), uidDir.c_str());
-    struct CmMutableBlob pathBlob = { strlen(pathBuf) + 1, (uint8_t *)pathBuf };
-    struct CmBlob userCert = { strlen(g_certData06) + 1, (uint8_t *)g_certData06 };
+    ASSERT_EQ(strcpy_s(pathBuf, sizeof(pathBuf), uidDir.c_str()), EOK);
+    struct CmMutableBlob pathBlob = { strlen(pathBuf) + 1, reinterpret_cast<uint8_t *>(pathBuf) };
+    struct CmBlob userCert = { strlen(g_certData06) + 1, reinterpret_cast<uint8_t *>(g_certData06) };
 
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), "EngineOvr");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineOvr"), EOK);
     struct CmBlob certAlias = { strlen("EngineOvr") + 1, aliasBuf };
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     ASSERT_EQ(CmWriteUserCert(&context, &pathBlob, &userCert, &certAlias, &certUri), CM_SUCCESS);
 
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), "EngineNew");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineNew"), EOK);
     struct CmBlob newAlias = { strlen("EngineNew") + 1, aliasBuf };
     struct CmBlob newUri = { sizeof(uriBuf), uriBuf };
     EXPECT_EQ(CmWriteUserCert(&context, &pathBlob, &userCert, &newAlias, &newUri),
@@ -414,9 +420,9 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineWriteUserCert_001, TestSize.Level0)
     struct CmContext context = BuildContext(TEST_CM_USER, TEST_CM_UID);
     const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_CM_USER, TEST_CM_UID);
     char pathBuf[CERT_MAX_PATH_LEN] = { 0 };
-    (void)strcpy_s(pathBuf, sizeof(pathBuf), uidDir.c_str());
-    struct CmMutableBlob pathBlob = { strlen(pathBuf) + 1, (uint8_t *)pathBuf };
-    struct CmBlob userCert = { strlen(g_certData06) + 1, (uint8_t *)g_certData06 };
+    ASSERT_EQ(strcpy_s(pathBuf, sizeof(pathBuf), uidDir.c_str()), EOK);
+    struct CmMutableBlob pathBlob = { strlen(pathBuf) + 1, reinterpret_cast<uint8_t *>(pathBuf) };
+    struct CmBlob userCert = { strlen(g_certData06) + 1, reinterpret_cast<uint8_t *>(g_certData06) };
 
     /* an alias beyond the maximum length is rejected */
     uint8_t longAliasBuf[MAX_LEN_CERT_ALIAS + 4] = { 0 };
@@ -431,25 +437,25 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineWriteUserCert_001, TestSize.Level0)
     uint8_t tinyBuf[4] = { 0 };
     struct CmBlob tinyUri = { sizeof(tinyBuf), tinyBuf };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), "EngineWrite");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineWrite"), EOK);
     struct CmBlob certAlias = { strlen("EngineWrite") + 1, aliasBuf };
     EXPECT_EQ(CmWriteUserCert(&context, &pathBlob, &userCert, &certAlias, &tinyUri), CMR_ERROR_BUFFER_TOO_SMALL);
 
     /* a regular write stores the certificate below its uri */
     ASSERT_EQ(CmWriteUserCert(&context, &pathBlob, &userCert, &certAlias, &certUri), CM_SUCCESS);
-    EXPECT_STREQ((char *)certUri.data, "oh:t=c;o=EngineWrite;u=8899;a=889901");
+    EXPECT_STREQ(reinterpret_cast<char *>(certUri.data), "oh:t=c;o=EngineWrite;u=8899;a=889901");
     EXPECT_EQ(certUri.size, strlen("oh:t=c;o=EngineWrite;u=8899;a=889901") + 1);
-    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), (char *)certUri.data), CMR_OK);
+    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(certUri.data)), CMR_OK);
 
     uint8_t readBack[sizeof(g_certData06)] = { 0 };
-    uint32_t readSize = CmFileRead(uidDir.c_str(), (char *)certUri.data, 0, readBack, sizeof(readBack));
+    uint32_t readSize = CmFileRead(uidDir.c_str(), reinterpret_cast<char *>(certUri.data), 0, readBack, sizeof(readBack));
     EXPECT_EQ(readSize, strlen(g_certData06));
     EXPECT_EQ(memcmp(readBack, g_certData06, strlen(g_certData06)), 0);
 
     /* a path outside the created directories cannot be written */
     const std::string missingDir = uidDir + "/missing";
-    (void)strcpy_s(pathBuf, sizeof(pathBuf), missingDir.c_str());
-    struct CmMutableBlob missingBlob = { strlen(pathBuf) + 1, (uint8_t *)pathBuf };
+    ASSERT_EQ(strcpy_s(pathBuf, sizeof(pathBuf), missingDir.c_str()), EOK);
+    struct CmMutableBlob missingBlob = { strlen(pathBuf) + 1, reinterpret_cast<uint8_t *>(pathBuf) };
     struct CmBlob againUri = { sizeof(uriBuf), uriBuf };
     EXPECT_EQ(CmWriteUserCert(&context, &missingBlob, &userCert, &certAlias, &againUri),
         CMR_ERROR_WRITE_FILE_FAIL);
@@ -464,7 +470,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineGetObjNameFromCertData_001, TestSize.Level
 {
     struct CmBlob certData = { sizeof(g_certData01), const_cast<uint8_t *>(g_certData01) };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), "EngineObjAlias");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineObjAlias"), EOK);
     struct CmBlob certAlias = { strlen("EngineObjAlias") + 1, aliasBuf };
     uint8_t nameBuf1[MAX_LEN_BASE64URL_SHA256 + 1] = { 0 };
     struct CmBlob objectName1 = { sizeof(nameBuf1), nameBuf1 };
@@ -479,7 +485,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineGetObjNameFromCertData_001, TestSize.Level
 
     /* the default format keeps the alias as the object name */
     ASSERT_EQ(GetObjNameFromCertData(&certData, &certAlias, &objectName1, DEFAULT_FORMAT), CM_SUCCESS);
-    EXPECT_STREQ((char *)objectName1.data, "EngineObjAlias");
+    EXPECT_STREQ(reinterpret_cast<char *>(objectName1.data), "EngineObjAlias");
     EXPECT_EQ(objectName1.size, strlen("EngineObjAlias") + 1);
 
     /* a too small object name buffer is rejected */
@@ -489,20 +495,20 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineGetObjNameFromCertData_001, TestSize.Level
 
     /* the sha256 format hashes the alias into a base64url string */
     ASSERT_EQ(GetObjNameFromCertData(&certData, &certAlias, &objectName1, SHA256_FORMAT), CM_SUCCESS);
-    EXPECT_EQ(strlen((char *)objectName1.data), BASE64URL_SHA256_LEN);
-    EXPECT_STRNE((char *)objectName1.data, "EngineObjAlias");
+    EXPECT_EQ(strlen(reinterpret_cast<char *>(objectName1.data)), BASE64URL_SHA256_LEN);
+    EXPECT_STRNE(reinterpret_cast<char *>(objectName1.data), "EngineObjAlias");
     ASSERT_EQ(GetObjNameFromCertData(&certData, &certAlias, &objectName2, SHA256_FORMAT), CM_SUCCESS);
-    EXPECT_STREQ((char *)objectName1.data, (char *)objectName2.data);
+    EXPECT_STREQ(reinterpret_cast<char *>(objectName1.data), reinterpret_cast<char *>(objectName2.data));
 
     /* an empty alias derives the object name from the certificate data */
     uint8_t emptyAliasBuf[1] = { 0 };
     struct CmBlob emptyAlias = { sizeof(emptyAliasBuf), emptyAliasBuf };
     ASSERT_EQ(GetObjNameFromCertData(&certData, &emptyAlias, &objectName2, DEFAULT_FORMAT), CM_SUCCESS);
-    EXPECT_EQ(strlen((char *)objectName2.data), BASE64URL_SHA256_LEN);
+    EXPECT_EQ(strlen(reinterpret_cast<char *>(objectName2.data)), BASE64URL_SHA256_LEN);
     /* the hashed alias differs from the hashed certificate data */
-    EXPECT_STRNE((char *)objectName1.data, (char *)objectName2.data);
+    EXPECT_STRNE(reinterpret_cast<char *>(objectName1.data), reinterpret_cast<char *>(objectName2.data));
     ASSERT_EQ(GetObjNameFromCertData(&certData, &emptyAlias, &objectName1, DEFAULT_FORMAT), CM_SUCCESS);
-    EXPECT_STREQ((char *)objectName1.data, (char *)objectName2.data);
+    EXPECT_STREQ(reinterpret_cast<char *>(objectName1.data), reinterpret_cast<char *>(objectName2.data));
 
     /* a too small object name buffer is rejected for the empty alias as well */
     EXPECT_EQ(GetObjNameFromCertData(&certData, &emptyAlias, &tinyName, DEFAULT_FORMAT), CMR_ERROR_MEM_OPERATION_COPY);
@@ -522,7 +528,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineGetDisplayNameByURI_001, TestSize.Level0)
     TrackRdbUri(uri);
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
     struct CmBlob uriBlob = { sizeof(uriBuf), uriBuf };
     uint8_t nameBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     struct CmBlob displayName = { sizeof(nameBuf), nameBuf };
@@ -540,15 +546,15 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineGetDisplayNameByURI_001, TestSize.Level0)
 
     /* a row resolves the display name to the stored alias */
     ASSERT_EQ(CmGetDisplayNameByURI(&uriBlob, "EngineDispObject", &displayName), CM_SUCCESS);
-    EXPECT_STREQ((char *)displayName.data, "EngineDisp");
+    EXPECT_STREQ(reinterpret_cast<char *>(displayName.data), "EngineDisp");
     EXPECT_EQ(displayName.size, strlen("EngineDisp") + 1);
 
     /* without a row the object is used */
     uint8_t missBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)missBuf, sizeof(missBuf), "oh:t=c;o=EngineDispMiss;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), "oh:t=c;o=EngineDispMiss;u=8899;a=889901"), EOK);
     struct CmBlob missUri = { sizeof(missBuf), missBuf };
     ASSERT_EQ(CmGetDisplayNameByURI(&missUri, "EngineDispObject", &displayName), CM_SUCCESS);
-    EXPECT_STREQ((char *)displayName.data, "EngineDispObject");
+    EXPECT_STREQ(reinterpret_cast<char *>(displayName.data), "EngineDispObject");
 
     /* a too small output buffer is rejected */
     uint8_t tinyBuf[2] = { 0 };
@@ -565,11 +571,11 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineRdbInsertCertProperty_001, TestSize.Level0
 {
     struct CmContext context = BuildContext(TEST_CM_USER, TEST_CM_UID);
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), "oh:t=c;o=EngineRdb;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), "oh:t=c;o=EngineRdb;u=8899;a=889901"), EOK);
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), "EngineRdb");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineRdb"), EOK);
     uint8_t subjectBuf[MAX_LEN_SUBJECT_NAME] = { 0 };
-    (void)strcpy_s((char *)subjectBuf, sizeof(subjectBuf), "CN=EngineRdb");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(subjectBuf), sizeof(subjectBuf), "CN=EngineRdb"), EOK);
     struct CmBlob uriBlob = { sizeof(uriBuf), uriBuf };
     struct CmBlob aliasBlob = { strlen("EngineRdb") + 1, aliasBuf };
     struct CmBlob subjectBlob = { strlen("CN=EngineRdb") + 1, subjectBuf };
@@ -619,7 +625,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineStoreUserCertAndSaConf_001, TestSize.Level
     const std::string confDir = confUidDirBuf;
 
     /* the certificate payload is stored in the backup directory */
-    struct CmBlob userCert = { strlen(g_certData06) + 1, (uint8_t *)g_certData06 };
+    struct CmBlob userCert = { strlen(g_certData06) + 1, reinterpret_cast<uint8_t *>(g_certData06) };
     ASSERT_EQ(CmStoreUserCert(backupDir.c_str(), &userCert, "enginestore.0"), CM_SUCCESS);
     EXPECT_EQ(CmIsFileExist(backupDir.c_str(), "enginestore.0"), CMR_OK);
     uint8_t readBack[sizeof(g_certData06)] = { 0 };
@@ -662,21 +668,21 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineRemoveUserCertFlow_001, TestSize.Level0)
     struct CmContext context = BuildContext(TEST_CM_USER, TEST_CM_UID);
     const std::string uri = "oh:t=c;o=EngineRmU;u=8899;a=889901";
     const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_CM_USER, TEST_CM_UID);
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), uri.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
 
     char pathBuf[CERT_MAX_PATH_LEN] = { 0 };
-    (void)strcpy_s(pathBuf, sizeof(pathBuf), uidDir.c_str());
-    struct CmMutableBlob pathBlob = { strlen(pathBuf) + 1, (uint8_t *)pathBuf };
+    ASSERT_EQ(strcpy_s(pathBuf, sizeof(pathBuf), uidDir.c_str()), EOK);
+    struct CmMutableBlob pathBlob = { strlen(pathBuf) + 1, reinterpret_cast<uint8_t *>(pathBuf) };
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
 
     /* an invalid uri is rejected */
     struct CmBlob noData = { 0, nullptr };
     EXPECT_EQ(CmRemoveUserCert(&pathBlob, &noData), CMR_ERROR_INVALID_ARGUMENT_URI);
     uint8_t dotBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)dotBuf, sizeof(dotBuf), "oh:t=c;o=../x;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(dotBuf), sizeof(dotBuf), "oh:t=c;o=../x;u=8899;a=889901"), EOK);
     struct CmBlob dotUri = { sizeof(dotBuf), dotBuf };
     EXPECT_EQ(CmRemoveUserCert(&pathBlob, &dotUri), CMR_ERROR_INVALID_ARGUMENT_URI);
 
@@ -727,7 +733,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineRemoveUserCertFlow_001, TestSize.Level0)
 HWTEST_F(CmEngineCertMgrTest, CmEngineRemoveAllUserCert_001, TestSize.Level0)
 {
     struct CmContext context = BuildContext(TEST_CM_USER, TEST_CM_UID);
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
 
     /* invalid path lists are rejected */
     EXPECT_EQ(CmRemoveAllUserCert(&context, CM_USER_TRUSTED_STORE, nullptr), CMR_ERROR_INVALID_ARGUMENT);
@@ -747,7 +753,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineRemoveAllUserCert_001, TestSize.Level0)
     ASSERT_EQ(CmGetCertBackupDir(TEST_CM_USER, backupDirBuf, sizeof(backupDirBuf)), CM_SUCCESS);
     const std::string backupPathA = std::string(backupDirBuf) + "/manualrmall.0";
     ASSERT_EQ(CmFileWrite(backupDirBuf, "manualrmall.0", 0, pemData, strlen(g_certData06)), CMR_OK);
-    ASSERT_EQ(CmFileWrite(nullptr, confFileA.c_str(), 0, (const uint8_t *)backupPathA.c_str(), backupPathA.size()),
+    ASSERT_EQ(CmFileWrite(nullptr, confFileA.c_str(), 0, reinterpret_cast<const uint8_t *>(backupPathA.c_str()), backupPathA.size()),
         CMR_OK);
 
     /* second uid directory: certificate file and row only */
@@ -759,14 +765,14 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineRemoveAllUserCert_001, TestSize.Level0)
         CM_SUCCESS);
 
     char pathA[CERT_MAX_PATH_LEN] = { 0 };
-    (void)strcpy_s(pathA, sizeof(pathA), uidDirA.c_str());
+    ASSERT_EQ(strcpy_s(pathA, sizeof(pathA), uidDirA.c_str()), EOK);
     char pathB[CERT_MAX_PATH_LEN] = { 0 };
-    (void)strcpy_s(pathB, sizeof(pathB), uidDirB.c_str());
+    ASSERT_EQ(strcpy_s(pathB, sizeof(pathB), uidDirB.c_str()), EOK);
     struct CmMutableBlob paths[2] = {
-        { strlen(pathA) + 1, (uint8_t *)pathA },
-        { strlen(pathB) + 1, (uint8_t *)pathB },
+        { strlen(pathA) + 1, reinterpret_cast<uint8_t *>(pathA) },
+        { strlen(pathB) + 1, reinterpret_cast<uint8_t *>(pathB) },
     };
-    struct CmMutableBlob pathList = { 2, (uint8_t *)paths };
+    struct CmMutableBlob pathList = { 2, reinterpret_cast<uint8_t *>(paths) };
 
     ASSERT_EQ(CmRemoveAllUserCert(&context, CM_USER_TRUSTED_STORE, &pathList), CM_SUCCESS);
 
@@ -796,7 +802,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineAppCertListByUid_001, TestSize.Level0)
 {
     struct CmContext context = BuildContext(TEST_CM_USER, TEST_CM_UID);
     const std::string uidDir = MakeStoreUidDir(PRI_CREDNTIAL_STORE, TEST_CM_USER, TEST_CM_UID);
-    const uint8_t *pemData = (const uint8_t *)g_certData06;
+    const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     const std::string uriA = "oh:t=ak;o=EngineByUidA;u=8899;a=889901";
     const std::string uriB = "oh:t=ak;o=EngineByUidB;u=8899;a=889901";
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), uriA.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
@@ -815,7 +821,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineAppCertListByUid_001, TestSize.Level0)
         &fileCount), CM_SUCCESS);
     EXPECT_EQ(fileCount, 2u);
     for (uint32_t i = 0; i < fileCount; i++) {
-        const std::string filePath = (char *)fileNames[i].data;
+        const std::string filePath = reinterpret_cast<char *>(fileNames[i].data);
         EXPECT_EQ(filePath.compare(0, uidDir.size(), uidDir), 0);
         EXPECT_TRUE(filePath == uidDir + "/" + uriA || filePath == uidDir + "/" + uriB);
     }

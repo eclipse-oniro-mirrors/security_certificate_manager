@@ -59,13 +59,13 @@ HWTEST_F(CmEngineUriTest, CertManagerUriEncode_001, TestSize.Level0)
 {
     struct CMUri uri;
     (void)memset_s(&uri, sizeof(uri), 0, sizeof(uri));
-    uri.object = (char *)"objName";
+    uri.object = const_cast<char *>("objName");
     uri.type = CM_URI_TYPE_APP_KEY;
-    uri.user = (char *)"8899";
-    uri.app = (char *)"889901";
-    uri.clientUser = (char *)"100";
-    uri.clientApp = (char *)"200";
-    uri.mac = (char *)"aabb";
+    uri.user = const_cast<char *>("8899");
+    uri.app = const_cast<char *>("889901");
+    uri.clientUser = const_cast<char *>("100");
+    uri.clientApp = const_cast<char *>("200");
+    uri.mac = const_cast<char *>("aabb");
 
     uint32_t needLen = 0;
     int32_t ret = CertManagerUriEncode(nullptr, &needLen, &uri);
@@ -90,10 +90,10 @@ HWTEST_F(CmEngineUriTest, CertManagerUriEncode_002, TestSize.Level0)
 {
     struct CMUri uri;
     (void)memset_s(&uri, sizeof(uri), 0, sizeof(uri));
-    uri.object = (char *)"obj";
+    uri.object = const_cast<char *>("obj");
     uri.type = CM_URI_TYPE_CERTIFICATE;
-    uri.user = (char *)"0";
-    uri.app = (char *)"0";
+    uri.user = const_cast<char *>("0");
+    uri.app = const_cast<char *>("0");
 
     char buf[MAX_LEN_URI] = { 0 };
     uint32_t bufLen = sizeof(buf);
@@ -116,10 +116,10 @@ HWTEST_F(CmEngineUriTest, CertManagerUriEncode_003, TestSize.Level0)
 {
     struct CMUri uri;
     (void)memset_s(&uri, sizeof(uri), 0, sizeof(uri));
-    uri.object = (char *)"objName";
+    uri.object = const_cast<char *>("objName");
     uri.type = CM_URI_TYPE_APP_KEY;
-    uri.user = (char *)"8899";
-    uri.app = (char *)"889901";
+    uri.user = const_cast<char *>("8899");
+    uri.app = const_cast<char *>("889901");
 
     uint32_t needLen = 0;
     (void)CertManagerUriEncode(nullptr, &needLen, &uri);
@@ -137,11 +137,11 @@ HWTEST_F(CmEngineUriTest, CertManagerUriEncode_004, TestSize.Level0)
 {
     struct CMUri uri;
     (void)memset_s(&uri, sizeof(uri), 0, sizeof(uri));
-    uri.object = (char *)"a#b"; /* '#' is reserved in path */
+    uri.object = const_cast<char *>("a#b"); /* '#' is reserved in path */
     uri.type = CM_URI_TYPE_CERTIFICATE;
-    uri.user = (char *)"0";
-    uri.app = (char *)"0";
-    uri.mac = (char *)"m n"; /* ' ' is reserved in query */
+    uri.user = const_cast<char *>("0");
+    uri.app = const_cast<char *>("0");
+    uri.mac = const_cast<char *>("m n"); /* ' ' is reserved in query */
 
     char buf[MAX_LEN_URI] = { 0 };
     uint32_t bufLen = sizeof(buf);
@@ -299,10 +299,10 @@ HWTEST_F(CmEngineUriTest, CmConstructUri_001, TestSize.Level0)
 {
     struct CMUri uri;
     (void)memset_s(&uri, sizeof(uri), 0, sizeof(uri));
-    uri.object = (char *)"keyA";
+    uri.object = const_cast<char *>("keyA");
     uri.type = CM_URI_TYPE_APP_KEY;
-    uri.user = (char *)"8899";
-    uri.app = (char *)"889901";
+    uri.user = const_cast<char *>("8899");
+    uri.app = const_cast<char *>("889901");
 
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmConstructUri(&uri, &out), CM_SUCCESS);
@@ -321,10 +321,10 @@ HWTEST_F(CmEngineUriTest, CmConstructUri_002, TestSize.Level0)
 {
     struct CMUri uri;
     (void)memset_s(&uri, sizeof(uri), 0, sizeof(uri));
-    uri.object = (char *)"keyA";
+    uri.object = const_cast<char *>("keyA");
     uri.type = CM_URI_TYPE_MAX + 1;
-    uri.user = (char *)"8899";
-    uri.app = (char *)"889901";
+    uri.user = const_cast<char *>("8899");
+    uri.app = const_cast<char *>("889901");
     struct CmBlob out = { 0, nullptr };
     EXPECT_EQ(CmConstructUri(&uri, &out), CMR_ERROR_INVALID_ARGUMENT);
 }
@@ -383,7 +383,7 @@ HWTEST_F(CmEngineUriTest, CmDoubleList_001, TestSize.Level0)
     uint32_t values[3] = { 0 };
     struct DoubleList *p = head.next;
     for (uint32_t i = 0; i < 3 && p != &head; i++, p = p->next) {
-        values[i] = ((struct TestListNode *)p)->value;
+        values[i] = (reinterpret_cast<struct TestListNode *>(p))->value;
     }
     EXPECT_EQ(values[0], 1);
     EXPECT_EQ(values[1], 2);

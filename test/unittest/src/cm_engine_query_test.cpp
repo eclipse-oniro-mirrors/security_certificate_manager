@@ -116,7 +116,7 @@ void DeleteRdbRowsQuietly()
 uint32_t UriIndexOf(const struct CertBlob *certBlob, uint32_t count, const char *uriStr)
 {
     for (uint32_t i = 0; i < count; i++) {
-        if (certBlob->uri[i].data != nullptr && strcmp((char *)certBlob->uri[i].data, uriStr) == 0) {
+        if (certBlob->uri[i].data != nullptr && strcmp(reinterpret_cast<char *>(certBlob->uri[i].data), uriStr) == 0) {
             return i;
         }
     }
@@ -125,11 +125,62 @@ uint32_t UriIndexOf(const struct CertBlob *certBlob, uint32_t count, const char 
 
 struct CertBlob *AllocZeroedCertBlob(void)
 {
-    struct CertBlob *certBlob = (struct CertBlob *)malloc(sizeof(struct CertBlob));
+    struct CertBlob *certBlob = static_cast<struct CertBlob *>(malloc(sizeof(struct CertBlob)));
     if (certBlob != nullptr) {
         (void)memset_s(certBlob, sizeof(struct CertBlob), 0, sizeof(struct CertBlob));
     }
     return certBlob;
+}
+
+/*
+ * Writes two certificates into the user CA store (one with an RDB alias row and an
+ * enabled config file, one plain), runs the list pipeline and hands the allocated
+ * result structures to the caller for assertion and cleanup.
+ */
+void QueryUserCaListPrepare(struct CertBlob **certBlob, struct CmMutableBlob *certFileList,
+    struct CmMutableBlob *pathList, uint32_t status[MAX_COUNT_CERTIFICATE_ALL])
+{
+    const std::string userIdDir = std::string(USER_CA_STORE) + std::to_string(TEST_QUERY_USER);
+    const std::string uid1Dir = userIdDir + "/" + std::to_string(TEST_QUERY_UID1);
+    const std::string uid2Dir = userIdDir + "/" + std::to_string(TEST_QUERY_UID2);
+    MakeDirOrExists(uid1Dir);
+    MakeDirOrExists(uid2Dir);
+
+    const uint8_t *certData = reinterpret_cast<const uint8_t *>(g_certData06);
+    uint32_t certDataLen = strlen(g_certData06);
+    ASSERT_EQ(CmFileWrite(uid1Dir.c_str(), URI_WITH_CONF, 0, const_cast<uint8_t *>(certData), certDataLen), CMR_OK);
+    ASSERT_EQ(CmFileWrite(uid2Dir.c_str(), URI_WITHOUT_CONF, 0, const_cast<uint8_t *>(certData), certDataLen),
+        CMR_OK);
+
+    /* one cert gets an RDB alias row and an enabled config file, the other stays plain */
+    (void)DeleteCertProperty(URI_WITH_CONF);
+    struct CertProperty prop;
+    (void)memset_s(&prop, sizeof(prop), 0, sizeof(prop));
+    ASSERT_EQ(strcpy_s(prop.uri, sizeof(prop.uri), URI_WITH_CONF), EOK);
+    ASSERT_EQ(strcpy_s(prop.alias, sizeof(prop.alias), "RdbAliasCert"), EOK);
+    ASSERT_EQ(strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject"), EOK);
+    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap"), EOK);
+    prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
+    prop.userId = static_cast<int32_t>(TEST_QUERY_USER);
+    prop.uid = static_cast<int32_t>(TEST_QUERY_UID1);
+    prop.level = CM_AUTH_STORAGE_LEVEL_EL1;
+    ASSERT_EQ(InsertCertProperty(&prop), CM_SUCCESS);
+
+    char confUidDir[CERT_MAX_PATH_LEN] = { 0 };
+    ASSERT_EQ(CmGetCertConfUidDir(TEST_QUERY_USER, TEST_QUERY_UID1, confUidDir, sizeof(confUidDir)), CM_SUCCESS);
+    const std::string confFile = std::string(confUidDir) + "/" + URI_WITH_CONF + CERT_CONFIG_FILE_SUFFIX;
+    const uint8_t flag[] = "1";
+    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, const_cast<uint8_t *>(flag), sizeof(flag) - 1), CMR_OK);
+
+    struct CmContext context = BuildContext(TEST_QUERY_USER, TEST_QUERY_UID1);
+    ASSERT_EQ(CmGetCertPathList(&context, CM_USER_TRUSTED_STORE, pathList), CM_SUCCESS);
+    ASSERT_EQ(pathList->size, 2u);
+    ASSERT_EQ(CreateCertFileList(pathList, certFileList), CM_SUCCESS);
+    ASSERT_EQ(certFileList->size, 2u);
+    *certBlob = AllocZeroedCertBlob();
+    ASSERT_NE(*certBlob, nullptr);
+    ASSERT_EQ(CmGetCertListInfo(&context, CM_USER_TRUSTED_STORE, certFileList, *certBlob,
+        status), CM_SUCCESS);
 }
 } // namespace
 
@@ -206,12 +257,12 @@ HWTEST_F(CmEngineQueryTest, CmGetCertPathListMultiUid_001, TestSize.Level0)
     ASSERT_EQ(CmGetCertPathList(&context, CM_USER_TRUSTED_STORE, &pathList), CM_SUCCESS);
     ASSERT_EQ(pathList.size, 2u);
 
-    struct CmMutableBlob *paths = (struct CmMutableBlob *)pathList.data;
+    struct CmMutableBlob *paths = reinterpret_cast<struct CmMutableBlob *>(pathList.data);
     bool seenUid1 = false;
     bool seenUid2 = false;
     for (uint32_t i = 0; i < pathList.size; i++) {
         ASSERT_NE(paths[i].data, nullptr);
-        const std::string path((char *)paths[i].data);
+        const std::string path(reinterpret_cast<char *>(paths[i].data));
         if (path.rfind("/" + std::to_string(TEST_QUERY_UID1)) == path.size() - std::to_string(TEST_QUERY_UID1).size()
             - 1) {
             seenUid1 = true;
@@ -255,12 +306,12 @@ HWTEST_F(CmEngineQueryTest, CmGetSysCertPathList_001, TestSize.Level0)
     ASSERT_TRUE(pathList.size == SYSTEM_CA_PATH_COUNT_1 || pathList.size == SYSTEM_CA_PATH_COUNT_2);
     ASSERT_NE(pathList.data, nullptr);
 
-    struct CmMutableBlob *paths = (struct CmMutableBlob *)pathList.data;
+    struct CmMutableBlob *paths = reinterpret_cast<struct CmMutableBlob *>(pathList.data);
     ASSERT_NE(paths[SYSTEM_CA_PATH_INDEX].data, nullptr);
-    EXPECT_EQ(strcmp((char *)paths[SYSTEM_CA_PATH_INDEX].data, SYSTEM_CA_STORE), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(paths[SYSTEM_CA_PATH_INDEX].data), SYSTEM_CA_STORE), 0);
     if (pathList.size == SYSTEM_CA_PATH_COUNT_2) {
         ASSERT_NE(paths[SYSTEM_CA_GM_PATH_INDEX].data, nullptr);
-        EXPECT_EQ(strcmp((char *)paths[SYSTEM_CA_GM_PATH_INDEX].data, SYSTEM_CA_STORE_GM), 0);
+        EXPECT_EQ(strcmp(reinterpret_cast<char *>(paths[SYSTEM_CA_GM_PATH_INDEX].data), SYSTEM_CA_STORE_GM), 0);
     }
     CmFreePathList(paths, pathList.size);
 }
@@ -293,7 +344,7 @@ HWTEST_F(CmEngineQueryTest, SystemCertListSweep_001, TestSize.Level0)
 
     struct CmMutableBlob certFileList = { 0, nullptr };
     ASSERT_EQ(CreateCertFileList(&pathList, &certFileList), CM_SUCCESS);
-    struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList.data;
+    struct CertFileInfo *cFileList = reinterpret_cast<struct CertFileInfo *>(certFileList.data);
 
     /* the system image ships the preset CA certificates; tolerate a stripped image */
     if (certFileList.size > 0) {
@@ -319,79 +370,59 @@ HWTEST_F(CmEngineQueryTest, SystemCertListSweep_001, TestSize.Level0)
         free(certBlob);
     }
     CmFreeCertFiles(cFileList, certFileList.size);
-    CmFreePathList((struct CmMutableBlob *)pathList.data, pathList.size);
+    CmFreePathList(reinterpret_cast<struct CmMutableBlob *>(pathList.data), pathList.size);
 }
 
 /**
  * @tc.name: UserCertListInfoRoundTrip_001
- * @tc.desc: user CA list pipeline: RDB alias, subject name, uri copy and enabled/disabled status.
+ * @tc.desc: the user CA list pipeline reports the RDB alias and the enabled status for a configured cert.
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineQueryTest, UserCertListInfoRoundTrip_001, TestSize.Level0)
 {
-    const std::string userIdDir = std::string(USER_CA_STORE) + std::to_string(TEST_QUERY_USER);
-    const std::string uid1Dir = userIdDir + "/" + std::to_string(TEST_QUERY_UID1);
-    const std::string uid2Dir = userIdDir + "/" + std::to_string(TEST_QUERY_UID2);
-    MakeDirOrExists(uid1Dir);
-    MakeDirOrExists(uid2Dir);
-
-    const uint8_t *certData = (const uint8_t *)g_certData06;
-    uint32_t certDataLen = strlen(g_certData06);
-    ASSERT_EQ(CmFileWrite(uid1Dir.c_str(), URI_WITH_CONF, 0, const_cast<uint8_t *>(certData), certDataLen), CMR_OK);
-    ASSERT_EQ(CmFileWrite(uid2Dir.c_str(), URI_WITHOUT_CONF, 0, const_cast<uint8_t *>(certData), certDataLen),
-        CMR_OK);
-
-    /* one cert gets an RDB alias row and an enabled config file, the other stays plain */
-    (void)DeleteCertProperty(URI_WITH_CONF);
-    struct CertProperty prop;
-    (void)memset_s(&prop, sizeof(prop), 0, sizeof(prop));
-    (void)strcpy_s(prop.uri, sizeof(prop.uri), URI_WITH_CONF);
-    (void)strcpy_s(prop.alias, sizeof(prop.alias), "RdbAliasCert");
-    (void)strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject");
-    (void)strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap");
-    prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
-    prop.userId = static_cast<int32_t>(TEST_QUERY_USER);
-    prop.uid = static_cast<int32_t>(TEST_QUERY_UID1);
-    prop.level = CM_AUTH_STORAGE_LEVEL_EL1;
-    ASSERT_EQ(InsertCertProperty(&prop), CM_SUCCESS);
-
-    char confUidDir[CERT_MAX_PATH_LEN] = { 0 };
-    ASSERT_EQ(CmGetCertConfUidDir(TEST_QUERY_USER, TEST_QUERY_UID1, confUidDir, sizeof(confUidDir)), CM_SUCCESS);
-    const std::string confFile = std::string(confUidDir) + "/" + URI_WITH_CONF + CERT_CONFIG_FILE_SUFFIX;
-    const uint8_t flag[] = "1";
-    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, const_cast<uint8_t *>(flag), sizeof(flag) - 1), CMR_OK);
-
-    struct CmContext context = BuildContext(TEST_QUERY_USER, TEST_QUERY_UID1);
-    struct CmMutableBlob pathList = { 0, nullptr };
-    ASSERT_EQ(CmGetCertPathList(&context, CM_USER_TRUSTED_STORE, &pathList), CM_SUCCESS);
-    ASSERT_EQ(pathList.size, 2u);
-
+    struct CertBlob *certBlob = nullptr;
     struct CmMutableBlob certFileList = { 0, nullptr };
-    ASSERT_EQ(CreateCertFileList(&pathList, &certFileList), CM_SUCCESS);
-    ASSERT_EQ(certFileList.size, 2u);
-
-    struct CertBlob *certBlob = AllocZeroedCertBlob();
-    ASSERT_NE(certBlob, nullptr);
+    struct CmMutableBlob pathList = { 0, nullptr };
     uint32_t status[MAX_COUNT_CERTIFICATE_ALL] = { 0 };
-    ASSERT_EQ(CmGetCertListInfo(&context, CM_USER_TRUSTED_STORE, &certFileList, certBlob, status), CM_SUCCESS);
+    QueryUserCaListPrepare(&certBlob, &certFileList, &pathList, status);
 
-    uint32_t idxWithConf = UriIndexOf(certBlob, certFileList.size, URI_WITH_CONF);
-    uint32_t idxWithoutConf = UriIndexOf(certBlob, certFileList.size, URI_WITHOUT_CONF);
-    ASSERT_NE(idxWithConf, certFileList.size);
-    ASSERT_NE(idxWithoutConf, certFileList.size);
-
-    /* alias prefers the RDB row when present and falls back to the uri object otherwise */
-    EXPECT_EQ(strcmp((char *)certBlob->certAlias[idxWithConf].data, "RdbAliasCert"), 0);
-    EXPECT_EQ(strcmp((char *)certBlob->certAlias[idxWithoutConf].data, "noconf"), 0);
-    EXPECT_GT(certBlob->subjectName[idxWithConf].size, 0u);
-    EXPECT_GT(certBlob->subjectName[idxWithoutConf].size, 0u);
-    EXPECT_EQ(status[idxWithConf], CERT_STATUS_ENABLED);
-    EXPECT_EQ(status[idxWithoutConf], CERT_STATUS_DISABLED);
+    uint32_t idx = UriIndexOf(certBlob, certFileList.size, URI_WITH_CONF);
+    ASSERT_NE(idx, certFileList.size);
+    /* alias prefers the RDB row when present */
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(certBlob->certAlias[idx].data), "RdbAliasCert"), 0);
+    EXPECT_GT(certBlob->subjectName[idx].size, 0u);
+    EXPECT_EQ(status[idx], CERT_STATUS_ENABLED);
 
     CmFreeCertBlob(certBlob);
     free(certBlob);
-    CmFreeCertFiles((struct CertFileInfo *)certFileList.data, certFileList.size);
-    CmFreePathList((struct CmMutableBlob *)pathList.data, pathList.size);
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
+    CmFreePathList(reinterpret_cast<struct CmMutableBlob *>(pathList.data), pathList.size);
+}
+
+/**
+ * @tc.name: UserCertListInfoRoundTrip_002
+ * @tc.desc: the user CA list pipeline falls back to the uri object alias and the disabled status for a plain cert.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineQueryTest, UserCertListInfoRoundTrip_002, TestSize.Level0)
+{
+    struct CertBlob *certBlob = nullptr;
+    struct CmMutableBlob certFileList = { 0, nullptr };
+    struct CmMutableBlob pathList = { 0, nullptr };
+    uint32_t status[MAX_COUNT_CERTIFICATE_ALL] = { 0 };
+    QueryUserCaListPrepare(&certBlob, &certFileList, &pathList, status);
+
+    uint32_t idx = UriIndexOf(certBlob, certFileList.size, URI_WITHOUT_CONF);
+    ASSERT_NE(idx, certFileList.size);
+    /* without an RDB row the alias falls back to the uri object */
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(certBlob->certAlias[idx].data), "noconf"), 0);
+    EXPECT_GT(certBlob->subjectName[idx].size, 0u);
+    EXPECT_EQ(status[idx], CERT_STATUS_DISABLED);
+
+    CmFreeCertBlob(certBlob);
+    free(certBlob);
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
+    CmFreePathList(reinterpret_cast<struct CmMutableBlob *>(pathList.data), pathList.size);
 }
 
 /**
@@ -426,8 +457,8 @@ HWTEST_F(CmEngineQueryTest, CmGetCertListInfoUriDecodeFail_001, TestSize.Level0)
 
     CmFreeCertBlob(certBlob);
     free(certBlob);
-    CmFreeCertFiles((struct CertFileInfo *)certFileList.data, certFileList.size);
-    CmFreePathList((struct CmMutableBlob *)pathList.data, pathList.size);
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
+    CmFreePathList(reinterpret_cast<struct CmMutableBlob *>(pathList.data), pathList.size);
 }
 
 /**
@@ -451,7 +482,7 @@ HWTEST_F(CmEngineQueryTest, CmGetMatchedCertIndex_001, TestSize.Level0)
     files[1].fileName.size = sizeof(nameB) - 1;
     /* files[2] keeps a null file name to exercise the corrupted entry branch */
 
-    struct CmMutableBlob list = { 3, (uint8_t *)files };
+    struct CmMutableBlob list = { 3, reinterpret_cast<uint8_t *>(files) };
     EXPECT_EQ(CmGetMatchedCertIndex(&list, &missUri), 1u);
 
     uint8_t missBuf[] = "uriC";
@@ -474,10 +505,10 @@ HWTEST_F(CmEngineQueryTest, CmGetCertAlias_001, TestSize.Level0)
     (void)DeleteCertProperty(URI_RDB_ALIAS);
     struct CertProperty prop;
     (void)memset_s(&prop, sizeof(prop), 0, sizeof(prop));
-    (void)strcpy_s(prop.uri, sizeof(prop.uri), URI_RDB_ALIAS);
-    (void)strcpy_s(prop.alias, sizeof(prop.alias), "MyRdbAlias");
-    (void)strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject");
-    (void)strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap");
+    ASSERT_EQ(strcpy_s(prop.uri, sizeof(prop.uri), URI_RDB_ALIAS), EOK);
+    ASSERT_EQ(strcpy_s(prop.alias, sizeof(prop.alias), "MyRdbAlias"), EOK);
+    ASSERT_EQ(strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject"), EOK);
+    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap"), EOK);
     prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
     prop.userId = static_cast<int32_t>(TEST_QUERY_USER);
     prop.uid = static_cast<int32_t>(TEST_QUERY_UID1);
@@ -486,10 +517,10 @@ HWTEST_F(CmEngineQueryTest, CmGetCertAlias_001, TestSize.Level0)
 
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     struct CmBlob alias = { sizeof(aliasBuf), aliasBuf };
-    struct CmBlob certData = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob certData = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
 
     ASSERT_EQ(CmGetCertAlias(CM_USER_TRUSTED_STORE, URI_RDB_ALIAS, &certData, &alias), CM_SUCCESS);
-    EXPECT_EQ(strcmp((char *)alias.data, "MyRdbAlias"), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(alias.data), "MyRdbAlias"), 0);
     EXPECT_EQ(alias.size, strlen("MyRdbAlias") + 1);
 }
 
@@ -504,10 +535,10 @@ HWTEST_F(CmEngineQueryTest, CmGetCertAliasFallback_001, TestSize.Level0)
 
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     struct CmBlob alias = { sizeof(aliasBuf), aliasBuf };
-    struct CmBlob certData = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob certData = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
 
     ASSERT_EQ(CmGetCertAlias(CM_USER_TRUSTED_STORE, URI_WITHOUT_CONF, &certData, &alias), CM_SUCCESS);
-    EXPECT_EQ(strcmp((char *)alias.data, "noconf"), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(alias.data), "noconf"), 0);
     EXPECT_EQ(alias.size, strlen("noconf") + 1);
 }
 
@@ -520,11 +551,11 @@ HWTEST_F(CmEngineQueryTest, CmGetCertAliasSystemStore_001, TestSize.Level0)
 {
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     struct CmBlob alias = { sizeof(aliasBuf), aliasBuf };
-    struct CmBlob certData = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob certData = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
 
     ASSERT_EQ(CmGetCertAlias(CM_SYSTEM_TRUSTED_STORE, "ignored", &certData, &alias), CM_SUCCESS);
     EXPECT_GT(alias.size, 1u);
-    EXPECT_GT(strlen((char *)alias.data), 0u);
+    EXPECT_GT(strlen(reinterpret_cast<char *>(alias.data)), 0u);
 
     uint8_t garbage[] = "garbage";
     struct CmBlob badCert = { sizeof(garbage) - 1, garbage };
@@ -545,7 +576,7 @@ HWTEST_F(CmEngineQueryTest, CmGetCertAliasInvalidUri_001, TestSize.Level0)
 {
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     struct CmBlob alias = { sizeof(aliasBuf), aliasBuf };
-    struct CmBlob certData = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob certData = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
 
     /* not a uri at all */
     EXPECT_EQ(CmGetCertAlias(CM_USER_TRUSTED_STORE, "garbage", &certData, &alias),
@@ -564,7 +595,7 @@ HWTEST_F(CmEngineQueryTest, CmGetAliasFromSubjectName_001, TestSize.Level0)
 {
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
     struct CmBlob alias = { sizeof(aliasBuf), aliasBuf };
-    struct CmBlob certData = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob certData = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
 
     ASSERT_EQ(CmGetAliasFromSubjectName(&certData, &alias), CM_SUCCESS);
     EXPECT_GT(alias.size, 0u);
@@ -582,7 +613,7 @@ HWTEST_F(CmEngineQueryTest, CmGetAliasFromSubjectName_001, TestSize.Level0)
 HWTEST_F(CmEngineQueryTest, GetRdbAuthStorageLevel_001, TestSize.Level0)
 {
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), URI_RDB_LEVEL);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), URI_RDB_LEVEL), EOK);
     struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
     enum CmAuthStorageLevel level = CM_AUTH_STORAGE_LEVEL_EL1;
 
@@ -598,10 +629,10 @@ HWTEST_F(CmEngineQueryTest, GetRdbAuthStorageLevel_001, TestSize.Level0)
     /* insert a row and observe the stored level */
     struct CertProperty prop;
     (void)memset_s(&prop, sizeof(prop), 0, sizeof(prop));
-    (void)strcpy_s(prop.uri, sizeof(prop.uri), URI_RDB_LEVEL);
-    (void)strcpy_s(prop.alias, sizeof(prop.alias), "levelcert");
-    (void)strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject");
-    (void)strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap");
+    ASSERT_EQ(strcpy_s(prop.uri, sizeof(prop.uri), URI_RDB_LEVEL), EOK);
+    ASSERT_EQ(strcpy_s(prop.alias, sizeof(prop.alias), "levelcert"), EOK);
+    ASSERT_EQ(strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject"), EOK);
+    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap"), EOK);
     prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
     prop.userId = static_cast<int32_t>(TEST_QUERY_USER);
     prop.uid = static_cast<int32_t>(TEST_QUERY_UID1);

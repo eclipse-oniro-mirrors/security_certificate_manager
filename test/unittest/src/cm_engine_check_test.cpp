@@ -248,7 +248,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceSetCertStatusCheck_001, TestSize.Level0)
 
 /**
  * @tc.name: CmServiceInstallAppCertCheck_001
- * @tc.desc: null, store, level, format, cert, alias and password validation of the install check
+ * @tc.desc: null, store, level, credFormat and aliasFormat validation of the install check
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_001, TestSize.Level0)
@@ -282,10 +282,30 @@ HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_001, TestSize.Level0)
     param = BuildAppCertParam(&appCert, &appCertPwd, &certAlias, CM_CREDENTIAL_STORE, 0, FILE_P12, nullptr);
     param.aliasFormat = static_cast<enum AliasTransFormat>(99);
     EXPECT_EQ(CmServiceInstallAppCertCheck(&param, &context), CMR_ERROR_INVALID_ARGUMENT);
+}
+
+/**
+ * @tc.name: CmServiceInstallAppCertCheck_002
+ * @tc.desc: appCert blob and alias validation of the install check
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_002, TestSize.Level0)
+{
+    MockHapToken fullPerm; /* argument validation runs before the permission check */
+
+    uint8_t certBuf[] = "fakeAppCert";
+    struct CmBlob appCert = { sizeof(certBuf), certBuf };
+    uint8_t pwdBuf[] = "123456";
+    struct CmBlob appCertPwd = { sizeof(pwdBuf), pwdBuf };
+    uint8_t aliasBuf[] = "alias8899";
+    struct CmBlob certAlias = { sizeof(aliasBuf), aliasBuf };
+
+    struct CmContext context = BuildContext(0, TEST_CHECK_UID);
 
     /* appCert blob validation */
     struct CmBlob badCert = { 16, nullptr };
-    param = BuildAppCertParam(&badCert, &appCertPwd, &certAlias, CM_CREDENTIAL_STORE, 0, FILE_P12, nullptr);
+    struct CmAppCertParam param = BuildAppCertParam(&badCert, &appCertPwd, &certAlias,
+        CM_CREDENTIAL_STORE, 0, FILE_P12, nullptr);
     EXPECT_EQ(CmServiceInstallAppCertCheck(&param, &context), CMR_ERROR_INVALID_ARGUMENT_APP_CERT);
     std::vector<uint8_t> bigCert(MAX_LEN_APP_CERT + 1, 'a');
     struct CmBlob bigCertBlob = { static_cast<uint32_t>(bigCert.size()), bigCert.data() };
@@ -316,11 +336,31 @@ HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_001, TestSize.Level0)
     param = BuildAppCertParam(&appCert, &appCertPwd, &shaAliasBlob, CM_CREDENTIAL_STORE, 0, FILE_P12, nullptr);
     param.aliasFormat = SHA256_FORMAT;
     EXPECT_EQ(CmServiceInstallAppCertCheck(&param, &context), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmServiceInstallAppCertCheck_003
+ * @tc.desc: empty and private-store alias rules, password and chain key validation of the install check
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_003, TestSize.Level0)
+{
+    MockHapToken fullPerm; /* argument validation runs before the permission check */
+
+    uint8_t certBuf[] = "fakeAppCert";
+    struct CmBlob appCert = { sizeof(certBuf), certBuf };
+    uint8_t pwdBuf[] = "123456";
+    struct CmBlob appCertPwd = { sizeof(pwdBuf), pwdBuf };
+    uint8_t aliasBuf[] = "alias8899";
+    struct CmBlob certAlias = { sizeof(aliasBuf), aliasBuf };
+
+    struct CmContext context = BuildContext(0, TEST_CHECK_UID);
 
     /* an empty alias is accepted for the public and system credential stores */
     uint8_t emptyAliasBuf[] = "";
     struct CmBlob emptyAlias = { sizeof(emptyAliasBuf), emptyAliasBuf };
-    param = BuildAppCertParam(&appCert, &appCertPwd, &emptyAlias, CM_CREDENTIAL_STORE, 0, FILE_P12, nullptr);
+    struct CmAppCertParam param = BuildAppCertParam(&appCert, &appCertPwd, &emptyAlias,
+        CM_CREDENTIAL_STORE, 0, FILE_P12, nullptr);
     EXPECT_EQ(CmServiceInstallAppCertCheck(&param, &context), CM_SUCCESS);
     struct CmContext sysAliasCtx = BuildContext(0, TEST_CHECK_UID);
     param = BuildAppCertParam(&appCert, &appCertPwd, &emptyAlias, CM_SYS_CREDENTIAL_STORE,
@@ -362,11 +402,11 @@ HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_001, TestSize.Level0)
 }
 
 /**
- * @tc.name: CmServiceInstallAppCertCheck_002
+ * @tc.name: CmServiceInstallAppCertCheck_004
  * @tc.desc: userId update rules, permission and system app gating of the install check
  * @tc.type: FUNC
  */
-HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_002, TestSize.Level0)
+HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_004, TestSize.Level0)
 {
     uint8_t certBuf[] = "fakeAppCert";
     struct CmBlob appCert = { sizeof(certBuf), certBuf };
@@ -435,15 +475,13 @@ HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_002, TestSize.Level0)
 
 /**
  * @tc.name: CmServiceUninstallAppCertCheck_001
- * @tc.desc: store, uri, permission, system app and caller/uri consistency validation
+ * @tc.desc: store, uri, permission and system app validation of the uninstall check
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineCheckTest, CmServiceUninstallAppCertCheck_001, TestSize.Level0)
 {
     uint8_t keyUriBuf[] = "oh:t=ak;o=alias;u=0;a=0";
     struct CmBlob keyUri = { sizeof(keyUriBuf), keyUriBuf };
-    uint8_t sysUriBuf[] = "oh:t=sk;o=alias;u=0;a=0";
-    struct CmBlob sysUri = { sizeof(sysUriBuf), sysUriBuf };
 
     /* store and uri validation run before the permission check */
     EXPECT_EQ(CmServiceUninstallAppCertCheck(nullptr, CM_USER_TRUSTED_STORE, &keyUri),
@@ -464,6 +502,19 @@ HWTEST_F(CmEngineCheckTest, CmServiceUninstallAppCertCheck_001, TestSize.Level0)
         EXPECT_EQ(CmServiceUninstallAppCertCheck(&ctx, CM_CREDENTIAL_STORE, &keyUri),
             CMR_ERROR_NOT_SYSTEMP_APP);
     }
+}
+
+/**
+ * @tc.name: CmServiceUninstallAppCertCheck_002
+ * @tc.desc: caller and uri consistency validation of the system credential store uninstall check
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineCheckTest, CmServiceUninstallAppCertCheck_002, TestSize.Level0)
+{
+    uint8_t keyUriBuf[] = "oh:t=ak;o=alias;u=0;a=0";
+    struct CmBlob keyUri = { sizeof(keyUriBuf), keyUriBuf };
+    uint8_t sysUriBuf[] = "oh:t=sk;o=alias;u=0;a=0";
+    struct CmBlob sysUri = { sizeof(sysUriBuf), sysUriBuf };
 
     {
         MockHapToken fullPerm;
@@ -664,7 +715,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetAppCertCheck_001, TestSize.Level0)
 
 /**
  * @tc.name: CmServiceGetUserCertInfoCheck_001
- * @tc.desc: context, uri decode, field, userId and uid validation with context update
+ * @tc.desc: context, uri decode and type validation of the user cert info check
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineCheckTest, CmServiceGetUserCertInfoCheck_001, TestSize.Level0)
@@ -707,6 +758,18 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetUserCertInfoCheck_001, TestSize.Level0)
     /* an unsupported uri type maps to the store type error */
     EXPECT_EQ(CmServiceGetUserCertInfoCheck(&ctx, &validUri, CM_URI_TYPE_APP_KEY, false),
         CMR_ERROR_INVALID_ARGUMENT_STORE_TYPE);
+}
+
+/**
+ * @tc.name: CmServiceGetUserCertInfoCheck_002
+ * @tc.desc: userId and uid rules with context adoption of the user cert info check
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineCheckTest, CmServiceGetUserCertInfoCheck_002, TestSize.Level0)
+{
+    uint8_t validUriBuf[] = "oh:t=c;o=alias;u=8899;a=889901";
+    struct CmBlob validUri = { sizeof(validUriBuf), validUriBuf };
+    struct CmContext ctx = BuildContext(TEST_CHECK_USER, TEST_CHECK_UID);
 
     /* certificate uri: a hap caller only accepts its own user or the global user */
     uint8_t otherUserUriBuf[] = "oh:t=c;o=alias;u=100;a=889901";
@@ -753,7 +816,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetUserCertInfoCheck_001, TestSize.Level0)
 
 /**
  * @tc.name: CmServiceInstallUserCertCheck_001
- * @tc.desc: context, cert, alias, permission and userId validation of the user cert install check
+ * @tc.desc: context, cert and alias validation of the user cert install check
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineCheckTest, CmServiceInstallUserCertCheck_001, TestSize.Level0)
@@ -800,6 +863,24 @@ HWTEST_F(CmEngineCheckTest, CmServiceInstallUserCertCheck_001, TestSize.Level0)
         struct CmBlob bigAliasBlob = { static_cast<uint32_t>(bigAlias.size()), bigAlias.data() };
         EXPECT_EQ(CmServiceInstallUserCertCheck(&ctx, &userCert, &bigAliasBlob, 0, PEM_DER),
             CMR_ERROR_INVALID_ARGUMENT_ALIAS);
+    }
+}
+
+/**
+ * @tc.name: CmServiceInstallUserCertCheck_002
+ * @tc.desc: userId rules and permission validation of the user cert install check
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineCheckTest, CmServiceInstallUserCertCheck_002, TestSize.Level0)
+{
+    uint8_t certBuf[] = "fakeUserCert";
+    struct CmBlob userCert = { sizeof(certBuf), certBuf };
+    uint8_t aliasBuf[] = "alias8899";
+    struct CmBlob certAlias = { sizeof(aliasBuf), aliasBuf };
+
+    struct CmContext ctx = BuildContext(0, TEST_CHECK_UID);
+    {
+        MockHapToken fullPerm; /* argument validation runs before the permission check */
 
         /* userId rules: the sa caller may leave it unset or designate it */
         struct CmContext saCtx = BuildContext(0, TEST_CHECK_UID);
@@ -1024,6 +1105,16 @@ HWTEST_F(CmEngineCheckTest, CmServiceSetCertManagerConfigCheck_001, TestSize.Lev
     struct CmConfigItem badListValueItem = { "enableInstallGlobalUserCA_userList", "abc|def" };
     struct CertManagerConfig badListValue = { 1, &badListValueItem };
     EXPECT_EQ(CmServiceSetCertManagerConfigCheck(&badListValue), CMR_ERROR_INVALID_ARGUMENT);
+}
+
+/**
+ * @tc.name: CmServiceSetCertManagerConfigCheck_002
+ * @tc.desc: valid config items accepted by the config set check
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineCheckTest, CmServiceSetCertManagerConfigCheck_002, TestSize.Level0)
+{
+    MockHapToken fullPerm;
 
     /* valid single items */
     struct CmConfigItem defaultEnableItem = { "installGlobalUserCA_defaultConfig", "enable" };

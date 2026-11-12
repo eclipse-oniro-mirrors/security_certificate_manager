@@ -32,7 +32,6 @@ using namespace CertmanagerTest;
 namespace {
 /* a provider name that no ukey hardware answers to on a test device */
 uint8_t g_ukeyProvider[] = "TestUkeyProvider";
-constexpr uint32_t UKEY_PARAM_COUNT = 1;
 
 /* releases the list only when the environment unexpectedly succeeds */
 void FreeListIfPresent(struct CredentialDetailList *list)
@@ -67,22 +66,22 @@ HWTEST_F(CmEngineUkeyTest, CmEngineUkeyParamCheck_001, TestSize.Level0)
     (void)memset_s(&list, sizeof(list), 0, sizeof(list));
 
     /* provider list query */
-    EXPECT_EQ(CmGetUkeyCertListByHksCertInfoSet(nullptr, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, &list),
+    EXPECT_EQ(CmGetUkeyCertListByHksCertInfoSet(nullptr, CM_CERT_PURPOSE_ALL, &list),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmGetUkeyCertListByHksCertInfoSet(&provider, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, nullptr),
+    EXPECT_EQ(CmGetUkeyCertListByHksCertInfoSet(&provider, CM_CERT_PURPOSE_ALL, nullptr),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmServiceGetUkeyCertList(nullptr, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, &list),
+    EXPECT_EQ(CmServiceGetUkeyCertList(nullptr, CM_CERT_PURPOSE_ALL, &list),
         CMR_ERROR_INVALID_ARGUMENT);
 
     /* single certificate query */
-    EXPECT_EQ(CmGetUkeyCertByHksCertInfoSet(nullptr, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, &list),
+    EXPECT_EQ(CmGetUkeyCertByHksCertInfoSet(nullptr, CM_CERT_PURPOSE_ALL, &list),
         CMR_ERROR_INVALID_ARGUMENT);
     struct CmBlob emptyUri = { 0, nullptr };
-    EXPECT_EQ(CmGetUkeyCertByHksCertInfoSet(&emptyUri, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, &list),
+    EXPECT_EQ(CmGetUkeyCertByHksCertInfoSet(&emptyUri, CM_CERT_PURPOSE_ALL, &list),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmGetUkeyCertByHksCertInfoSet(&provider, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, nullptr),
+    EXPECT_EQ(CmGetUkeyCertByHksCertInfoSet(&provider, CM_CERT_PURPOSE_ALL, nullptr),
         CMR_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(CmServiceGetUkeyCert(nullptr, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, &list),
+    EXPECT_EQ(CmServiceGetUkeyCert(nullptr, CM_CERT_PURPOSE_ALL, &list),
         CMR_ERROR_INVALID_ARGUMENT);
 
     /* import */
@@ -109,26 +108,21 @@ HWTEST_F(CmEngineUkeyTest, CmEngineUkeyHksFailure_001, TestSize.Level0)
     (void)memset_s(&list, sizeof(list), 0, sizeof(list));
 
     /* the provider query fails without a matching ukey device */
-    int32_t ret = CmGetUkeyCertListByHksCertInfoSet(&provider, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, &list);
+    int32_t ret = CmGetUkeyCertListByHksCertInfoSet(&provider, CM_CERT_PURPOSE_ALL, &list);
     FreeListIfPresent(&list);
     EXPECT_NE(ret, CM_SUCCESS);
 
     /* the service wrapper propagates the failure */
-    ret = CmServiceGetUkeyCertList(&provider, CM_CERT_PURPOSE_ALL, UKEY_PARAM_COUNT, &list);
-    FreeListIfPresent(&list);
-    EXPECT_NE(ret, CM_SUCCESS);
-
-    /* a zero parameter count cannot build a huks param set */
-    ret = CmGetUkeyCertListByHksCertInfoSet(&provider, CM_CERT_PURPOSE_ALL, 0, &list);
+    ret = CmServiceGetUkeyCertList(&provider, CM_CERT_PURPOSE_ALL, &list);
     FreeListIfPresent(&list);
     EXPECT_NE(ret, CM_SUCCESS);
 
     /* the single certificate query fails the same way */
-    ret = CmGetUkeyCertByHksCertInfoSet(&provider, CM_CERT_PURPOSE_SIGN, UKEY_PARAM_COUNT, &list);
+    ret = CmGetUkeyCertByHksCertInfoSet(&provider, CM_CERT_PURPOSE_SIGN, &list);
     FreeListIfPresent(&list);
     EXPECT_NE(ret, CM_SUCCESS);
 
-    ret = CmServiceGetUkeyCert(&provider, CM_CERT_PURPOSE_SIGN, UKEY_PARAM_COUNT, &list);
+    ret = CmServiceGetUkeyCert(&provider, CM_CERT_PURPOSE_SIGN, &list);
     FreeListIfPresent(&list);
     EXPECT_NE(ret, CM_SUCCESS);
 

@@ -444,7 +444,8 @@ HWTEST_F(CmEngineStorageTest, CmGetCertBackupFileName_001, TestSize.Level0)
         CM_SUCCESS);
     unsigned long subjectHash = X509_NAME_hash(X509_get_subject_name(cert));
     char expectName[CERT_MAX_PATH_LEN] = { 0 };
-    (void)snprintf(expectName, sizeof(expectName), CERT_BACKUP_FILENAME_FORMAT, subjectHash, 0);
+    ASSERT_GE(snprintf_s(expectName, sizeof(expectName), sizeof(expectName) - 1,
+        CERT_BACKUP_FILENAME_FORMAT, subjectHash, 0), 0);
     EXPECT_STREQ(backupFileName, expectName);
 
     /* an existing backup file advances the sequence number */
@@ -456,7 +457,8 @@ HWTEST_F(CmEngineStorageTest, CmGetCertBackupFileName_001, TestSize.Level0)
     (void)memset_s(backupFileName, sizeof(backupFileName), 0, sizeof(backupFileName));
     ASSERT_EQ(CmGetCertBackupFileName(cert, TEST_STORAGE_USER, backupFileName, sizeof(backupFileName)),
         CM_SUCCESS);
-    (void)snprintf(expectName, sizeof(expectName), CERT_BACKUP_FILENAME_FORMAT, subjectHash, 1);
+    ASSERT_GE(snprintf_s(expectName, sizeof(expectName), sizeof(expectName) - 1,
+        CERT_BACKUP_FILENAME_FORMAT, subjectHash, 1), 0);
     EXPECT_STREQ(backupFileName, expectName);
 
     X509_free(cert);
@@ -485,9 +487,9 @@ HWTEST_F(CmEngineStorageTest, CmGetCertBackupFilePath_001, TestSize.Level0)
         CM_SUCCESS);
     unsigned long subjectHash = X509_NAME_hash(X509_get_subject_name(cert));
     char expectPath[CERT_MAX_PATH_LEN] = { 0 };
-    (void)snprintf(expectPath, sizeof(expectPath), "%s/" CERT_BACKUP_FILENAME_FORMAT,
+    ASSERT_GE(snprintf_s(expectPath, sizeof(expectPath), sizeof(expectPath) - 1, "%s/" CERT_BACKUP_FILENAME_FORMAT,
         (std::string(CERT_BACKUP_ROOT_DIR) + "/" + std::to_string(TEST_STORAGE_USER)).c_str(),
-        subjectHash, 0);
+        subjectHash, 0), 0);
     EXPECT_STREQ(backupFilePath, expectPath);
 
     X509_free(cert);

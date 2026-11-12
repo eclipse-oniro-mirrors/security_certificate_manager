@@ -114,7 +114,7 @@ struct CmContext BuildContext(uint32_t userId, uint32_t uid)
 void TrackInstalledUri(const struct CmBlob *certUri)
 {
     if (certUri != nullptr && certUri->data != nullptr) {
-        g_installedUris.emplace_back((char *)certUri->data);
+        g_installedUris.emplace_back(reinterpret_cast<char *>(certUri->data));
     }
 }
 
@@ -155,16 +155,18 @@ void FreeCertManagerConfig(struct CertManagerConfig *config)
 int32_t InstallUserCertWithAlias(const std::string &alias, std::string &outUri)
 {
     struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
-    struct CmBlob userCert = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob userCert = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), alias.c_str());
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
     struct CmBlob certAlias = { alias.size() + 1, aliasBuf };
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
 
     int32_t ret = CmInstallUserCert(&context, &userCert, &certAlias, CERT_STATUS_ENABLED, &certUri);
     if (ret == CM_SUCCESS) {
-        outUri = std::string((char *)uriBuf);
+        outUri = std::string(reinterpret_cast<char *>(uriBuf));
         g_installedUris.emplace_back(outUri);
     }
     return ret;
@@ -293,7 +295,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetAppCertCredential_001, TestSize.Level0
 
     /* place the credential file and read it back */
     const uint8_t credData[] = "FAKE_CREDENTIAL_FOR_ENGINE_UT";
-    ASSERT_EQ(CmFileWrite(uidDir.c_str(), (char *)uriBuf, 0, const_cast<uint8_t *>(credData),
+    ASSERT_EQ(CmFileWrite(uidDir.c_str(), reinterpret_cast<char *>(uriBuf), 0, const_cast<uint8_t *>(credData),
         sizeof(credData) - 1), CMR_OK);
     ASSERT_EQ(CmServiceGetAppCert(&context, CM_CREDENTIAL_STORE, &keyUri, &certBlob), CM_SUCCESS);
     EXPECT_EQ(certBlob.size, sizeof(credData) - 1);
@@ -355,7 +357,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetAppCertSystem_001, TestSize.Level0)
     EXPECT_EQ(CmServiceGetAppCert(&context, CM_SYS_CREDENTIAL_STORE, &keyUri, &certBlob), CMR_ERROR_NOT_EXIST);
 
     const uint8_t credData[] = "FAKE_SYS_CREDENTIAL_FOR_UT";
-    ASSERT_EQ(CmFileWrite(uidDir.c_str(), (char *)uriBuf, 0, const_cast<uint8_t *>(credData),
+    ASSERT_EQ(CmFileWrite(uidDir.c_str(), reinterpret_cast<char *>(uriBuf), 0, const_cast<uint8_t *>(credData),
         sizeof(credData) - 1), CMR_OK);
     ASSERT_EQ(CmServiceGetAppCert(&context, CM_SYS_CREDENTIAL_STORE, &keyUri, &certBlob), CM_SUCCESS);
     EXPECT_EQ(certBlob.size, sizeof(credData) - 1);
@@ -507,7 +509,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertListCurrentUser_001, TestSize.Leve
     const std::string uidDir = std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER) + "/" +
         std::to_string(TEST_SERVICE_UID);
     MakeDirOrExists(uidDir);
-    const uint8_t *certData = (const uint8_t *)g_certData06;
+    const uint8_t *certData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), "oh:t=c;o=listone;u=8899;a=889901", 0,
         const_cast<uint8_t *>(certData), strlen(g_certData06)), CMR_OK);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), "oh:t=c;o=listtwo;u=8899;a=889901", 0,
@@ -519,12 +521,12 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertListCurrentUser_001, TestSize.Leve
     ASSERT_EQ(CmServiceGetCertList(&context, &prop, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
     ASSERT_EQ(certFileList.size, 2u);
 
-    struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList.data;
+    struct CertFileInfo *cFileList = reinterpret_cast<struct CertFileInfo *>(certFileList.data);
     bool seenOne = false;
     bool seenTwo = false;
     for (uint32_t i = 0; i < certFileList.size; i++) {
-        const std::string name((char *)cFileList[i].fileName.data);
-        const std::string path((char *)cFileList[i].path.data);
+        const std::string name(reinterpret_cast<char *>(cFileList[i].fileName.data));
+        const std::string path(reinterpret_cast<char *>(cFileList[i].path.data));
         seenOne = seenOne || (name == "oh:t=c;o=listone;u=8899;a=889901");
         seenTwo = seenTwo || (name == "oh:t=c;o=listtwo;u=8899;a=889901");
         EXPECT_NE(path.find(uidDir), std::string::npos);
@@ -544,12 +546,11 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertListScopes_001, TestSize.Level0)
     const std::string uidDir = std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER) + "/" +
         std::to_string(TEST_SERVICE_UID);
     MakeDirOrExists(uidDir);
-    const uint8_t *certData = (const uint8_t *)g_certData06;
+    const uint8_t *certData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), "oh:t=c;o=scopeone;u=8899;a=889901", 0,
         const_cast<uint8_t *>(certData), strlen(g_certData06)), CMR_OK);
 
     struct CmContext hapContext = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
-    struct CmContext saContext = BuildContext(0, 0);
     struct CmMutableBlob certFileList = { 0, nullptr };
 
     /* empty store for the current user */
@@ -567,18 +568,36 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertListScopes_001, TestSize.Level0)
     /* global scope resolves to the user id 0 store */
     struct UserCAProperty globalProp = { INIT_INVALID_VALUE, CM_GLOBAL_USER };
     ASSERT_EQ(CmServiceGetCertList(&hapContext, &globalProp, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
-    CmFreeCertFiles((struct CertFileInfo *)certFileList.data, certFileList.size);
-    certFileList = { 0, nullptr };
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
+}
+
+/**
+ * @tc.name: CmServiceGetCertListScopes_002
+ * @tc.desc: get cert list merges all user, target user and system scopes for hap and sa callers.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceGetCertListScopes_002, TestSize.Level0)
+{
+    const std::string uidDir = std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER) + "/" +
+        std::to_string(TEST_SERVICE_UID);
+    MakeDirOrExists(uidDir);
+    const uint8_t *certData = reinterpret_cast<const uint8_t *>(g_certData06);
+    ASSERT_EQ(CmFileWrite(uidDir.c_str(), "oh:t=c;o=scopeone;u=8899;a=889901", 0,
+        const_cast<uint8_t *>(certData), strlen(g_certData06)), CMR_OK);
+
+    struct CmContext hapContext = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
+    struct CmContext saContext = BuildContext(0, 0);
+    struct CmMutableBlob certFileList = { 0, nullptr };
 
     /* all user scope merges the caller store with the global store */
     struct UserCAProperty allProp = { INIT_INVALID_VALUE, CM_ALL_USER };
     ASSERT_EQ(CmServiceGetCertList(&hapContext, &allProp, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
     ASSERT_NE(certFileList.data, nullptr);
-    struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList.data;
+    struct CertFileInfo *cFileList = reinterpret_cast<struct CertFileInfo *>(certFileList.data);
     bool seenMine = false;
     for (uint32_t i = 0; i < certFileList.size; i++) {
         seenMine = seenMine ||
-            (strcmp((char *)cFileList[i].fileName.data, "oh:t=c;o=scopeone;u=8899;a=889901") == 0);
+            (strcmp(reinterpret_cast<char *>(cFileList[i].fileName.data), "oh:t=c;o=scopeone;u=8899;a=889901") == 0);
     }
     EXPECT_TRUE(seenMine);
     CmFreeCertFiles(cFileList, certFileList.size);
@@ -588,11 +607,11 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertListScopes_001, TestSize.Level0)
     struct UserCAProperty targetProp = { TEST_SERVICE_USER, CM_ALL_USER };
     ASSERT_EQ(CmServiceGetCertList(&saContext, &targetProp, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
     ASSERT_NE(certFileList.data, nullptr);
-    cFileList = (struct CertFileInfo *)certFileList.data;
+    cFileList = reinterpret_cast<struct CertFileInfo *>(certFileList.data);
     seenMine = false;
     for (uint32_t i = 0; i < certFileList.size; i++) {
         seenMine = seenMine ||
-            (strcmp((char *)cFileList[i].fileName.data, "oh:t=c;o=scopeone;u=8899;a=889901") == 0);
+            (strcmp(reinterpret_cast<char *>(cFileList[i].fileName.data), "oh:t=c;o=scopeone;u=8899;a=889901") == 0);
     }
     EXPECT_TRUE(seenMine);
     CmFreeCertFiles(cFileList, certFileList.size);
@@ -601,12 +620,12 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertListScopes_001, TestSize.Level0)
     /* sa caller with an invalid target user id falls back to the global store */
     struct UserCAProperty invalidProp = { INIT_INVALID_VALUE, CM_ALL_USER };
     ASSERT_EQ(CmServiceGetCertList(&saContext, &invalidProp, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
-    CmFreeCertFiles((struct CertFileInfo *)certFileList.data, certFileList.size);
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
     certFileList = { 0, nullptr };
 
     /* system store */
     ASSERT_EQ(CmServiceGetCertList(&hapContext, &allProp, CM_SYSTEM_TRUSTED_STORE, &certFileList), CM_SUCCESS);
-    CmFreeCertFiles((struct CertFileInfo *)certFileList.data, certFileList.size);
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
 }
 
 /**
@@ -619,13 +638,13 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertInfoUserStore_001, TestSize.Level0
     const std::string uidDir = std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER) + "/" +
         std::to_string(TEST_SERVICE_UID);
     MakeDirOrExists(uidDir);
-    const uint8_t *certData = (const uint8_t *)g_certData06;
+    const uint8_t *certData = reinterpret_cast<const uint8_t *>(g_certData06);
     const char *uri = "oh:t=c;o=infocert;u=8899;a=889901";
     ASSERT_EQ(CmFileWrite(uidDir.c_str(), uri, 0, const_cast<uint8_t *>(certData), strlen(g_certData06)),
         CMR_OK);
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), uri);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     uint8_t certBuf[MAX_LEN_CERTIFICATE] = { 0 };
     struct CmBlob certificateData = { sizeof(certBuf), certBuf };
@@ -659,7 +678,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertInfoUserStore_001, TestSize.Level0
     /* missing certificate file */
     const char *missingUri = "oh:t=c;o=missing;u=8899;a=889901";
     uint8_t missBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)missBuf, sizeof(missBuf), missingUri);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), missingUri), EOK);
     struct CmBlob missing = { sizeof(missBuf), missBuf };
     struct CmContext ctx3 = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
     EXPECT_EQ(CmServiceGetCertInfo(&ctx3, &missing, CM_USER_TRUSTED_STORE, &certificateData, &status),
@@ -668,7 +687,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertInfoUserStore_001, TestSize.Level0
     /* uri referencing another user id */
     const char *otherUserUri = "oh:t=c;o=infocert;u=100;a=889901";
     uint8_t otherBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)otherBuf, sizeof(otherBuf), otherUserUri);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(otherBuf), sizeof(otherBuf), otherUserUri), EOK);
     struct CmBlob otherUser = { sizeof(otherBuf), otherBuf };
     struct CmContext ctx4 = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
     EXPECT_EQ(CmServiceGetCertInfo(&ctx4, &otherUser, CM_USER_TRUSTED_STORE, &certificateData, &status),
@@ -693,14 +712,14 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertInfoParams_001, TestSize.Level0)
         CMR_ERROR_INVALID_ARGUMENT_URI);
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), "oh:t=c;o=alias;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), "oh:t=c;o=alias;u=8899;a=889901"), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     EXPECT_EQ(CmServiceGetCertInfo(&context, &certUri, CM_CREDENTIAL_STORE, &certificateData, &status),
         CMR_ERROR_INVALID_ARGUMENT_STORE_TYPE);
 
     /* unknown system certificate */
     uint8_t sysBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)sysBuf, sizeof(sysBuf), "0123abcd.0");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(sysBuf), sizeof(sysBuf), "0123abcd.0"), EOK);
     struct CmBlob sysUri = { sizeof(sysBuf), sysBuf };
     EXPECT_EQ(CmServiceGetCertInfo(&context, &sysUri, CM_SYSTEM_TRUSTED_STORE, &certificateData, &status),
         CMR_ERROR_NOT_EXIST);
@@ -721,10 +740,10 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertInfoSystemHit_001, TestSize.Level0
         GTEST_SKIP() << "no preset system certificates on this image";
     }
 
-    struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList.data;
+    struct CertFileInfo *cFileList = reinterpret_cast<struct CertFileInfo *>(certFileList.data);
     /* copy the first system certificate file name as the requested uri */
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)memcpy_s(uriBuf, sizeof(uriBuf), cFileList[0].fileName.data, cFileList[0].fileName.size);
+    ASSERT_EQ(memcpy_s(uriBuf, sizeof(uriBuf), cFileList[0].fileName.data, cFileList[0].fileName.size), EOK);
     struct CmBlob certUri = { cFileList[0].fileName.size, uriBuf };
     uint8_t certBuf[MAX_LEN_CERTIFICATE] = { 0 };
     struct CmBlob certificateData = { sizeof(certBuf), certBuf };
@@ -770,33 +789,33 @@ HWTEST_F(CmEngineServiceTest, CmX509ToPEM_001, TestSize.Level0)
 HWTEST_F(CmEngineServiceTest, CmInstallUserCertWithAlias_001, TestSize.Level0)
 {
     struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
-    struct CmBlob userCert = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob userCert = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), "EngineAlias");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "EngineAlias"), EOK);
     struct CmBlob certAlias = { sizeof("EngineAlias"), aliasBuf };
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
 
     ASSERT_EQ(CmInstallUserCert(&context, &userCert, &certAlias, CERT_STATUS_ENABLED, &certUri), CM_SUCCESS);
     TrackInstalledUri(&certUri);
-    EXPECT_EQ(strcmp((char *)uriBuf, "oh:t=c;o=EngineAlias;u=8899;a=889901"), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(uriBuf), "oh:t=c;o=EngineAlias;u=8899;a=889901"), 0);
 
     /* the certificate file, the RDB row and the backup config exist after the install */
     const std::string uidDir = std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER) + "/" +
         std::to_string(TEST_SERVICE_UID);
-    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), (char *)uriBuf), CMR_OK);
+    EXPECT_EQ(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(uriBuf)), CMR_OK);
 
     struct CertProperty prop;
     (void)memset_s(&prop, sizeof(prop), 0, sizeof(prop));
-    ASSERT_EQ(QueryCertProperty((char *)uriBuf, &prop), CM_SUCCESS);
+    ASSERT_EQ(QueryCertProperty(reinterpret_cast<char *>(uriBuf), &prop), CM_SUCCESS);
     EXPECT_EQ(strcmp(prop.alias, "EngineAlias"), 0);
-    EXPECT_EQ(strcmp(prop.uri, (char *)uriBuf), 0);
+    EXPECT_EQ(strcmp(prop.uri, reinterpret_cast<char *>(uriBuf)), 0);
     EXPECT_EQ(prop.certStore, static_cast<int32_t>(CM_USER_TRUSTED_STORE));
 
     char confUidDir[CERT_MAX_PATH_LEN] = { 0 };
     ASSERT_EQ(CmGetCertConfUidDir(TEST_SERVICE_USER, TEST_SERVICE_UID, confUidDir, sizeof(confUidDir)),
         CM_SUCCESS);
-    const std::string confFile = std::string(confUidDir) + "/" + (char *)uriBuf + CERT_CONFIG_FILE_SUFFIX;
+    const std::string confFile = std::string(confUidDir) + "/" + reinterpret_cast<char *>(uriBuf) + CERT_CONFIG_FILE_SUFFIX;
     EXPECT_EQ(CmIsFileExist(nullptr, confFile.c_str()), CMR_OK);
 
     /* reinstall with the same alias is idempotent (file and row are replaced) */
@@ -804,7 +823,7 @@ HWTEST_F(CmEngineServiceTest, CmInstallUserCertWithAlias_001, TestSize.Level0)
     struct CmBlob certUri2 = { sizeof(uriBuf2), uriBuf2 };
     ASSERT_EQ(CmInstallUserCert(&context, &userCert, &certAlias, CERT_STATUS_ENABLED, &certUri2), CM_SUCCESS);
     TrackInstalledUri(&certUri2);
-    EXPECT_EQ(strcmp((char *)uriBuf2, (char *)uriBuf), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(uriBuf2), reinterpret_cast<char *>(uriBuf)), 0);
 }
 
 /**
@@ -815,7 +834,7 @@ HWTEST_F(CmEngineServiceTest, CmInstallUserCertWithAlias_001, TestSize.Level0)
 HWTEST_F(CmEngineServiceTest, CmInstallUserCertEmptyAlias_001, TestSize.Level0)
 {
     struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
-    struct CmBlob userCert = { strlen(g_certData06), (uint8_t *)g_certData06 };
+    struct CmBlob userCert = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
     uint8_t emptyAlias[] = "";
     struct CmBlob certAlias = { sizeof(emptyAlias), emptyAlias };
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
@@ -824,7 +843,7 @@ HWTEST_F(CmEngineServiceTest, CmInstallUserCertEmptyAlias_001, TestSize.Level0)
     ASSERT_EQ(CmInstallUserCert(&context, &userCert, &certAlias, CERT_STATUS_ENABLED, &certUri), CM_SUCCESS);
     TrackInstalledUri(&certUri);
     /* the uri object is the base64url sha256 of the certificate, not the empty alias */
-    const std::string firstUri((char *)uriBuf);
+    const std::string firstUri(reinterpret_cast<char *>(uriBuf));
     EXPECT_EQ(firstUri.find("o=;"), std::string::npos);
     EXPECT_EQ(firstUri.rfind("oh:t=c;o=", 0), 0u);
 
@@ -833,7 +852,7 @@ HWTEST_F(CmEngineServiceTest, CmInstallUserCertEmptyAlias_001, TestSize.Level0)
     struct CmBlob certUri2 = { sizeof(uriBuf2), uriBuf2 };
     ASSERT_EQ(CmInstallUserCert(&context, &userCert, &certAlias, CERT_STATUS_ENABLED, &certUri2), CM_SUCCESS);
     TrackInstalledUri(&certUri2);
-    EXPECT_EQ(strcmp((char *)uriBuf2, (char *)uriBuf), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(uriBuf2), reinterpret_cast<char *>(uriBuf)), 0);
 
     /* a different certificate gets its own object name */
     struct CmBlob otherCert = { sizeof(g_certData01), const_cast<uint8_t *>(g_certData01) };
@@ -841,7 +860,7 @@ HWTEST_F(CmEngineServiceTest, CmInstallUserCertEmptyAlias_001, TestSize.Level0)
     struct CmBlob certUri3 = { sizeof(uriBuf3), uriBuf3 };
     ASSERT_EQ(CmInstallUserCert(&context, &otherCert, &certAlias, CERT_STATUS_ENABLED, &certUri3), CM_SUCCESS);
     TrackInstalledUri(&certUri3);
-    EXPECT_STRNE((char *)uriBuf3, (char *)uriBuf);
+    EXPECT_STRNE(reinterpret_cast<char *>(uriBuf3), reinterpret_cast<char *>(uriBuf));
 
     /* invalid certificate data is rejected before any storage access */
     uint8_t garbage[] = "garbage";
@@ -865,12 +884,12 @@ HWTEST_F(CmEngineServiceTest, CmUninstallUserCert_001, TestSize.Level0)
     const std::string uidDir = std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER) + "/" +
         std::to_string(TEST_SERVICE_UID);
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), installedUri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), installedUri.c_str()), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
 
     struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
     ASSERT_EQ(CmUninstallUserCert(&context, &certUri), CM_SUCCESS);
-    EXPECT_NE(CmIsFileExist(uidDir.c_str(), (char *)uriBuf), CMR_OK);
+    EXPECT_NE(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(uriBuf)), CMR_OK);
 
     /* the RDB row is gone */
     enum CmAuthStorageLevel level = CM_AUTH_STORAGE_LEVEL_EL1;
@@ -914,7 +933,7 @@ HWTEST_F(CmEngineServiceTest, CmUninstallAllUserCert_001, TestSize.Level0)
 
     /* both RDB rows are gone */
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), firstUri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), firstUri.c_str()), EOK);
     struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
     enum CmAuthStorageLevel level = CM_AUTH_STORAGE_LEVEL_EL1;
     ASSERT_EQ(GetRdbAuthStorageLevel(&certUri, &level), CM_SUCCESS);
@@ -935,7 +954,7 @@ HWTEST_F(CmEngineServiceTest, CmInstallMultiUserCert_001, TestSize.Level0)
     struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
     struct CmBlob userCert = g_p7bUserCert;
     uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
-    (void)strcpy_s((char *)aliasBuf, sizeof(aliasBuf), "MultiAlias");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), "MultiAlias"), EOK);
     struct CmBlob certAlias = { sizeof("MultiAlias"), aliasBuf };
 
     const uint32_t outSize = sizeof(uint32_t) + MULTI_CERT_MAX_COUNT * MAX_LEN_URI;
@@ -989,7 +1008,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceCheckAppPermission_001, TestSize.Level0)
 {
     struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), "oh:t=ak;o=shortcred;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), "oh:t=ak;o=shortcred;u=8899;a=889901"), EOK);
     struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
     uint8_t aliasBuf[MAX_LEN_BASE64URL_SHA256] = { 0 };
     struct CmBlob huksAlias = { sizeof(aliasBuf), aliasBuf };
@@ -1005,7 +1024,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceCheckAppPermission_001, TestSize.Level0)
 
     /* wrong uri type for the credential store */
     uint8_t wrongType[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)wrongType, sizeof(wrongType), "oh:t=c;o=alias;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(wrongType), sizeof(wrongType), "oh:t=c;o=alias;u=8899;a=889901"), EOK);
     struct CmBlob wrongTypeUri = { sizeof(wrongType), wrongType };
     EXPECT_EQ(CmServiceCheckAppPermission(&context, &wrongTypeUri, &hasPermission, &huksAlias),
         CMR_ERROR_INVALID_ARGUMENT_URI);
@@ -1013,7 +1032,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceCheckAppPermission_001, TestSize.Level0)
     /* producer uri: the alias is the common uri itself when it is short enough */
     ASSERT_EQ(CmServiceCheckAppPermission(&context, &keyUri, &hasPermission, &huksAlias), CM_SUCCESS);
     EXPECT_EQ(hasPermission, 1u);
-    EXPECT_EQ(strcmp((char *)aliasBuf, "oh:t=ak;o=shortcred;u=8899;a=889901"), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(aliasBuf), "oh:t=ak;o=shortcred;u=8899;a=889901"), 0);
 }
 
 /**
@@ -1029,7 +1048,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceCheckAppPermissionLongAlias_001, TestSize
     std::string longObject(70, 'x');
     std::string longUri = "oh:t=ak;o=" + longObject + ";u=8899;a=889901";
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), longUri.c_str());
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), longUri.c_str()), EOK);
     struct CmBlob keyUri = { longUri.size() + 1, uriBuf };
     uint8_t aliasBuf[MAX_LEN_BASE64URL_SHA256] = { 0 };
     struct CmBlob huksAlias = { sizeof(aliasBuf), aliasBuf };
@@ -1038,11 +1057,11 @@ HWTEST_F(CmEngineServiceTest, CmServiceCheckAppPermissionLongAlias_001, TestSize
     ASSERT_EQ(CmServiceCheckAppPermission(&context, &keyUri, &hasPermission, &huksAlias), CM_SUCCESS);
     EXPECT_EQ(hasPermission, 1u);
     EXPECT_LE(huksAlias.size, MAX_LEN_BASE64URL_SHA256);
-    EXPECT_STRNE((char *)aliasBuf, longUri.c_str());
+    EXPECT_STRNE(reinterpret_cast<char *>(aliasBuf), longUri.c_str());
 
     /* system key uri without the system app cert permission */
     uint8_t skUriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)skUriBuf, sizeof(skUriBuf), "oh:t=sk;o=syscred;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(skUriBuf), sizeof(skUriBuf), "oh:t=sk;o=syscred;u=8899;a=889901"), EOK);
     struct CmBlob sysUri = { sizeof(skUriBuf), skUriBuf };
     hasPermission = 0;
     (void)memset_s(aliasBuf, sizeof(aliasBuf), 0, sizeof(aliasBuf));
@@ -1053,7 +1072,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceCheckAppPermissionLongAlias_001, TestSize
     MockHapToken mockHap;
     ASSERT_EQ(CmServiceCheckAppPermission(&context, &sysUri, &hasPermission, &huksAlias), CM_SUCCESS);
     EXPECT_EQ(hasPermission, 1u);
-    EXPECT_EQ(strcmp((char *)aliasBuf, "oh:t=sk;o=syscred;u=8899;a=889901"), 0);
+    EXPECT_EQ(strcmp(reinterpret_cast<char *>(aliasBuf), "oh:t=sk;o=syscred;u=8899;a=889901"), 0);
 }
 
 /**
@@ -1068,8 +1087,8 @@ HWTEST_F(CmEngineServiceTest, CmServiceSetGetCertManagerConfig_001, TestSize.Lev
 
     struct CmConfigItem item;
     (void)memset_s(&item, sizeof(item), 0, sizeof(item));
-    (void)strcpy_s(item.key, sizeof(item.key), testKey);
-    (void)strcpy_s(item.value, sizeof(item.value), "on");
+    ASSERT_EQ(strcpy_s(item.key, sizeof(item.key), testKey), EOK);
+    ASSERT_EQ(strcpy_s(item.value, sizeof(item.value), "on"), EOK);
     struct CertManagerConfig config;
     (void)memset_s(&config, sizeof(config), 0, sizeof(config));
     config.count = 1;
@@ -1088,7 +1107,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceSetGetCertManagerConfig_001, TestSize.Lev
 
     /* query the specific key back */
     uint8_t keyBuf[MAX_LEN_CONFIG_KEY * 2] = { 0 };
-    (void)strcpy_s((char *)keyBuf, sizeof(keyBuf), testKey);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(keyBuf), sizeof(keyBuf), testKey), EOK);
     struct CmBlob keysBlob = { strlen(testKey) + 1, keyBuf };
     struct CertManagerConfig outConfig;
     (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
@@ -1100,7 +1119,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceSetGetCertManagerConfig_001, TestSize.Lev
 
     /* unknown key */
     uint8_t missBuf[MAX_LEN_CONFIG_KEY * 2] = { 0 };
-    (void)strcpy_s((char *)missBuf, sizeof(missBuf), "com.engine.ut.missing");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), "com.engine.ut.missing"), EOK);
     struct CmBlob missKeys = { strlen("com.engine.ut.missing") + 1, missBuf };
     (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
     ASSERT_EQ(CmServiceGetCertManagerConfig(&missKeys, &outConfig), CM_SUCCESS);
@@ -1201,7 +1220,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateMatch_001, TestSize.Level0
     FreeFindCertResult(&result);
 
     /* name filter narrows the result */
-    (void)strcpy_s(request.name, sizeof(request.name), "FindAliasTwo");
+    ASSERT_EQ(strcpy_s(request.name, sizeof(request.name), "FindAliasTwo"), EOK);
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
     ASSERT_EQ(result.count, 1u);
@@ -1210,7 +1229,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateMatch_001, TestSize.Level0
     (void)memset_s(request.name, sizeof(request.name), 0, sizeof(request.name));
 
     /* certId filter matches the uri object component */
-    (void)strcpy_s(request.certId, sizeof(request.certId), "FindAliasOne");
+    ASSERT_EQ(strcpy_s(request.certId, sizeof(request.certId), "FindAliasOne"), EOK);
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
     ASSERT_EQ(result.count, 1u);
@@ -1224,16 +1243,36 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateMatch_001, TestSize.Level0
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
     ASSERT_EQ(result.count, 1u);
     FreeFindCertResult(&result);
-    request.countLimit = 0;
+}
+
+/**
+ * @tc.name: CmServiceFindCertificateMatch_002
+ * @tc.desc: find certificate skips orphan rows and covers the current and global scope.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateMatch_002, TestSize.Level0)
+{
+    std::string firstUri;
+    std::string secondUri;
+    ASSERT_EQ(InstallUserCertWithAlias("FindAliasOne", firstUri), CM_SUCCESS);
+    ASSERT_EQ(InstallUserCertWithAlias("FindAliasTwo", secondUri), CM_SUCCESS);
+
+    struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
+    struct FindCertRequest request;
+    (void)memset_s(&request, sizeof(request), 0, sizeof(request));
+    request.scope = CM_FIND_CERT_SCOPE_CURRENT_USER;
+
+    struct FindCertResult result;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
 
     /* a row without a certificate file is skipped entirely */
     const char *orphanUri = "oh:t=c;o=orphanrow;u=8899;a=889901";
     struct CertProperty prop;
     (void)memset_s(&prop, sizeof(prop), 0, sizeof(prop));
-    (void)strcpy_s(prop.uri, sizeof(prop.uri), orphanUri);
-    (void)strcpy_s(prop.alias, sizeof(prop.alias), "orphan");
-    (void)strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject");
-    (void)strcpy_s(prop.certType, sizeof(prop.certType), "c");
+    ASSERT_EQ(strcpy_s(prop.uri, sizeof(prop.uri), orphanUri), EOK);
+    ASSERT_EQ(strcpy_s(prop.alias, sizeof(prop.alias), "orphan"), EOK);
+    ASSERT_EQ(strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject"), EOK);
+    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "c"), EOK);
     prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
     prop.userId = static_cast<int32_t>(TEST_SERVICE_USER);
     prop.uid = static_cast<int32_t>(TEST_SERVICE_UID);
@@ -1241,7 +1280,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateMatch_001, TestSize.Level0
     ASSERT_EQ(InsertCertProperty(&prop), CM_SUCCESS);
     g_installedUris.emplace_back(orphanUri);
 
-    (void)strcpy_s(request.name, sizeof(request.name), "orphan");
+    ASSERT_EQ(strcpy_s(request.name, sizeof(request.name), "orphan"), EOK);
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
     EXPECT_EQ(result.count, 0u);
@@ -1276,7 +1315,7 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetAuthorizedAppList_001, TestSize.Level0
     EXPECT_EQ(CmServiceIsAuthorizedApp(&context, &badUri), CMR_ERROR_INVALID_ARGUMENT);
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
-    (void)strcpy_s((char *)uriBuf, sizeof(uriBuf), "oh:t=ak;o=authcert;u=8899;a=889901");
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), "oh:t=ak;o=authcert;u=8899;a=889901"), EOK);
     struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
     uint8_t outAuthBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob outAuthUri = { sizeof(outAuthBuf), outAuthBuf };
