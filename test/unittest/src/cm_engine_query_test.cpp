@@ -93,8 +93,18 @@ void RemoveTree(const std::string &root)
 
 void MakeDirOrExists(const std::string &path)
 {
-    int32_t ret = CmMakeDir(path.c_str());
-    ASSERT_TRUE(ret == CMR_OK || ret == CMR_ERROR_ALREADY_EXISTS) << "mkdir failed for " << path;
+    /* CmMakeDir only creates the last level: walk down and create every missing level */
+    for (size_t i = 1; i <= path.size(); ++i) {
+        if (path[i - 1] != '/' && i != path.size()) {
+            continue;
+        }
+        std::string parent = path.substr(0, i);
+        if (parent.empty() || parent == "/") {
+            continue;
+        }
+        int32_t ret = CmMakeDir(parent.c_str());
+        ASSERT_TRUE(ret == CMR_OK || ret == CMR_ERROR_ALREADY_EXISTS) << "mkdir failed for " << parent;
+    }
 }
 
 struct CmContext BuildContext(uint32_t userId, uint32_t uid)
@@ -159,7 +169,7 @@ void QueryUserCaListPrepare(struct CertBlob **certBlob, struct CmMutableBlob *ce
     ASSERT_EQ(strcpy_s(prop.uri, sizeof(prop.uri), URI_WITH_CONF), EOK);
     ASSERT_EQ(strcpy_s(prop.alias, sizeof(prop.alias), "RdbAliasCert"), EOK);
     ASSERT_EQ(strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject"), EOK);
-    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap"), EOK);
+    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan"), EOK);
     prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
     prop.userId = static_cast<int32_t>(TEST_QUERY_USER);
     prop.uid = static_cast<int32_t>(TEST_QUERY_UID1);
@@ -279,7 +289,7 @@ HWTEST_F(CmEngineQueryTest, CmGetCertPathListMultiUid_001, TestSize.Level0)
 
 /**
  * @tc.name: CmGetCertPathListUnsupportedStore_001
- * @tc.desc: system store is not a user level store and is rejected by the path list builder.
+ * @tc.desc: a store outside the known set is rejected by the path list builder.
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineQueryTest, CmGetCertPathListUnsupportedStore_001, TestSize.Level0)
@@ -287,7 +297,8 @@ HWTEST_F(CmEngineQueryTest, CmGetCertPathListUnsupportedStore_001, TestSize.Leve
     struct CmContext context = BuildContext(TEST_QUERY_USER, TEST_QUERY_UID1);
     struct CmMutableBlob pathList = { 0, nullptr };
 
-    EXPECT_EQ(CmGetCertPathList(&context, CM_SYSTEM_TRUSTED_STORE, &pathList),
+    /* every known store maps to a root path: only an unknown value is rejected */
+    EXPECT_EQ(CmGetCertPathList(&context, 99, &pathList),
         CMR_ERROR_INVALID_ARGUMENT_STORE_TYPE);
     EXPECT_EQ(pathList.data, nullptr);
 }
@@ -508,7 +519,7 @@ HWTEST_F(CmEngineQueryTest, CmGetCertAlias_001, TestSize.Level0)
     ASSERT_EQ(strcpy_s(prop.uri, sizeof(prop.uri), URI_RDB_ALIAS), EOK);
     ASSERT_EQ(strcpy_s(prop.alias, sizeof(prop.alias), "MyRdbAlias"), EOK);
     ASSERT_EQ(strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject"), EOK);
-    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap"), EOK);
+    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan"), EOK);
     prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
     prop.userId = static_cast<int32_t>(TEST_QUERY_USER);
     prop.uid = static_cast<int32_t>(TEST_QUERY_UID1);
@@ -632,7 +643,7 @@ HWTEST_F(CmEngineQueryTest, GetRdbAuthStorageLevel_001, TestSize.Level0)
     ASSERT_EQ(strcpy_s(prop.uri, sizeof(prop.uri), URI_RDB_LEVEL), EOK);
     ASSERT_EQ(strcpy_s(prop.alias, sizeof(prop.alias), "levelcert"), EOK);
     ASSERT_EQ(strcpy_s(prop.subjectName, sizeof(prop.subjectName), "subject"), EOK);
-    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan_eap"), EOK);
+    ASSERT_EQ(strcpy_s(prop.certType, sizeof(prop.certType), "wlan"), EOK);
     prop.certStore = static_cast<int32_t>(CM_USER_TRUSTED_STORE);
     prop.userId = static_cast<int32_t>(TEST_QUERY_USER);
     prop.uid = static_cast<int32_t>(TEST_QUERY_UID1);

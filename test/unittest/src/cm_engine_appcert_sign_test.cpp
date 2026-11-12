@@ -45,6 +45,9 @@ constexpr uint32_t TEST_APPCERT_USER = 8899;
 constexpr uint32_t TEST_APPCERT_UID = 889901;
 constexpr uint32_t TEST_APPCERT_OTHER_UID = 889902;
 constexpr uint32_t TEST_APPCERT_THIRD_UID = 889903;
+/* EL2 key imports carry the uri user into HUKS, which only accepts an existing
+ * foreground device user for the across-accounts check */
+constexpr uint32_t TEST_APPCERT_FRONT_USER = 100;
 constexpr int NFTW_MAX_OPEN_FDS = 16;
 constexpr uint32_t RSA2048_SIGNATURE_LEN = 256;
 constexpr uint32_t AUTH_UID_CAPACITY = 8;
@@ -309,7 +312,8 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredAppCert_002, TestSize.Level0)
     EXPECT_GE(fileCount, 1u);
     bool seen = false;
     for (uint32_t i = 0; i < fileCount; i++) {
-        seen = seen || (strstr(reinterpret_cast<char *>(fileNames[i].data), reinterpret_cast<char *>(uriBuf)) != nullptr);
+        seen = seen || (strstr(reinterpret_cast<char *>(fileNames[i].data),
+            reinterpret_cast<char *>(uriBuf)) != nullptr);
     }
     EXPECT_TRUE(seen);
     CmFreeFileNames(fileNames, MAX_COUNT_CERTIFICATE);
@@ -417,15 +421,17 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallAppCertInvalid_001, TestSize.Level0
 HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
 {
     MockHapToken mockHap;
-    struct CmContext context = BuildContext(TEST_APPCERT_USER, TEST_APPCERT_UID);
+    /* EL2 installs import the key under the uri user: use the real front user
+       instead of the synthetic one so the HUKS across-accounts check passes */
+    struct CmContext context = BuildContext(TEST_APPCERT_FRONT_USER, TEST_APPCERT_UID);
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
-    const std::string uidDir = std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_USER) +
+    const std::string uidDir = std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_FRONT_USER) +
         "/" + std::to_string(TEST_APPCERT_UID);
 
     ASSERT_EQ(InstallP12Cert("EnginePri", CM_PRI_CREDENTIAL_STORE, INIT_INVALID_VALUE,
         CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CM_SUCCESS);
-    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf)), "oh:t=ak;o=EnginePri;u=8899;a=889901");
+    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf)), "oh:t=ak;o=EnginePri;u=100;a=889901");
     EXPECT_EQ(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(uriBuf)), CMR_OK);
 
     enum CmAuthStorageLevel level = static_cast<enum CmAuthStorageLevel>(ERROR_LEVEL);
@@ -443,7 +449,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
     certBlob.size = 0;
 
     /* a privileged non producer caller is allowed to read it too */
-    struct CmContext otherContext = BuildContext(TEST_APPCERT_USER, TEST_APPCERT_OTHER_UID);
+    struct CmContext otherContext = BuildContext(TEST_APPCERT_FRONT_USER, TEST_APPCERT_OTHER_UID);
     struct CmBlob uriCopy2 = { sizeof(uriBuf), uriBuf };
     ASSERT_EQ(CmServiceGetAppCert(&otherContext, CM_PRI_CREDENTIAL_STORE, &uriCopy2, &certBlob),
         CM_SUCCESS);
@@ -455,11 +461,14 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
     /* a caller with only the common permission is rejected */
     {
         MockHapToken commonOnly(COMMON_ONLY_PERMS);
-        struct CmContext noPermContext = BuildContext(TEST_APPCERT_USER, TEST_APPCERT_OTHER_UID);
+        struct CmContext noPermContext = BuildContext(TEST_APPCERT_FRONT_USER, TEST_APPCERT_OTHER_UID);
         struct CmBlob uriCopy3 = { sizeof(uriBuf), uriBuf };
         EXPECT_EQ(CmServiceGetAppCert(&noPermContext, CM_PRI_CREDENTIAL_STORE, &uriCopy3, &certBlob),
             CMR_ERROR_PERMISSION_DENIED);
     }
+
+    /* the scoped token removed the process token: restore the full permission set */
+    MockHapToken mockHapAgain;
 
     /* re-installing with another level removes the old credential first */
     ASSERT_EQ(InstallP12Cert("EnginePri", CM_PRI_CREDENTIAL_STORE, INIT_INVALID_VALUE,
@@ -615,12 +624,12 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
     uint8_t tamperedBuf[MAX_LEN_URI] = { 0 };
     ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(tamperedBuf), sizeof(tamperedBuf), tampered.c_str()), EOK);
     struct CmBlob tamperedUri = { tampered.size() + 1, tamperedBuf };
-    EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &tamperedUri),
-        CMR_ERROR_AUTH_FAILED_MAC_MISMATCH);
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &tamperedUri), CMR_ERROR_AUTH_FAILED_MAC_MISMATCH);
 
     /* an uri without client app and mac is not an auth uri */
     uint8_t plainBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(plainBuf), sizeof(plainBuf), "oh:t=ak;o=EngineGrant;u=0;a=889901"), EOK);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(plainBuf), sizeof(plainBuf),
+        "oh:t=ak;o=EngineGrant;u=0;a=889901"), EOK);
     struct CmBlob plainUri = { strlen(reinterpret_cast<char *>(plainBuf)) + 1, plainBuf };
     EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &plainUri), CMR_ERROR_INVALID_ARGUMENT_URI);
 
@@ -631,12 +640,14 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
     ASSERT_EQ(CmServiceGetAuthorizedAppList(&context, &keyUri, &appUidList), CM_SUCCESS);
     EXPECT_EQ(appUidList.appUidCount, 0u);
 
-    /* after the revocation the auth uri no longer authorizes */
-    EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &authUri), CMR_ERROR_AUTH_FAILED_MAC_MISMATCH);
+    /* after the revocation the auth uri no longer authorizes: the grant removal
+       deleted the mac key, so the mac calculation itself fails */
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &authUri), CMR_ERROR_AUTH_FAILED_MAC_FAILED);
 
     /* granting for a missing credential fails */
     uint8_t missingBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missingBuf), sizeof(missingBuf), "oh:t=ak;o=EngineMissing;u=0;a=889901"), EOK);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missingBuf), sizeof(missingBuf),
+        "oh:t=ak;o=EngineMissing;u=0;a=889901"), EOK);
     struct CmBlob missingUri = { strlen(reinterpret_cast<char *>(missingBuf)) + 1, missingBuf };
     uint8_t outBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob outAuthUri = { sizeof(outBuf), outBuf };
@@ -692,14 +703,14 @@ HWTEST_F(CmEngineAppCertTest, CmEngineSignVerifyCred_001, TestSize.Level0)
     EXPECT_EQ(CmServiceFinish(&context, &handle, &sigIn, &verifyOut), CM_SUCCESS);
     EXPECT_EQ(CmServiceAbort(&context, &handle), CM_SUCCESS);
 
-    /* a modified signature fails the verification */
+    /* a modified signature fails the verification inside the key finish step */
     signature.data[0] = static_cast<uint8_t>(signature.data[0] ^ 0x01);
     handleValue = 0;
     ASSERT_EQ(CmServiceInit(&context, &keyUri, &spec, &handle), CM_SUCCESS);
     ASSERT_EQ(CmServiceUpdate(&context, &handle, &message), CM_SUCCESS);
     sigIn = { signature.size, signature.data };
     verifyOut = { 0, nullptr };
-    EXPECT_EQ(CmServiceFinish(&context, &handle, &sigIn, &verifyOut), CMR_ERROR_KEY_OPERATION_FAILED);
+    EXPECT_EQ(CmServiceFinish(&context, &handle, &sigIn, &verifyOut), CMR_ERROR_KEY_FINISH_FAILED);
     EXPECT_EQ(CmServiceAbort(&context, &handle), CM_SUCCESS);
 
     ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
@@ -777,6 +788,8 @@ HWTEST_F(CmEngineAppCertTest, CmEngineRemoveAllAppCert_001, TestSize.Level0)
         EXPECT_EQ(CmRemoveAllAppCert(&context), CMR_ERROR_PERMISSION_DENIED);
     }
 
+    /* the scoped token removed the process token: restore the full permission set */
+    MockHapToken mockHapAgain;
     ASSERT_EQ(CmRemoveAllAppCert(&context), CM_SUCCESS);
 
     const std::string priDir = std::string(PRI_CREDNTIAL_STORE) + std::to_string(TEST_APPCERT_USER) +

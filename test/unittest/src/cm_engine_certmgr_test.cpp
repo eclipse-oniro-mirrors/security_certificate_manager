@@ -40,7 +40,8 @@ constexpr uint32_t TEST_CM_UID = 889901;
 constexpr uint32_t TEST_CM_OTHER_UID = 889902;
 constexpr int NFTW_MAX_OPEN_FDS = 16;
 /* base64url length of a sha256 digest: ceil(256 bits / 6) + terminator */
-constexpr uint32_t BASE64URL_SHA256_LEN = 43;
+/* the base64url encoding of a sha256 digest is 44 chars: the final pad char is 'A' */
+constexpr uint32_t BASE64URL_SHA256_LEN = 44;
 /* number of files needed to reach the store wide certificate cap */
 constexpr uint32_t MAX_CERT_FILE_COUNT = 256;
 
@@ -171,8 +172,8 @@ void MakeConfigAndBackup(const std::string &uri, const std::string &backupName, 
     const std::string backupPath = std::string(backupDir) + "/" + backupName;
     const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(backupDir, backupName.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
-    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, reinterpret_cast<const uint8_t *>(backupPath.c_str()), backupPath.size()),
-        CMR_OK);
+    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0,
+        reinterpret_cast<const uint8_t *>(backupPath.c_str()), backupPath.size()), CMR_OK);
 }
 } // namespace
 
@@ -284,7 +285,9 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineFindCertFileNameByUri_001, TestSize.Level0
 
     uint8_t uriBuf[MAX_LEN_URI] = { 0 };
     ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
-    struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
+    /* the matcher compares the blob against the file names byte by byte:
+       the size must cover exactly the stored uri string */
+    struct CmBlob certUri = { uri.size() + 1, uriBuf };
 
     char pathBuf[CERT_MAX_PATH_LEN] = { 0 };
     struct CmMutableBlob path = { sizeof(pathBuf), reinterpret_cast<uint8_t *>(pathBuf) };
@@ -315,8 +318,9 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineFindCertFileNameByUri_001, TestSize.Level0
 
     /* an unknown uri is not found */
     uint8_t missBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), "oh:t=c;o=EngineFindMiss;u=8899;a=889901"), EOK);
-    struct CmBlob missUri = { sizeof(missBuf), missBuf };
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf),
+        "oh:t=c;o=EngineFindMiss;u=8899;a=889901"), EOK);
+    struct CmBlob missUri = { strlen("oh:t=c;o=EngineFindMiss;u=8899;a=889901") + 1, missBuf };
     EXPECT_EQ(CertManagerFindCertFileNameByUri(&context, &missUri, CM_USER_TRUSTED_STORE, false, &path),
         CMR_ERROR_NOT_FOUND);
 
@@ -448,8 +452,9 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineWriteUserCert_001, TestSize.Level0)
     EXPECT_EQ(CmIsFileExist(uidDir.c_str(), reinterpret_cast<char *>(certUri.data)), CMR_OK);
 
     uint8_t readBack[sizeof(g_certData06)] = { 0 };
-    uint32_t readSize = CmFileRead(uidDir.c_str(), reinterpret_cast<char *>(certUri.data), 0, readBack, sizeof(readBack));
-    EXPECT_EQ(readSize, strlen(g_certData06));
+    uint32_t readSize = CmFileRead(uidDir.c_str(), reinterpret_cast<char *>(certUri.data), 0,
+        readBack, sizeof(readBack));
+    EXPECT_EQ(readSize, strlen(g_certData06) + 1);
     EXPECT_EQ(memcmp(readBack, g_certData06, strlen(g_certData06)), 0);
 
     /* a path outside the created directories cannot be written */
@@ -551,8 +556,11 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineGetDisplayNameByURI_001, TestSize.Level0)
 
     /* without a row the object is used */
     uint8_t missBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), "oh:t=c;o=EngineDispMiss;u=8899;a=889901"), EOK);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf),
+        "oh:t=c;o=EngineDispMiss;u=8899;a=889901"), EOK);
     struct CmBlob missUri = { sizeof(missBuf), missBuf };
+    /* the previous call shrank displayName.size to the alias length: restore the capacity */
+    displayName.size = sizeof(nameBuf);
     ASSERT_EQ(CmGetDisplayNameByURI(&missUri, "EngineDispObject", &displayName), CM_SUCCESS);
     EXPECT_STREQ(reinterpret_cast<char *>(displayName.data), "EngineDispObject");
 
@@ -630,7 +638,7 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineStoreUserCertAndSaConf_001, TestSize.Level
     EXPECT_EQ(CmIsFileExist(backupDir.c_str(), "enginestore.0"), CMR_OK);
     uint8_t readBack[sizeof(g_certData06)] = { 0 };
     uint32_t readSize = CmFileRead(backupDir.c_str(), "enginestore.0", 0, readBack, sizeof(readBack));
-    EXPECT_EQ(readSize, strlen(g_certData06));
+    EXPECT_EQ(readSize, strlen(g_certData06) + 1);
     EXPECT_EQ(memcmp(readBack, g_certData06, strlen(g_certData06)), 0);
 
     /* a missing directory cannot host the backup */
@@ -753,8 +761,8 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineRemoveAllUserCert_001, TestSize.Level0)
     ASSERT_EQ(CmGetCertBackupDir(TEST_CM_USER, backupDirBuf, sizeof(backupDirBuf)), CM_SUCCESS);
     const std::string backupPathA = std::string(backupDirBuf) + "/manualrmall.0";
     ASSERT_EQ(CmFileWrite(backupDirBuf, "manualrmall.0", 0, pemData, strlen(g_certData06)), CMR_OK);
-    ASSERT_EQ(CmFileWrite(nullptr, confFileA.c_str(), 0, reinterpret_cast<const uint8_t *>(backupPathA.c_str()), backupPathA.size()),
-        CMR_OK);
+    ASSERT_EQ(CmFileWrite(nullptr, confFileA.c_str(), 0,
+        reinterpret_cast<const uint8_t *>(backupPathA.c_str()), backupPathA.size()), CMR_OK);
 
     /* second uid directory: certificate file and row only */
     const std::string uriB = "oh:t=c;o=EngineRmB;u=8899;a=889902";

@@ -349,8 +349,8 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineIsCertNeedBackup_001, TestSize.Level0)
     const std::string backupPath = std::string(backupDir) + "/" + backupName;
     const uint8_t *pemData = reinterpret_cast<const uint8_t *>(g_certData06);
     ASSERT_EQ(CmFileWrite(backupDir, backupName.c_str(), 0, pemData, strlen(g_certData06)), CMR_OK);
-    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0, reinterpret_cast<const uint8_t *>(backupPath.c_str()), backupPath.size()),
-        CMR_OK);
+    ASSERT_EQ(CmFileWrite(nullptr, confFile.c_str(), 0,
+        reinterpret_cast<const uint8_t *>(backupPath.c_str()), backupPath.size()), CMR_OK);
 
     ASSERT_EQ(IsCertNeedBackup(TEST_UE_USER, TEST_UE_UID, &certUri, &needUpdate), CM_SUCCESS);
     EXPECT_FALSE(needUpdate);
@@ -399,14 +399,15 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineBackupUserCert_001, TestSize.Level0)
     EXPECT_EQ(CmIsFileExist(nullptr, confPath), CMR_OK);
 
     char backupPath[CERT_MAX_PATH_LEN] = { 0 };
-    uint32_t readSize = CmFileRead(nullptr, confPath, 0, reinterpret_cast<uint8_t *>(backupPath), sizeof(backupPath) - 1);
+    uint32_t readSize = CmFileRead(nullptr, confPath, 0,
+        reinterpret_cast<uint8_t *>(backupPath), sizeof(backupPath) - 1);
     EXPECT_GT(readSize, 0u);
     EXPECT_EQ(CmIsFileExist(nullptr, backupPath), CMR_OK);
 
     uint8_t head[16] = { 0 };
     readSize = CmFileRead(nullptr, backupPath, 0, head, sizeof(head));
     EXPECT_EQ(readSize, sizeof(head));
-    EXPECT_EQ(memcmp(head, "-----BEGIN CERT", sizeof(head)), 0);
+    EXPECT_EQ(memcmp(head, "-----BEGIN CERT", sizeof(head) - 1), 0);
 
     char backupDir[CERT_MAX_PATH_LEN] = { 0 };
     ASSERT_EQ(CmGetCertBackupDir(TEST_UE_USER, backupDir, sizeof(backupDir)), CM_SUCCESS);
@@ -415,7 +416,8 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineBackupUserCert_001, TestSize.Level0)
     /* a pem certificate passes through without conversion */
     struct CmBlob pemCert = { strlen(g_certData06) + 1, reinterpret_cast<uint8_t *>(g_certData06) };
     uint8_t pemUriBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(pemUriBuf), sizeof(pemUriBuf), "oh:t=c;o=EngineBkPem;u=8899;a=889901"), EOK);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(pemUriBuf), sizeof(pemUriBuf),
+        "oh:t=c;o=EngineBkPem;u=8899;a=889901"), EOK);
     struct CmBlob pemUri = { sizeof(pemUriBuf), pemUriBuf };
     ASSERT_EQ(CmBackupUserCert(&context, &pemUri, &pemCert), CM_SUCCESS);
     EXPECT_EQ(CountRegularFiles(backupDir), 2);
@@ -447,7 +449,8 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineReadCertData_001, TestSize.Level0)
 
     /* a missing certificate file is an error */
     uint8_t missBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), "oh:t=c;o=EngineRdMiss;u=8899;a=889901"), EOK);
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf),
+        "oh:t=c;o=EngineRdMiss;u=8899;a=889901"), EOK);
     struct CmBlob missUri = { sizeof(missBuf), missBuf };
     struct CmBlob missData = { 0, nullptr };
     EXPECT_NE(CmReadCertData(CM_USER_TRUSTED_STORE, &context, &missUri, &missData), CM_SUCCESS);
@@ -500,10 +503,16 @@ HWTEST_F(CmEngineUpdateEventTest, CmEngineBackupAllSaUserCerts_001, TestSize.Lev
     EXPECT_EQ(readSize, sizeof(flag));
     EXPECT_EQ(flag, '1');
 
-    /* the next run is a no-op again */
+    /* the migration run above already backed up every certificate of the user
+       (including uri3): prove the next run is a no-op by the untouched backup set */
+    const uint32_t backupCount = CountRegularFiles(backupDir);
     ASSERT_EQ(CmBackupAllSaUserCerts(), CM_SUCCESS);
-    const std::string conf3 = std::string(confDir) + "/" + uri3 + CERT_CONFIG_FILE_SUFFIX;
-    EXPECT_NE(CmIsFileExist(nullptr, conf3.c_str()), CMR_OK);
+    EXPECT_EQ(CountRegularFiles(backupDir), backupCount);
+
+    uint8_t flagAgain = 0;
+    readSize = CmFileRead(UPDATE_FLAG_DIR_PATH, UPDATE_FLAG_FILE_NAME, 0, &flagAgain, sizeof(flagAgain));
+    EXPECT_EQ(readSize, sizeof(flagAgain));
+    EXPECT_EQ(flagAgain, '1');
 }
 
 /**

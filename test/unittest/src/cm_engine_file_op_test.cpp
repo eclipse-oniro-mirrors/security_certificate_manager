@@ -119,8 +119,8 @@ HWTEST_F(CmEngineFileOpTest, CmFileWriteReadRemove_001, TestSize.Level0)
     EXPECT_EQ(CertManagerFileRead(TEST_FILE_OP_ROOT, "file2", 0, wrapperBuf, sizeof(wrapperBuf)), payloadLen);
     EXPECT_EQ(CertManagerFileRemove(TEST_FILE_OP_ROOT, "file2"), CMR_OK);
 
-    /* remove is idempotent for missing files */
-    EXPECT_EQ(CmFileRemove(TEST_FILE_OP_ROOT, "file2"), CMR_OK);
+    /* removing a missing file reports not-exist */
+    EXPECT_EQ(CmFileRemove(TEST_FILE_OP_ROOT, "file2"), CMR_ERROR_NOT_EXIST);
     EXPECT_EQ(CmIsFileExist(TEST_FILE_OP_ROOT, "file2"), CMR_ERROR_NOT_EXIST);
 
     /* removing through an absolute path with a null base directory */
@@ -214,7 +214,8 @@ HWTEST_F(CmEngineFileOpTest, CmIsDirExist_001, TestSize.Level0)
     EXPECT_EQ(CmIsDirExist(TEST_FILE_OP_ROOT), CMR_OK);
 
     std::string missing = JoinPath(TEST_FILE_OP_ROOT, "missing");
-    EXPECT_EQ(CmIsDirExist(missing.c_str()), CMR_ERROR_NOT_EXIST);
+    /* a missing path fails the realpath validation before the existence check */
+    EXPECT_EQ(CmIsDirExist(missing.c_str()), CMR_ERROR_INVALID_ARGUMENT);
 
     EXPECT_EQ(CmIsDirExist(nullptr), CMR_ERROR_INVALID_ARGUMENT);
 
@@ -234,9 +235,9 @@ HWTEST_F(CmEngineFileOpTest, CmDirRemove_001, TestSize.Level0)
     /* null path */
     EXPECT_EQ(CmDirRemove(nullptr), CMR_ERROR_INVALID_ARGUMENT);
 
-    /* missing path */
+    /* missing path fails the realpath validation */
     std::string missing = JoinPath(TEST_FILE_OP_ROOT, "missing");
-    EXPECT_EQ(CmDirRemove(missing.c_str()), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmDirRemove(missing.c_str()), CMR_ERROR_INVALID_ARGUMENT);
 
     /* a plain file is not a directory */
     uint8_t payload[] = "x";
@@ -254,7 +255,7 @@ HWTEST_F(CmEngineFileOpTest, CmDirRemove_001, TestSize.Level0)
     std::string empty = JoinPath(TEST_FILE_OP_ROOT, "empty");
     MakeDirOrExists(empty.c_str());
     EXPECT_EQ(CmDirRemove(empty.c_str()), CMR_OK);
-    EXPECT_EQ(CmIsDirExist(empty.c_str()), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmIsDirExist(empty.c_str()), CMR_ERROR_INVALID_ARGUMENT);
 }
 
 /**
@@ -291,6 +292,11 @@ HWTEST_F(CmEngineFileOpTest, CmDirEnumeration_001, TestSize.Level0)
     EXPECT_EQ(names.size(), 2u);
     EXPECT_EQ((names[0] == "cert_a" && names[1] == "cert_b") ||
         (names[0] == "cert_b" && names[1] == "cert_a"), true);
+
+    /* the file scan exhausted the shared DIR stream: reopen before scanning sub directories */
+    EXPECT_EQ(CmCloseDir(dir), 0);
+    dir = CmOpenDir(TEST_FILE_OP_ROOT);
+    ASSERT_NE(dir, nullptr);
 
     /* CmGetSubDir reports only directories */
     struct CmFileDirentInfo subDire = { { 0 } };

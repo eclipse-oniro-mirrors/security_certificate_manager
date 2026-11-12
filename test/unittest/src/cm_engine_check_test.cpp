@@ -172,7 +172,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetSystemCertListCheck_001, TestSize.Level0
 
     /* a hap without any permission is rejected */
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceGetSystemCertListCheck(CM_SYSTEM_TRUSTED_STORE), CMR_ERROR_PERMISSION_DENIED);
     }
 
@@ -204,7 +204,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetSystemCertCheck_001, TestSize.Level0)
     EXPECT_EQ(CmServiceGetSystemCertCheck(CM_SYSTEM_TRUSTED_STORE, nullptr), CMR_ERROR_INVALID_ARGUMENT_URI);
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceGetSystemCertCheck(CM_SYSTEM_TRUSTED_STORE, &uri), CMR_ERROR_PERMISSION_DENIED);
     }
 
@@ -230,7 +230,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceSetCertStatusCheck_001, TestSize.Level0)
     EXPECT_EQ(CmServiceSetCertStatusCheck(CM_SYSTEM_TRUSTED_STORE, &uri, 2), CMR_ERROR_INVALID_ARGUMENT_STATUS);
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceSetCertStatusCheck(CM_SYSTEM_TRUSTED_STORE, &uri, 0), CMR_ERROR_PERMISSION_DENIED);
     }
 
@@ -457,7 +457,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceInstallAppCertCheck_004, TestSize.Level0)
 
     /* permission and system app gating */
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         struct CmContext ctx = BuildContext(0, TEST_CHECK_UID);
         struct CmAppCertParam p = BuildAppCertParam(&appCert, &appCertPwd, &certAlias,
             CM_CREDENTIAL_STORE, 0, FILE_P12, nullptr);
@@ -490,7 +490,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceUninstallAppCertCheck_001, TestSize.Level0)
         CMR_ERROR_INVALID_ARGUMENT_URI);
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         struct CmContext ctx = BuildContext(0, TEST_CHECK_UID);
         EXPECT_EQ(CmServiceUninstallAppCertCheck(&ctx, CM_CREDENTIAL_STORE, &keyUri),
             CMR_ERROR_PERMISSION_DENIED);
@@ -585,7 +585,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetAppCertListCheck_001, TestSize.Level0)
 
     struct CmContext hapCtx = BuildContext(TEST_CHECK_USER, TEST_CHECK_UID);
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceGetAppCertListCheck(&hapCtx, CM_SYS_CREDENTIAL_STORE), CMR_ERROR_PERMISSION_DENIED);
         EXPECT_EQ(CmServiceGetAppCertListCheck(&hapCtx, CM_CREDENTIAL_STORE), CMR_ERROR_PERMISSION_DENIED);
     }
@@ -620,7 +620,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetCallingAppCertListCheck_001, TestSize.Le
 
     struct CmContext hapCtx = BuildContext(TEST_CHECK_USER, TEST_CHECK_UID);
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceGetCallingAppCertListCheck(&hapCtx, CM_SYS_CREDENTIAL_STORE),
             CMR_ERROR_PERMISSION_DENIED);
         EXPECT_EQ(CmServiceGetCallingAppCertListCheck(&hapCtx, CM_PRI_CREDENTIAL_STORE),
@@ -672,7 +672,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetAppCertCheck_001, TestSize.Level0)
         CMR_ERROR_INVALID_ARGUMENT_URI);
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         struct CmContext noPermCtx = BuildContext(0, TEST_CHECK_UID);
         EXPECT_EQ(CmServiceGetAppCertCheck(&noPermCtx, CM_CREDENTIAL_STORE, &credUri),
             CMR_ERROR_PERMISSION_DENIED);
@@ -755,8 +755,10 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetUserCertInfoCheck_001, TestSize.Level0)
     EXPECT_EQ(CmServiceGetUserCertInfoCheck(&ctx, &nonNumeric, CM_URI_TYPE_CERTIFICATE, false),
         CMR_ERROR_INVALID_ARGUMENT_URI);
 
-    /* an unsupported uri type maps to the store type error */
-    EXPECT_EQ(CmServiceGetUserCertInfoCheck(&ctx, &validUri, CM_URI_TYPE_APP_KEY, false),
+    /* an app key uri type maps to the store type error once the uri type matches */
+    uint8_t appKeyUriBuf[] = "oh:t=ak;o=alias;u=8899;a=889901";
+    struct CmBlob appKeyUri = { sizeof(appKeyUriBuf), appKeyUriBuf };
+    EXPECT_EQ(CmServiceGetUserCertInfoCheck(&ctx, &appKeyUri, CM_URI_TYPE_APP_KEY, false),
         CMR_ERROR_INVALID_ARGUMENT_STORE_TYPE);
 }
 
@@ -912,7 +914,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceInstallUserCertCheck_002, TestSize.Level0)
 
     {
         /* without any trusted permission the install is denied */
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceInstallUserCertCheck(&ctx, &userCert, &certAlias, 0, PEM_DER),
             CMR_ERROR_PERMISSION_DENIED);
     }
@@ -982,7 +984,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceUninstallUserCertCheck_001, TestSize.Level0
 
     {
         /* without any trusted permission the uninstall is denied */
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceUninstallUserCertCheck(&ctx, &validUri), CMR_ERROR_PERMISSION_DENIED);
     }
 }
@@ -1003,7 +1005,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceSetUserCertStatusCheck_001, TestSize.Level0
     struct CmContext ctx = BuildContext(0, TEST_CHECK_UID);
     {
         /* without any permission the status change is denied */
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceSetUserCertStatusCheck(&ctx, &validUri), CMR_ERROR_PERMISSION_DENIED);
     }
 
@@ -1062,7 +1064,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceSetCertManagerConfigCheck_001, TestSize.Lev
 {
     {
         /* the privileged permission is checked first */
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceSetCertManagerConfigCheck(nullptr), CMR_ERROR_PERMISSION_DENIED);
     }
 
@@ -1156,7 +1158,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceGetCertManagerConfigCheck_001, TestSize.Lev
     struct CmBlob keys = { sizeof(keysBuf), keysBuf };
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceGetCertManagerConfigCheck(&keys), CMR_ERROR_PERMISSION_DENIED);
     }
 
@@ -1239,7 +1241,7 @@ HWTEST_F(CmEngineCheckTest, CmServiceFindCertCheck_001, TestSize.Level0)
     request.certTypes = certTypes;
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmServiceFindCertCheck(&ctx, &request), CMR_ERROR_PERMISSION_DENIED);
     }
 
@@ -1292,7 +1294,7 @@ HWTEST_F(CmEngineCheckTest, CmPermissionCheck_001, TestSize.Level0)
     }
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_FALSE(CmPermissionCheck(CM_CREDENTIAL_STORE));
         EXPECT_FALSE(CmPermissionCheck(CM_PRI_CREDENTIAL_STORE));
         EXPECT_FALSE(CmPermissionCheck(CM_SYS_CREDENTIAL_STORE));
@@ -1323,7 +1325,7 @@ HWTEST_F(CmEngineCheckTest, CmHasGetCAPermission_001, TestSize.Level0)
     }
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_EQ(CmHasGetCAPermission(CM_SYSTEM_TRUSTED_STORE), CMR_ERROR_PERMISSION_DENIED);
         EXPECT_EQ(CmHasGetCAPermission(CM_USER_TRUSTED_STORE), CMR_ERROR_PERMISSION_DENIED);
         EXPECT_EQ(CmHasGetCAPermission(CM_CREDENTIAL_STORE), CMR_ERROR_INVALID_ARGUMENT);
@@ -1384,7 +1386,7 @@ HWTEST_F(CmEngineCheckTest, CmHasPermission_001, TestSize.Level0)
     }
 
     {
-        MockHapToken noPerm;
+        MockHapToken noPerm({});
         EXPECT_FALSE(CmHasPrivilegedPermission());
         EXPECT_FALSE(CmHasCommonPermission());
         EXPECT_FALSE(CmHasUserTrustedPermission());

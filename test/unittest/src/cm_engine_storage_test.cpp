@@ -266,6 +266,7 @@ HWTEST_F(CmEngineStorageTest, CmStorageGetBuf_001, TestSize.Level0)
 
     /* an oversized file is rejected before allocation */
     std::string oversized = JoinPath(uidPath, "oversized");
+    ASSERT_EQ(CmFileWrite(uidPath, "oversized", 0, payload, payloadLen), CMR_OK);
     ASSERT_EQ(truncate(oversized.c_str(), OVERSIZED_FILE_LEN), 0);
     EXPECT_EQ(CmStorageGetBuf(uidPath, "oversized", &storageBuf), CMR_ERROR_STORAGE);
     (void)CmFileRemove(uidPath, "oversized");

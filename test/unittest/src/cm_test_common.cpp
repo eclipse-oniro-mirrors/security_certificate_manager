@@ -76,7 +76,10 @@ const std::vector<std::string> PERMISSION_LIST = {
     "ohos.permission.ACCESS_CERT_MANAGER",
     "ohos.permission.ACCESS_USER_TRUSTED_CERT",
     "ohos.permission.ACCESS_SYSTEM_APP_CERT",
-    "ohos.permission.CRYPTO_EXTENSION_REGISTER"
+    "ohos.permission.CRYPTO_EXTENSION_REGISTER",
+    /* EL2 (HUKS CE level) imports carry HKS_TAG_SPECIFIC_USER_ID and require
+       the across-accounts sensitive permission on the caller token */
+    "ohos.permission.INTERACT_ACROSS_LOCAL_ACCOUNTS"
 };
 }
 

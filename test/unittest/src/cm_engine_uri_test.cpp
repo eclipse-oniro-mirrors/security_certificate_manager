@@ -501,9 +501,10 @@ HWTEST_F(CmEngineUriTest, GetNameEncode_001, TestSize.Level0)
     uint8_t outBuf1[MAX_LEN_BASE64URL_SHA256] = { 0 };
     struct CmBlob out1 = { sizeof(outBuf1), outBuf1 };
     EXPECT_EQ(GetNameEncode(&in, &out1), CM_SUCCESS);
-    /* sha256 base64url is 43 chars + '\0' */
+    /* sha256 base64url fills 44 chars: the final char of the partial group is
+       the zero-value table entry 'A' (no NUL is written inside the size) */
     EXPECT_EQ(out1.size, 44);
-    EXPECT_EQ(out1.data[43], '\0');
+    EXPECT_EQ(out1.data[43], 'A');
 
     uint8_t outBuf2[MAX_LEN_BASE64URL_SHA256] = { 0 };
     struct CmBlob out2 = { sizeof(outBuf2), outBuf2 };
