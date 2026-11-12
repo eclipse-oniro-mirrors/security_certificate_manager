@@ -190,37 +190,6 @@ static bool IsSameCaller(const struct CmSessionNodeInfo *info, const struct CmSe
     return (info->uid == node->info.uid) && (info->userId == node->info.userId);
 }
 
-struct CmSessionNode *CmQuerySession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle)
-{
-    struct CmSessionNode *node = NULL;
-    pthread_mutex_lock(&g_lock);
-    CM_DLIST_ITER(node, &g_sessionList) {
-        if (IsSameBlob(handle, &(node->handle)) && IsSameCaller(info, node)) {
-            pthread_mutex_unlock(&g_lock);
-            return node;
-        }
-    }
-    pthread_mutex_unlock(&g_lock);
-
-    return NULL;
-}
-
-void CmDeleteSession(const struct CmBlob *handle)
-{
-    struct CmSessionNode *node = NULL;
-    pthread_mutex_lock(&g_lock);
-    CM_DLIST_ITER(node, &g_sessionList) {
-        if (IsSameBlob(handle, &(node->handle))) {
-            RemoveAndFreeSessionNode(&node);
-            --g_sessionCount;
-            CM_LOG_D("delete session count: %u", g_sessionCount);
-            pthread_mutex_unlock(&g_lock);
-            return;
-        }
-    }
-    pthread_mutex_unlock(&g_lock);
-}
-
 int32_t CmClaimSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle, bool *busy)
 {
     struct CmSessionNode *node = NULL;

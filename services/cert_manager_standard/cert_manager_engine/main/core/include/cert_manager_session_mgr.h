@@ -51,10 +51,6 @@ extern "C" {
 
 int32_t CmCreateSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle, bool abortable);
 
-struct CmSessionNode *CmQuerySession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle);
-
-void CmDeleteSession(const struct CmBlob *handle);
-
 /**
  * @brief Atomically take ownership of a session for an in-flight operation.
  *
