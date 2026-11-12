@@ -200,6 +200,14 @@ void MakeMessageBlob(struct CmBlob *message)
     message->size = sizeof(msg) - 1;
     message->data = msg;
 }
+
+/* copy a uri string into the caller supplied buffer and wrap it as a blob */
+struct CmBlob UriBlobOn(const std::string &uri, uint8_t (&buf)[MAX_LEN_URI])
+{
+    EXPECT_EQ(strcpy_s(reinterpret_cast<char *>(buf), MAX_LEN_URI, uri.c_str()), EOK);
+    struct CmBlob blob = { uri.size() + 1, buf };
+    return blob;
+}
 } // namespace
 
 class CmEngineAppCertTest : public testing::Test {
@@ -448,8 +456,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
     ASSERT_EQ(CmServiceGetAppCert(&context, CM_PRI_CREDENTIAL_STORE, &uriCopy, &certBlob), CM_SUCCESS);
     EXPECT_EQ((reinterpret_cast<struct AppCert *>(certBlob.data))->keyCount, 1u);
     CmFree(certBlob.data);
-    certBlob.data = nullptr;
-    certBlob.size = 0;
+    certBlob = { 0, nullptr };
 
     /* a privileged non producer caller is allowed to read it too */
     struct CmContext otherContext = BuildContext(TEST_APPCERT_FRONT_USER, TEST_APPCERT_OTHER_UID);
@@ -458,8 +465,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallPriAppCert_001, TestSize.Level0)
         CM_SUCCESS);
     EXPECT_EQ((reinterpret_cast<struct AppCert *>(certBlob.data))->keyCount, 1u);
     CmFree(certBlob.data);
-    certBlob.data = nullptr;
-    certBlob.size = 0;
+    certBlob = { 0, nullptr };
 
     /* a caller with only the common permission is rejected */
     {
@@ -625,15 +631,12 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
     ASSERT_NE(macPos, std::string::npos);
     tampered[macPos + 3] = (tampered[macPos + 3] == '0') ? '1' : '0';
     uint8_t tamperedBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(tamperedBuf), sizeof(tamperedBuf), tampered.c_str()), EOK);
-    struct CmBlob tamperedUri = { tampered.size() + 1, tamperedBuf };
+    struct CmBlob tamperedUri = UriBlobOn(tampered, tamperedBuf);
     EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &tamperedUri), CMR_ERROR_AUTH_FAILED_MAC_MISMATCH);
 
     /* an uri without client app and mac is not an auth uri */
     uint8_t plainBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(plainBuf), sizeof(plainBuf),
-        "oh:t=ak;o=EngineGrant;u=0;a=889901"), EOK);
-    struct CmBlob plainUri = { strlen(reinterpret_cast<char *>(plainBuf)) + 1, plainBuf };
+    struct CmBlob plainUri = UriBlobOn("oh:t=ak;o=EngineGrant;u=0;a=889901", plainBuf);
     EXPECT_EQ(CmServiceIsAuthorizedApp(&authedContext, &plainUri), CMR_ERROR_INVALID_ARGUMENT_URI);
 
     /* revoke the grant */
@@ -649,9 +652,7 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
 
     /* granting for a missing credential fails */
     uint8_t missingBuf[MAX_LEN_URI] = { 0 };
-    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missingBuf), sizeof(missingBuf),
-        "oh:t=ak;o=EngineMissing;u=0;a=889901"), EOK);
-    struct CmBlob missingUri = { strlen(reinterpret_cast<char *>(missingBuf)) + 1, missingBuf };
+    struct CmBlob missingUri = UriBlobOn("oh:t=ak;o=EngineMissing;u=0;a=889901", missingBuf);
     uint8_t outBuf[MAX_LEN_URI] = { 0 };
     struct CmBlob outAuthUri = { sizeof(outBuf), outBuf };
     EXPECT_NE(CmServiceGrantAppCertificate(&context, &missingUri, TEST_APPCERT_OTHER_UID,
