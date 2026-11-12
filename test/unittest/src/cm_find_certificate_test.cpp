@@ -20,7 +20,8 @@
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 #include <unistd.h>
- 
+
+#include "cert_manager_api.h" 
 #include "cert_manager_check.h"
 #include "cert_manager_file_operator.h"
 #include "cert_manager_service.h"
@@ -474,7 +475,42 @@ HWTEST_F(CmFindCertificateTest, FindCertificateFreeResult, TestSize.Level0)
     CmFreeFindCertResultInner(&result);
     CmFreeFindCertResultInner(nullptr);
 }
- 
+  
+/* ---------- CmFindCertificate (innerkit API) ---------- */
+
+HWTEST_F(CmFindCertificateTest, FindCertificateApiNullArgs, TestSize.Level0)
+{
+    struct FindCertRequest request = MakeFindRequest(CM_FIND_CERT_SCOPE_CURRENT_USER);
+    struct FindCertResult result = { 0, nullptr };
+    EXPECT_EQ(CmFindCertificate(nullptr, &result), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmFindCertificate(&request, nullptr), CMR_ERROR_INVALID_ARGUMENT);
+}
+
+/* ---------- CmFreeFindCertResult (innerkit API) ---------- */
+
+HWTEST_F(CmFindCertificateTest, FreeFindCertResultApi, TestSize.Level0)
+{
+    struct FindCertResult result;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+    result.count = 1;
+    result.certInfos = static_cast<struct FindCertInfo *>(CmMalloc(sizeof(struct FindCertInfo)));
+    ASSERT_NE(result.certInfos, nullptr);
+    (void)memset_s(result.certInfos, sizeof(struct FindCertInfo), 0, sizeof(struct FindCertInfo));
+    result.certInfos[0].certData.data = static_cast<uint8_t *>(CmMalloc(sizeof(g_fakeCertData)));
+    ASSERT_NE(result.certInfos[0].certData.data, nullptr);
+    (void)memcpy_s(result.certInfos[0].certData.data, sizeof(g_fakeCertData),
+        g_fakeCertData, sizeof(g_fakeCertData));
+    result.certInfos[0].certData.size = sizeof(g_fakeCertData);
+
+    CmFreeFindCertResult(&result);
+    EXPECT_EQ(result.count, 0u);
+    EXPECT_EQ(result.certInfos, nullptr);
+
+    /* double free / NULL result are no-ops */
+    CmFreeFindCertResult(&result);
+    CmFreeFindCertResult(nullptr);
+}
+
 /* ---------- QueryCertPropertyByCondition ---------- */
  
 HWTEST_F(CmFindCertificateTest, QueryByConditionNullArgs, TestSize.Level0)
