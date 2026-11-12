@@ -48,6 +48,16 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_revocation_cache_rdb_test.cpp",
     "unittest/src/cm_revocation_cache_engine_test.cpp",
     "unittest/src/cm_cert_manager_config_test.cpp",
+    "unittest/src/cm_engine_uri_test.cpp",
+    "unittest/src/cm_engine_check_test.cpp",
+    "unittest/src/cm_engine_file_op_test.cpp",
+    "unittest/src/cm_engine_storage_test.cpp",
+    "unittest/src/cm_engine_query_test.cpp",
+    "unittest/src/cm_engine_service_test.cpp",
+    "unittest/src/cm_engine_appcert_sign_test.cpp",
+    "unittest/src/cm_engine_updateflag_event_test.cpp",
+    "unittest/src/cm_engine_ukey_test.cpp",
+    "unittest/src/cm_engine_certmgr_test.cpp",
   ]
 
   include_dirs = [
