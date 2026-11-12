@@ -624,8 +624,18 @@ int32_t CmKeyOpProcess(enum CmSignVerifyCmd cmdId, const struct CmContext *conte
      * one atomic step per handle. A plain query left a window where two
      * threads (e.g. concurrent Finish and Abort) both observed the session
      * and issued conflicting HUKS operations on the same handle. */
-    if (CmClaimSession(&info, handle) != CM_SUCCESS) {
+    bool sessionBusy = false;
+    if (CmClaimSession(&info, handle, &sessionBusy) != CM_SUCCESS) {
+        if (sessionBusy) {
+            /* Another operation owns the session: this command (for Abort,
+             * including its HksAbort) did not run, so reporting success
+             * would be a lie. The session becomes claimable again once the
+             * in-flight operation completes; the caller may retry. */
+            CM_LOG_E("session busy, another operation in flight");
+            return CMR_ERROR_NOT_EXIST;
+        }
         CM_LOG_E("session handle not exist");
+        /* aborting a session that is already gone achieved its goal */
         return (cmdId == SIGN_VERIFY_CMD_ABORT) ? CM_SUCCESS : CMR_ERROR_NOT_EXIST;
     }
 

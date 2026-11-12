@@ -221,14 +221,16 @@ void CmDeleteSession(const struct CmBlob *handle)
     pthread_mutex_unlock(&g_lock);
 }
 
-int32_t CmClaimSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle)
+int32_t CmClaimSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle, bool *busy)
 {
     struct CmSessionNode *node = NULL;
+    *busy = false;
     pthread_mutex_lock(&g_lock);
     CM_DLIST_ITER(node, &g_sessionList) {
         if (IsSameBlob(handle, &(node->handle)) && IsSameCaller(info, node)) {
             if (node->opInProgress) {
                 pthread_mutex_unlock(&g_lock);
+                *busy = true;
                 return CMR_ERROR_NOT_EXIST; /* another op owns the session */
             }
             node->opInProgress = true;

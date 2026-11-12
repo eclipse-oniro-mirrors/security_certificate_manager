@@ -63,10 +63,14 @@ void CmDeleteSession(const struct CmBlob *handle);
  * thread proceeds to the HUKS operation; the check and the operation no
  * longer race across the query->HUKS op->delete sequence.
  *
+ * @param[out] busy True when the claim failed because another in-flight
+ *                  operation owns the session (the session itself exists
+ *                  and becomes claimable again once that operation
+ *                  completes); false when no session matches the caller
  * @return int32_t CM_SUCCESS when the session was claimed
  * @retval CMR_ERROR_NOT_EXIST No session for the caller, or it is busy
  */
-int32_t CmClaimSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle);
+int32_t CmClaimSession(const struct CmSessionNodeInfo *info, const struct CmBlob *handle, bool *busy);
 
 /**
  * @brief Release a session claimed with CmClaimSession.
