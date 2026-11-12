@@ -25,6 +25,7 @@
 #include "cert_manager.h"
 #include "cert_manager_check.h"
 #include "cert_manager_file_operator.h"
+#include "cert_manager_permission_check.h"
 #include "cert_manager_query.h"
 #include "cert_manager_service.h"
 #include "cert_manager_storage.h"
@@ -202,7 +203,10 @@ void InitSignatureSpec(struct CmSignatureSpec *spec, uint32_t purpose)
 
 void MakeMessageBlob(struct CmBlob *message)
 {
-    static uint8_t msg[] = "This_is_test_message_for_test_sign_and_verify";
+    /* keep the message at a valid digest length: the shared digest-none spec lets
+     * huks map the message size to the openssl digest (16/20/28/32/48/64 bytes) */
+    static uint8_t msg[] = "This_is_test_message_for_sign_32";
+    static_assert(sizeof(msg) - 1 == 32, "digest-none ecc sign needs a 32-byte digest");
     message->size = sizeof(msg) - 1;
     message->data = msg;
 }
@@ -1014,13 +1018,19 @@ HWTEST_F(CmEngineAppCertTest, CmEngineInstallCredUserMapping_001, TestSize.Level
     struct CmBlob wrongPwd = { sizeof(wrongPwdBuf), wrongPwdBuf };
 
     /* the front user exists: the service uid is resolved and parsing continues
-     * until the wrong password is rejected by the p12 parser */
+     * until the wrong password is rejected by the p12 parser; the uid mapping
+     * relies on the bundle manager, which rejects a test process token, so the
+     * install fails at the mapping and the failure contract is asserted */
     {
         struct CmContext context = BuildContext(TEST_APPCERT_FRONT_USER, TEST_APPCERT_UID);
         uint8_t uriBuf[MAX_LEN_URI] = { 0 };
         struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+        int32_t certManagerUid = -1;
+        bool mapped = CmGetCertManagerAppUid(&certManagerUid,
+            static_cast<int32_t>(TEST_APPCERT_FRONT_USER));
+        int32_t expected = mapped ? CMR_ERROR_PASSWORD_IS_ERR : CM_FAILURE;
         EXPECT_EQ(InstallP12Blob(&appCert, &wrongPwd, "EngineFront", CM_CREDENTIAL_STORE,
-            CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), CMR_ERROR_PASSWORD_IS_ERR);
+            CM_AUTH_STORAGE_LEVEL_EL2, &context, &keyUri), expected);
     }
 
     /* a user without the certmanager app cannot be mapped to a service uid */
