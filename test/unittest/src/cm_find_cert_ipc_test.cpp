@@ -29,6 +29,7 @@ namespace {
 static uint32_t g_selfTokenId = 0;
 static MockHapToken *g_MockHap = nullptr;
 constexpr uint32_t MAX_URI_LEN = 256;
+constexpr size_t CERT_ID_PREFIX_LEN = 2; /* length of the "o=" uri prefix */
 
 /* install one user CA cert for the calling user and return its uri */
 int32_t InstallFindCert(const std::string &alias, std::string &outUri)
@@ -57,7 +58,7 @@ std::string CertIdFromUri(const std::string &uri)
     if (begin == std::string::npos || end == std::string::npos) {
         return "";
     }
-    return uri.substr(begin + 2, end - begin - 2);
+    return uri.substr(begin + CERT_ID_PREFIX_LEN, end - begin - CERT_ID_PREFIX_LEN);
 }
 
 /* best effort uninstall by the uri returned from the install */

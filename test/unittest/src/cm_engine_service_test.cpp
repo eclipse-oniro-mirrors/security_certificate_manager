@@ -1478,8 +1478,8 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertManagerConfigEdge_001, TestSize.Le
     FreeCertManagerConfig(&outConfig);
 
     /* a blob without a terminating zero is rejected before parsing */
-    constexpr uint32_t RAW_KEY_BLOB_LEN = 32;
-    uint8_t rawBuf[RAW_KEY_BLOB_LEN];
+    constexpr uint32_t rawKeyBlobLen = 32;
+    uint8_t rawBuf[rawKeyBlobLen];
     (void)memset_s(rawBuf, sizeof(rawBuf), 'x', sizeof(rawBuf));
     struct CmBlob rawBlob = { sizeof(rawBuf), rawBuf };
     EXPECT_EQ(CmServiceGetCertManagerConfig(&rawBlob, &outConfig), CMR_ERROR_INVALID_ARGUMENT);
