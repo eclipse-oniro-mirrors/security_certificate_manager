@@ -41,6 +41,7 @@ struct GetCertListAsyncContextT {
     uint32_t store = 0;
     enum CmCertScope scope = CM_ALL_USER;
     enum CmCertAlgorithm certAlg = CM_CERT_ALG_ALL;
+    bool hasCertAlg = false;
     struct CertList *certificateList = nullptr;
     struct CmCertStoreInfo *certStoreInfo = nullptr;
     std::shared_ptr<OHOS::Security::CertManager::CmMetricsReport> metricsReport = nullptr;
@@ -126,6 +127,7 @@ static napi_value GetCertListParseParams(napi_env env, napi_callback_info info,
                 return nullptr;
             }
             context->certAlg = static_cast<enum CmCertAlgorithm>(alg);
+            context->hasCertAlg = true;
         }
         context->store = store;
         return GetInt32(env, 0);
@@ -207,16 +209,21 @@ static void GetCertListExecute(napi_env env, void *data)
     context->certificateList->certsCount = MAX_COUNT_CERTIFICATE_ALL;
 
     if (context->store == CM_SYSTEM_TRUSTED_STORE) {
-        context->certStoreInfo = static_cast<struct CmCertStoreInfo *>(CmMalloc(sizeof(struct CmCertStoreInfo)));
-        if (context->certStoreInfo == nullptr) {
-            CM_LOG_E("malloc certStoreInfo fail");
-            context->result = CMR_ERROR_MALLOC_FAIL;
-            return;
+        if (context->hasCertAlg) {
+            context->certStoreInfo = static_cast<struct CmCertStoreInfo *>(CmMalloc(sizeof(struct CmCertStoreInfo)));
+            if (context->certStoreInfo == nullptr) {
+                CM_LOG_E("malloc certStoreInfo fail");
+                context->result = CMR_ERROR_MALLOC_FAIL;
+                return;
+            }
+            (void)memset_s(context->certStoreInfo, sizeof(struct CmCertStoreInfo), 0,
+                sizeof(struct CmCertStoreInfo));
+            context->result = CmGetSystemTrustedCertList(context->certAlg, context->certificateList,
+                context->certStoreInfo);
+        } else {
+            /* original no-arg path: behavior unchanged, no certStoreInfo */
+            context->result = CmGetCertList(context->store, context->certificateList);
         }
-        (void)memset_s(context->certStoreInfo, sizeof(struct CmCertStoreInfo), 0,
-            sizeof(struct CmCertStoreInfo));
-        context->result = CmGetSystemTrustedCertList(context->certAlg, context->certificateList,
-            context->certStoreInfo);
         return;
     }
 
