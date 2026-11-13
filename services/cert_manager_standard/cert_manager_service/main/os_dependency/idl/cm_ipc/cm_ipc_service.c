@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -622,11 +622,9 @@ static int32_t CmIpcServiceGetUkeyCertListCommon(uint32_t code, const struct CmB
         }
 
         if (mode == LIST_UKEY) {
-            ret = CmServiceGetUkeyCertList(&ukeyParam, certPurpose, CM_ARRAY_SIZE(params),
-                &credentialDetailList);
+            ret = CmServiceGetUkeyCertList(&ukeyParam, certPurpose, &credentialDetailList);
         } else {
-            ret = CmServiceGetUkeyCert(&ukeyParam, certPurpose, CM_ARRAY_SIZE(params),
-                &credentialDetailList);
+            ret = CmServiceGetUkeyCert(&ukeyParam, certPurpose, &credentialDetailList);
         }
         if (ret != CM_SUCCESS) {
             CM_LOG_E("get ukey cert fail, ret = %d", ret);

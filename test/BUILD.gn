@@ -19,8 +19,13 @@ module_output_path = "certificate_manager/certificate_manager"
 ohos_unittest("cm_sdk_test") {
   module_out_path = module_output_path
   sources = [
+    # cm_rdb_api_test.cpp must stay the first source of this binary: gtest
+    # registers cases in link order, and its first case must observe the
+    # engine rdb data managers before any other suite initializes them
+    "unittest/src/cm_rdb_api_test.cpp",
     "unittest/src/cm_abort_test.cpp",
     "unittest/src/cm_app_cert_test.cpp",
+    "unittest/src/cm_rdb_open_callback_test.cpp",
     "unittest/src/cm_finish_test.cpp",
     "unittest/src/cm_get_auth_list_test.cpp",
     "unittest/src/cm_get_certinfo_test.cpp",
@@ -29,6 +34,7 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_get_ukey_cert_test.cpp",
     "unittest/src/cm_import_ukey_cert_test.cpp",
     "unittest/src/cm_get_user_ca_cert_list.cpp",
+    "unittest/src/cm_find_cert_ipc_test.cpp",
     "unittest/src/cm_grant_test.cpp",
     "unittest/src/cm_init_test.cpp",
     "unittest/src/cm_is_authed_test.cpp",
@@ -48,6 +54,16 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_revocation_cache_rdb_test.cpp",
     "unittest/src/cm_revocation_cache_engine_test.cpp",
     "unittest/src/cm_cert_manager_config_test.cpp",
+    "unittest/src/cm_engine_uri_test.cpp",
+    "unittest/src/cm_engine_check_test.cpp",
+    "unittest/src/cm_engine_file_op_test.cpp",
+    "unittest/src/cm_engine_storage_test.cpp",
+    "unittest/src/cm_engine_query_test.cpp",
+    "unittest/src/cm_engine_service_test.cpp",
+    "unittest/src/cm_engine_appcert_sign_test.cpp",
+    "unittest/src/cm_engine_updateflag_event_test.cpp",
+    "unittest/src/cm_engine_ukey_test.cpp",
+    "unittest/src/cm_engine_certmgr_test.cpp",
     "unittest/src/cm_engine_session_test.cpp",
   ]
 

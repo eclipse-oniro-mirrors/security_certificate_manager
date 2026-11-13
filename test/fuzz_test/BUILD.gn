@@ -132,7 +132,6 @@ group("fuzztest") {
       "./cmgetnameencode_fuzzer:fuzztest",
       "./cmgetrandom_fuzzer:fuzztest",
       "./cmparsepkcs12cert_fuzzer:fuzztest",
-      "./cmonstop_fuzzer:fuzztest",
       "./cmx509_fuzzer:fuzztest",
       "./cmpfx_fuzzer:fuzztest",
       "./cmcertmanager_fuzzer:fuzztest",

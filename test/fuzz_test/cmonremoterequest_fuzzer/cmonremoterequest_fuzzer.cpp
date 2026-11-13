@@ -71,6 +71,7 @@ namespace OHOS {
         SystemAbilityOnDemandReason reason;
         (void)myService.OnStart(reason);
         (void)myService.OnRemoteRequest(code, messageData, reply, option);
+        (void)myService.OnStop();
 
         CmFree(myData);
         CmFreeParamSet(&paramSet);
