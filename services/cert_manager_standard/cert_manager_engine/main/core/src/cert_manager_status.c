@@ -189,10 +189,13 @@ uint32_t CmGetSystemCaAlgType(const char *certPath)
 /* digest the matched certificate and upsert its root_ca_cert_store row;
  * the alg type follows the store directory the file was enumerated from */
 static int32_t UpsertRootCaRecord(const struct CmBlob *certData, const struct CmBlob *certUri,
-    const char *certPath, uint32_t status)
+    const char *certPath, uint32_t status, char *certPkHashOut)
 {
     uint32_t algType = CmGetSystemCaAlgType(certPath);
-    char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
+    char localPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
+    /* the hash is always needed for the upsert; the out param only decides
+     * where the digest lands */
+    char *certPkHash = (certPkHashOut != NULL) ? certPkHashOut : localPkHash;
     int32_t ret = CmGetCertPubKeyHashHex(certData, certPkHash);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("get cert pubkey hash failed, ret = %d", ret);
@@ -207,7 +210,7 @@ static int32_t UpsertRootCaRecord(const struct CmBlob *certData, const struct Cm
 }
 
 int32_t CmSetSystemCertStatus(const struct CmContext *context,
-    const struct CmBlob *certUri, uint32_t status)
+    const struct CmBlob *certUri, uint32_t status, char *certPkHash)
 {
     if (context == NULL || certUri == NULL || certUri->data == NULL) {
         return CMR_ERROR_INVALID_ARGUMENT;
@@ -244,7 +247,8 @@ int32_t CmSetSystemCertStatus(const struct CmContext *context,
             break;
         }
 
-        ret = UpsertRootCaRecord(&certData, certUri, (char *)cFileList[matchIndex].path.data, status);
+        ret = UpsertRootCaRecord(&certData, certUri, (char *)cFileList[matchIndex].path.data, status,
+            certPkHash);
         CM_FREE_BLOB(certData);
         if (ret != CM_SUCCESS) {
             break;

@@ -45,9 +45,13 @@ uint32_t CmGetSystemCaAlgType(const char *certPath);
 
 /* set the manual enable/disable state of one SYSTEM root CA certificate
  * (certUri must match a file enumerated from the system store); writes the
- * root_ca_cert_store row and regenerates the force-check policy file */
+ * root_ca_cert_store row and regenerates the force-check policy file
+ * @param certPkHash optional out: receives the pk hash of the committed
+ *        certificate (CM_ROOT_CA_PK_HASH_HEX_LEN uppercase hex chars,
+ *        NUL-terminated; provide at least CM_ROOT_CA_PK_HASH_HEX_LEN + 1
+ *        bytes); pass NULL when the hash is not needed */
 int32_t CmSetSystemCertStatus(const struct CmContext *context,
-    const struct CmBlob *certUri, uint32_t status);
+    const struct CmBlob *certUri, uint32_t status, char *certPkHash);
 
 /* rewrite the force-check policy file from the disabled rows of
  * root_ca_cert_store (atomic tmp + rename); 0 bytes when nothing is disabled */

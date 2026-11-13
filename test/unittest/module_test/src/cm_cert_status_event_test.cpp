@@ -23,14 +23,17 @@
 #include "cert_manager_thread_pool.h"
 #include "cm_cert_status_event.h"
 #include "cm_cert_status_event_publish.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cm_type.h"
 
 namespace {
 /* records the last event handed to the publish seam */
 struct PublishRecord {
     std::string action;
-    int changeType = -1;
-    bool hasChangeTypeParam = false;
+    std::string type;
+    std::string operation;
+    std::string data;
+    bool hasDataParam = false;
     int32_t callCount = 0;
     bool publishResult = true;
 };
@@ -52,6 +55,9 @@ bool g_acceptPoolTask = true;
 constexpr uint32_t EXPECTED_RETRY_DELAY_MS = 50;
 constexpr uint32_t EXPECTED_MAX_RETRY_COUNT = 3;
 
+/* 64-char uppercase hex stand-in: the value only has to round-trip */
+const char *PK_HASH_STANDIN = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
 void RunAllPooledTasksOnce()
 {
     /* a retry task may enqueue its successor while running; loop until drained */
@@ -71,8 +77,10 @@ void RunAllPooledTasksOnce()
 bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want)
 {
     g_publishRecord.action = want.GetActionRef();
-    g_publishRecord.changeType = want.GetIntParam(CM_EVENT_PARAM_CHANGE_TYPE, -1);
-    g_publishRecord.hasChangeTypeParam = want.HasParameter(CM_EVENT_PARAM_CHANGE_TYPE);
+    g_publishRecord.type = want.GetStringParam(CM_EVENT_PARAM_TYPE);
+    g_publishRecord.operation = want.GetStringParam(CM_EVENT_PARAM_OPERATION);
+    g_publishRecord.data = want.GetStringParam(CM_EVENT_PARAM_DATA);
+    g_publishRecord.hasDataParam = want.HasParameter(CM_EVENT_PARAM_DATA);
     g_publishRecord.callCount++;
     return g_publishRecord.publishResult;
 }
@@ -122,62 +130,104 @@ void CmCertStatusEventTest::TearDown()
 
 /**
 * @tc.name: CmCertStatusEventTest001
-* @tc.desc: user change publishes the event carrying changeType=0
+* @tc.desc: user enable publishes SYSTEM_CA + ENABLE + the cert pk hash
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest001, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
+    int32_t ret = CmPublishSystemCaStatusEvent(PK_HASH_STANDIN, CERT_STATUS_ENABLED);
     EXPECT_EQ(ret, CM_SUCCESS);
     EXPECT_EQ(g_publishRecord.callCount, 1);
-    EXPECT_EQ(g_publishRecord.action, std::string(CM_EVENT_ACTION_SYSTEM_CA_STATUS_CHANGED));
-    EXPECT_EQ(g_publishRecord.changeType, CM_SYSTEM_CA_STATUS_CHANGE_USER);
-    EXPECT_TRUE(g_publishRecord.hasChangeTypeParam);
+    EXPECT_EQ(g_publishRecord.action, std::string(CM_EVENT_ACTION_CA_CERT_STATUS_CHANGED));
+    EXPECT_EQ(g_publishRecord.type, std::string(CM_EVENT_TYPE_SYSTEM_CA));
+    EXPECT_EQ(g_publishRecord.operation, std::string(CM_EVENT_OPERATION_ENABLE));
+    EXPECT_EQ(g_publishRecord.data, std::string(PK_HASH_STANDIN));
+    EXPECT_TRUE(g_publishRecord.hasDataParam);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest002
-* @tc.desc: cloud change type (reserved, no publisher yet) round-trips changeType=1
+* @tc.desc: user disable publishes SYSTEM_CA + DISABLE + the cert pk hash
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest002, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_CLOUD);
+    int32_t ret = CmPublishSystemCaStatusEvent(PK_HASH_STANDIN, CERT_STATUS_DISABLED);
     EXPECT_EQ(ret, CM_SUCCESS);
     EXPECT_EQ(g_publishRecord.callCount, 1);
-    EXPECT_EQ(g_publishRecord.action, std::string(CM_EVENT_ACTION_SYSTEM_CA_STATUS_CHANGED));
-    EXPECT_EQ(g_publishRecord.changeType, CM_SYSTEM_CA_STATUS_CHANGE_CLOUD);
-    EXPECT_TRUE(g_publishRecord.hasChangeTypeParam);
+    EXPECT_EQ(g_publishRecord.action, std::string(CM_EVENT_ACTION_CA_CERT_STATUS_CHANGED));
+    EXPECT_EQ(g_publishRecord.type, std::string(CM_EVENT_TYPE_SYSTEM_CA));
+    EXPECT_EQ(g_publishRecord.operation, std::string(CM_EVENT_OPERATION_DISABLE));
+    EXPECT_EQ(g_publishRecord.data, std::string(PK_HASH_STANDIN));
+    EXPECT_TRUE(g_publishRecord.hasDataParam);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest003
-* @tc.desc: changeType above the defined range is rejected without publishing
+* @tc.desc: null pk hash is rejected without publishing
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest003, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_CLOUD + 1);
+    int32_t ret = CmPublishSystemCaStatusEvent(nullptr, CERT_STATUS_ENABLED);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(g_publishRecord.callCount, 0);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest004
-* @tc.desc: the largest uint32 changeType is rejected without publishing
+* @tc.desc: empty pk hash is rejected without publishing
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest004, TestSize.Level0)
 {
-    int32_t ret = CmPublishSystemCaStatusEvent(0xffffffffu); // not a defined change type
+    int32_t ret = CmPublishSystemCaStatusEvent("", CERT_STATUS_ENABLED);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(g_publishRecord.callCount, 0);
 }
 
 /**
 * @tc.name: CmCertStatusEventTest005
-* @tc.desc: first publish failure enqueues one delayed retry and returns success
+* @tc.desc: pk hash that is not CM_ROOT_CA_PK_HASH_HEX_LEN chars is rejected without publishing
 */
 HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest005, TestSize.Level0)
 {
+    std::string badLen(CM_ROOT_CA_PK_HASH_HEX_LEN - 1, 'A'); /* 63 chars, not 64 */
+    int32_t ret = CmPublishSystemCaStatusEvent(badLen.c_str(), CERT_STATUS_ENABLED);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(g_publishRecord.callCount, 0);
+}
+
+/**
+* @tc.name: CmCertStatusEventTest006
+* @tc.desc: status other than enabled/disabled is rejected without publishing
+*/
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest006, TestSize.Level0)
+{
+    int32_t ret = CmPublishSystemCaStatusEvent(PK_HASH_STANDIN, 2); // 2 is not a valid status
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(g_publishRecord.callCount, 0);
+}
+
+/**
+* @tc.name: CmCertStatusEventTest007
+* @tc.desc: force-check policy update publishes REVOCATION_FORCE_CHECK + UPDATE with no data param
+*/
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest007, TestSize.Level0)
+{
+    int32_t ret = CmPublishForceCheckPolicyUpdatedEvent();
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(g_publishRecord.callCount, 1);
+    EXPECT_EQ(g_publishRecord.action, std::string(CM_EVENT_ACTION_CA_CERT_STATUS_CHANGED));
+    EXPECT_EQ(g_publishRecord.type, std::string(CM_EVENT_TYPE_REVOCATION_FORCE_CHECK));
+    EXPECT_EQ(g_publishRecord.operation, std::string(CM_EVENT_OPERATION_UPDATE));
+    EXPECT_FALSE(g_publishRecord.hasDataParam);
+}
+
+/**
+* @tc.name: CmCertStatusEventTest008
+* @tc.desc: first publish failure enqueues one delayed retry and returns success
+*/
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest008, TestSize.Level0)
+{
     g_publishRecord.publishResult = false;
-    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
+    int32_t ret = CmPublishSystemCaStatusEvent(PK_HASH_STANDIN, CERT_STATUS_DISABLED);
     EXPECT_EQ(ret, CM_SUCCESS);
     EXPECT_EQ(g_publishRecord.callCount, 1);
     ASSERT_EQ(g_pooledTasks.size(), 1);
@@ -185,13 +235,13 @@ HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest005, TestSize.Level0)
 }
 
 /**
-* @tc.name: CmCertStatusEventTest006
+* @tc.name: CmCertStatusEventTest009
 * @tc.desc: retry chain stops after the next attempt succeeds
 */
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest006, TestSize.Level0)
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest009, TestSize.Level0)
 {
     g_publishRecord.publishResult = false;
-    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
+    int32_t ret = CmPublishSystemCaStatusEvent(PK_HASH_STANDIN, CERT_STATUS_DISABLED);
     EXPECT_EQ(ret, CM_SUCCESS);
 
     /* the retry attempt succeeds */
@@ -203,13 +253,13 @@ HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest006, TestSize.Level0)
 }
 
 /**
-* @tc.name: CmCertStatusEventTest007
+* @tc.name: CmCertStatusEventTest010
 * @tc.desc: retries are capped: 1 immediate attempt plus at most 3 retries
 */
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest007, TestSize.Level0)
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest010, TestSize.Level0)
 {
     g_publishRecord.publishResult = false;
-    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
+    int32_t ret = CmPublishSystemCaStatusEvent(PK_HASH_STANDIN, CERT_STATUS_DISABLED);
     EXPECT_EQ(ret, CM_SUCCESS);
 
     RunAllPooledTasksOnce();
@@ -219,14 +269,14 @@ HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest007, TestSize.Level0)
 }
 
 /**
-* @tc.name: CmCertStatusEventTest008
+* @tc.name: CmCertStatusEventTest011
 * @tc.desc: pool rejection makes the publish report failure, no retry scheduled
 */
-HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest008, TestSize.Level0)
+HWTEST_F(CmCertStatusEventTest, CmCertStatusEventTest011, TestSize.Level0)
 {
     g_publishRecord.publishResult = false;
     g_acceptPoolTask = false;
-    int32_t ret = CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
+    int32_t ret = CmPublishSystemCaStatusEvent(PK_HASH_STANDIN, CERT_STATUS_DISABLED);
     EXPECT_EQ(ret, CMR_ERROR);
     EXPECT_EQ(g_publishRecord.callCount, 1);
     EXPECT_EQ(g_addTaskCallCount, 1);

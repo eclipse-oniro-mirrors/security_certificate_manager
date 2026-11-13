@@ -49,9 +49,7 @@ ohos_unittest("cm_module_test") {
     ubsan = true
   }
 
-  deps = [
-    "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main:cert_manager_sdk",
-  ]
+  deps = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main:cert_manager_sdk" ]
 
   if (os_level == "standard") {
     deps += [
@@ -59,6 +57,7 @@ ohos_unittest("cm_module_test") {
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_openssl_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_ipc_client_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_log_mem_static",
+      "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/rdb:libcert_manager_rdb_static",
     ]
   }
 
@@ -67,8 +66,8 @@ ohos_unittest("cm_module_test") {
     "bounds_checking_function:libsec_static",
     "c_utils:utils",
     "googletest:gtest",
-    "openssl:libcrypto_shared",
     "ipc:ipc_core",
     "ipc:ipc_single",
+    "openssl:libcrypto_shared",
   ]
 }

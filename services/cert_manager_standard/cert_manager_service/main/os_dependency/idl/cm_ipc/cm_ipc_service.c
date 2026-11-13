@@ -25,6 +25,7 @@
 #include "cm_pfx.h"
 #include "cm_report_wrapper.h"
 #include "cm_response.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cm_security_guard_info.h"
 #include "cm_type.h"
 #include "cm_ipc_service_serialization.h"
@@ -194,6 +195,8 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
     uint32_t status = INIT_INVALID_VALUE;
     struct CmContext cmContext = {0};
     struct CmBlob certUri = { 0, NULL };
+    /* pk hash of the committed certificate, handed to the status event */
+    char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
     struct CmParamSet *paramSet = NULL;
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_BUFFER, .blob = &certUri},
@@ -214,7 +217,7 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
             break;
         }
 
-        ret = CmSetSystemCertStatus(&cmContext, &certUri, status);
+        ret = CmSetSystemCertStatus(&cmContext, &certUri, status, certPkHash);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("CmSetSystemCertStatus failed, ret = %d", ret);
             break;
@@ -222,10 +225,8 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
 
         /* the status change is committed; notify subscribers best-effort:
          * the event wrapper logs failures internally and a failed broadcast
-         * must not fail the already committed status update. The user is the
-         * only change source today: cloud updates will publish
-         * CM_SYSTEM_CA_STATUS_CHANGE_CLOUD once they exist */
-        (void)CmPublishSystemCaStatusEvent(CM_SYSTEM_CA_STATUS_CHANGE_USER);
+         * must not fail the already committed status update */
+        (void)CmPublishSystemCaStatusEvent(certPkHash, status);
     } while (0);
     CmReport(__func__, &cmContext, &certUri, ret);
 

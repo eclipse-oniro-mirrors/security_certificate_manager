@@ -274,8 +274,9 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusUnknownUriRejected)
     (void)memset_s(&context, sizeof(context), 0, sizeof(context));
     char uriBuf[] = "INVALIDXXXX";
     struct CmBlob uri = { sizeof(uriBuf), (uint8_t *)uriBuf };
-    /* uri not in the system store: nothing recorded, nothing rewritten */
-    EXPECT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CMR_ERROR_NOT_EXIST);
+    /* uri not in the system store: nothing recorded, nothing rewritten;
+     * NULL out param is accepted on the rejection path */
+    EXPECT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED, NULL), CMR_ERROR_NOT_EXIST);
 
     struct RootCaStoreRecord records[TEST_RECORD_CAPACITY] = {};
     uint32_t count = 1;
@@ -306,7 +307,10 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
     CmFreeCertFiles(files, certFileList.size);
 
     struct CmBlob uri = { (uint32_t)strlen(uriBuf) + 1, (uint8_t *)uriBuf };
-    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CM_SUCCESS);
+    char outPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
+    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED, outPkHash), CM_SUCCESS);
+    /* the out hash is the value the engine committed to the store */
+    EXPECT_EQ(strlen(outPkHash), CM_ROOT_CA_PK_HASH_HEX_LEN);
 
     uint32_t enable = 1;
     ASSERT_EQ(QueryRootCaEnable(uriBuf, strlen(uriBuf), &enable), CM_SUCCESS);
@@ -319,10 +323,13 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
     constexpr size_t policyLineLen = policyPrefixLen + CM_ROOT_CA_PK_HASH_HEX_LEN + 1;
     ASSERT_EQ(content.size(), policyLineLen);
     EXPECT_EQ(content.substr(0, policyPrefixLen), "1,");
+    /* the policy line carries the same hash the engine reported */
+    EXPECT_EQ(content.substr(policyPrefixLen, CM_ROOT_CA_PK_HASH_HEX_LEN), std::string(outPkHash));
     EXPECT_EQ(content[policyLineLen - 1], '\n');
 
-    /* re-enable empties the policy file and clears the disabled row */
-    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED), CM_SUCCESS);
+    /* re-enable empties the policy file and clears the disabled row; NULL
+     * out param on a success path exercises the internal fallback buffer */
+    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED, NULL), CM_SUCCESS);
     std::string cleared;
     ASSERT_TRUE(ReadPolicyFile(cleared));
     EXPECT_EQ(cleared.size(), 0u);

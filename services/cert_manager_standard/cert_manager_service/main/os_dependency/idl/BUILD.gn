@@ -47,6 +47,7 @@ ohos_static_library("libcm_service_idl_standard_static") {
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_openssl_static",
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_ipc_client_static",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/core:cert_manager_engine_core_standard",
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/rdb:libcert_manager_rdb_static",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/hisysevent_wrapper:libcert_manager_hisysevent_wrapper_static",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/security_guard_report:libcert_manager_sg_report_static",
     "../dialog:libcm_ukey_auth_dialog_static",
