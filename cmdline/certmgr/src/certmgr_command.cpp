@@ -1146,7 +1146,7 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
     }
 
     struct UserCAProperty property;
-    property.userId = hasG_ ? 0 : static_cast<uint32_t>(INIT_INVALID_VALUE);
+    property.userId = static_cast<uint32_t>(INIT_INVALID_VALUE);
     property.scope = hasG_ ? CM_GLOBAL_USER : CM_CURRENT_USER;
 
     struct CertList certList = { 0, nullptr };
