@@ -1149,11 +1149,19 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
     property.userId = static_cast<uint32_t>(INIT_INVALID_VALUE);
     property.scope = hasG_ ? CM_GLOBAL_USER : CM_CURRENT_USER;
 
-    struct CertList certList = { 0, nullptr };
+    struct CertList certList;
+    certList.certsCount = MAX_COUNT_CERTIFICATE;
+    certList.certAbstract = static_cast<struct CertAbstract *>(
+        malloc(sizeof(struct CertAbstract) * MAX_COUNT_CERTIFICATE));
+    if (certList.certAbstract == nullptr) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to allocate memory for cert list");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
     ret = CmGetUserCACertList(&property, &certList);
     if (ret != CM_SUCCESS) {
         int32_t cmdErr = MapSdkErrToCmdErr(ret);
         WriteError(cmdErr, "Failed to get user CA cert list");
+        free(certList.certAbstract);
         return cmdErr;
     }
 
