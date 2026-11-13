@@ -1135,6 +1135,40 @@ int32_t UninstallUserCACommand::AuthenticateForUninstall(
     return AuthenticateForCertFile(hasG_, authUserId);
 }
 
+static bool MatchCertByHash(const struct CertList &certList,
+    const std::string &certFileHash, std::string &outCertUri)
+{
+    for (uint32_t i = 0; i < certList.certsCount; i++) {
+        struct CmBlob certUri;
+        certUri.size = static_cast<uint32_t>(strlen(certList.certAbstract[i].uri)) + 1;
+        certUri.data = reinterpret_cast<uint8_t *>(certList.certAbstract[i].uri);
+
+        struct CertInfo certInfo;
+        (void)memset_s(&certInfo, sizeof(certInfo), 0, sizeof(certInfo));
+        uint8_t certDataBuf[MAX_LEN_CERTIFICATE] = { 0 };
+        certInfo.certInfo.data = certDataBuf;
+        certInfo.certInfo.size = MAX_LEN_CERTIFICATE;
+
+        int32_t infoRet = CmGetUserCertInfo(&certUri, CM_USER_TRUSTED_STORE, &certInfo);
+        if (infoRet != CM_SUCCESS || certInfo.certInfo.size == 0) {
+            continue;
+        }
+
+        struct CmBlob certData = { certInfo.certInfo.size, certInfo.certInfo.data };
+        std::string certHash;
+        int32_t hashRet = GetCertSha256Hex(certData, certHash);
+        if (hashRet != CM_SUCCESS) {
+            continue;
+        }
+
+        if (certHash == certFileHash) {
+            outCertUri = std::string(certList.certAbstract[i].uri);
+            return true;
+        }
+    }
+    return false;
+}
+
 int32_t UninstallUserCACommand::FindCertUriByHash(
     const struct CmBlob &certBlob, std::string &outCertUri)
 {
@@ -1165,37 +1199,7 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
         return cmdErr;
     }
 
-    bool found = false;
-    for (uint32_t i = 0; i < certList.certsCount; i++) {
-        struct CmBlob certUri;
-        certUri.size = static_cast<uint32_t>(strlen(certList.certAbstract[i].uri)) + 1;
-        certUri.data = reinterpret_cast<uint8_t *>(certList.certAbstract[i].uri);
-
-        struct CertInfo certInfo;
-        (void)memset_s(&certInfo, sizeof(certInfo), 0, sizeof(certInfo));
-        uint8_t certDataBuf[MAX_LEN_CERTIFICATE] = { 0 };
-        certInfo.certInfo.data = certDataBuf;
-        certInfo.certInfo.size = MAX_LEN_CERTIFICATE;
-
-        int32_t infoRet = CmGetUserCertInfo(&certUri, CM_USER_TRUSTED_STORE, &certInfo);
-        if (infoRet != CM_SUCCESS || certInfo.certInfo.size == 0) {
-            continue;
-        }
-
-        struct CmBlob certData = { certInfo.certInfo.size, certInfo.certInfo.data };
-        std::string certHash;
-        int32_t hashRet = GetCertSha256Hex(certData, certHash);
-        if (hashRet != CM_SUCCESS) {
-            continue;
-        }
-
-        if (certHash == certFileHash) {
-            outCertUri = std::string(certList.certAbstract[i].uri);
-            found = true;
-            break;
-        }
-    }
-
+    bool found = MatchCertByHash(certList, certFileHash, outCertUri);
     free(certList.certAbstract);
 
     if (!found) {
@@ -1203,7 +1207,6 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
             "No matching user CA certificate found for the specified certFile");
         return CM_CMD_ERR_INTERNAL_ERROR;
     }
-
     return CM_CMD_SUCCESS;
 }
 
