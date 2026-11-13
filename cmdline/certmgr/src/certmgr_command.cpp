@@ -1173,7 +1173,7 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
 
         struct CertInfo certInfo;
         (void)memset_s(&certInfo, sizeof(certInfo), 0, sizeof(certInfo));
-        int32_t infoRet = CmGetCertInfo(&certUri, CM_USER_TRUSTED_STORE, &certInfo);
+        int32_t infoRet = CmGetUserCertInfo(&certUri, CM_USER_TRUSTED_STORE, &certInfo);
         if (infoRet != CM_SUCCESS || certInfo.certInfo.data == nullptr || certInfo.certInfo.size == 0) {
             continue;
         }
