@@ -20,6 +20,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "securec.h"
@@ -77,10 +78,40 @@ void CleanupRootCaStoreState()
         std::vector<OHOS::NativeRdb::ValueObject>());
     (void)CmRegenerateRevocationPolicyFile();
 }
+
+/* whether FORCE_CHECK_POLICY_DIR existed before this suite started: the
+ * service cfg mkdirs it on images carrying this PR, so what existed before
+ * the suite is not the suite's to remove; when the suite created the
+ * directory itself (old image: the engine's self-healing mkdir fallback
+ * inside CmRegenerateRevocationPolicyFile), TearDownTestCase removes it
+ * again so no forceCheck residue stays on the device */
+bool g_policyDirPreExisting = false;
 } // namespace
 
 class CmRootCaStoreRdbTest : public testing::Test {
 public:
+    static void SetUpTestCase(void)
+    {
+        /* snapshot before the first SetUp regenerates the policy file,
+         * which mkdirs the directory when missing */
+        g_policyDirPreExisting = (access(FORCE_CHECK_POLICY_DIR, F_OK) == 0);
+    }
+
+    static void TearDownTestCase(void)
+    {
+        /* the last per-test TearDown already cleared the rows and
+         * regenerated the empty policy file; when this suite created the
+         * directory itself, remove it again so no forceCheck residue
+         * stays; a pre-existing (cfg-owned) directory keeps the empty
+         * file: an empty file is the no-disabled contract */
+        if (g_policyDirPreExisting) {
+            return;
+        }
+        (void)unlink(FORCE_CHECK_POLICY_FILE ".tmp");
+        (void)unlink(FORCE_CHECK_POLICY_FILE);
+        EXPECT_EQ(rmdir(FORCE_CHECK_POLICY_DIR), 0) << "removing suite-created forceCheck dir failed";
+    }
+
     void SetUp() override
     {
         CleanupRootCaStoreState();

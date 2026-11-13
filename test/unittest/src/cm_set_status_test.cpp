@@ -18,6 +18,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -80,6 +81,14 @@ static void CleanupRootCaStoreState()
     (void)CmRegenerateRevocationPolicyFile();
 }
 
+/* whether FORCE_CHECK_POLICY_DIR existed before this suite started: the
+ * service cfg mkdirs it on images carrying this PR, so what existed before
+ * the suite is not the suite's to remove; when the suite created the
+ * directory itself (old image: the engine's self-healing mkdir fallback
+ * inside CmRegenerateRevocationPolicyFile), TearDownTestCase removes it
+ * again so no forceCheck residue stays on the device */
+static bool g_policyDirPreExisting = false;
+
 /* query the root_ca_cert_store disabled rows and assert that the row for
  * uri classifies as international (the preset CAs live in SYSTEM_CA_STORE) */
 static void CheckDisabledRootCaAlgType(const char *uri)
@@ -125,6 +134,8 @@ public:
 
 void CmSetCertStatusTest::SetUpTestCase(void)
 {
+    /* snapshot before anything in this suite can create the directory */
+    g_policyDirPreExisting = (access(FORCE_CHECK_POLICY_DIR, F_OK) == 0);
     g_selfTokenId = GetSelfTokenID();
     CmTestCommon::SetTestEnvironment(g_selfTokenId);
     /* the engine reaches root_ca_cert_store only through the global rdb
@@ -138,6 +149,18 @@ void CmSetCertStatusTest::SetUpTestCase(void)
 void CmSetCertStatusTest::TearDownTestCase(void)
 {
     CmTestCommon::ResetTestEnvironment();
+    /* the last per-test TearDown already cleared the rows and regenerated
+     * the empty policy file; when this suite created the directory itself
+     * (old image: the engine's self-healing mkdir fallback), remove it
+     * again so no forceCheck residue stays; a pre-existing (cfg-owned)
+     * directory keeps the empty file: an empty file is the no-disabled
+     * contract */
+    if (g_policyDirPreExisting) {
+        return;
+    }
+    (void)unlink(FORCE_CHECK_POLICY_FILE ".tmp");
+    (void)unlink(FORCE_CHECK_POLICY_FILE);
+    EXPECT_EQ(rmdir(FORCE_CHECK_POLICY_DIR), 0) << "removing suite-created forceCheck dir failed";
 }
 
 void CmSetCertStatusTest::SetUp()
