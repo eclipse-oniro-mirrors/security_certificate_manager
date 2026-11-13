@@ -12,16 +12,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- 
+
 #include <cstring>
 #include <string>
 #include <vector>
- 
+
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "cert_manager_api.h" 
+#include "cert_manager_api.h"
 #include "cert_manager_check.h"
 #include "cert_manager_file_operator.h"
 #include "cert_manager_service.h"
@@ -32,16 +32,16 @@
 #include "cm_type.h"
 #include "cm_type_free.h"
 #include "securec.h"
- 
+
 using namespace testing::ext;
 using namespace CertmanagerTest;
- 
+
 namespace {
 constexpr uint32_t TEST_UID = 500;
 constexpr uint32_t GLOBAL_USERID = 0;
 constexpr uint32_t CERT_STORE_USER_CA = 2; /* CM_USER_TRUSTED_STORE */
 constexpr enum CmAuthStorageLevel CERT_LEVEL_EL1 = CM_AUTH_STORAGE_LEVEL_EL1;
- 
+
 struct TestCertSeed {
     const char *uri;
     const char *alias;
@@ -49,39 +49,39 @@ struct TestCertSeed {
     int32_t userId;
     int32_t uid;
 };
- 
+
 /*
  * The FindCertificate service path builds the cert file path from USER_CA_STORE
  * and the config dir from CERT_BACKUP_CONFIG_ROOT_DIR, so the test data has to
  * land in those real directories for GetCertDataAndStatus to succeed.
  */
-const std::vector<TestCertSeed> g_testSeeds = {
+const std::vector<TestCertSeed> FAKE_CERT_DATA = {
     { "oh:t=c;o=aaa111;u=100;a=500", "aliasAAA", "CN=AAA Test CA", 100, 500 },
     { "oh:t=c;o=bbb222;u=100;a=500", "aliasBBB", "CN=BBB Test CA", 100, 500 },
     { "oh:t=c;o=ccc333;u=0;a=0",     "aliasCCC", "CN=CCC Global CA", 0, 0 },
     { "oh:t=c;o=ddd444;u=0;a=0",     "aliasDDD", "CN=DDD Global CA", 0, 0 },
 };
- 
+
 const uint8_t g_fakeCertData[] = {
     0x30, 0x82, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c
 };
- 
+
 std::vector<std::string> g_createdCertFiles;
 std::vector<std::string> g_createdConfigFiles;
 std::vector<std::string> g_createdDirs;
- 
+
 static std::string GetCertFilePath(const struct TestCertSeed &seed)
 {
     return std::string(USER_CA_STORE) + std::to_string(seed.userId) + "/" +
         std::to_string(seed.uid) + "/" + seed.uri;
 }
- 
+
 static std::string GetConfigFilePath(const struct TestCertSeed &seed)
 {
     return std::string(CERT_BACKUP_CONFIG_ROOT_DIR) + "/" + std::to_string(seed.userId) + "/" +
         std::to_string(seed.uid) + "/" + seed.uri + CERT_CONFIG_FILE_SUFFIX;
 }
- 
+
 /* make the parent directory chain of a full file path (best effort) */
 static void MakeParentDirs(const std::string &fullPath)
 {
@@ -96,7 +96,7 @@ static void MakeParentDirs(const std::string &fullPath)
         }
     }
 }
- 
+
 /* create the certificate file (required by GetCertDataAndStatus) */
 static int32_t CreateCertFile(const struct TestCertSeed &seed)
 {
@@ -108,7 +108,7 @@ static int32_t CreateCertFile(const struct TestCertSeed &seed)
     }
     return ret;
 }
- 
+
 /* create the .config status file so the cert is reported ENABLED */
 static int32_t CreateConfigFile(const struct TestCertSeed &seed)
 {
@@ -120,7 +120,7 @@ static int32_t CreateConfigFile(const struct TestCertSeed &seed)
     }
     return ret;
 }
- 
+
 /* insert the cert property row into the RDB */
 static int32_t InsertUserCertProperty(const struct TestCertSeed &seed)
 {
@@ -141,7 +141,7 @@ static int32_t InsertUserCertProperty(const struct TestCertSeed &seed)
     prop.level = static_cast<enum CmAuthStorageLevel>(CERT_LEVEL_EL1);
     return InsertCertProperty(&prop);
 }
- 
+
 static void CleanupCreatedFiles()
 {
     for (const auto &path : g_createdCertFiles) {
@@ -158,14 +158,14 @@ static void CleanupCreatedFiles()
     }
     g_createdDirs.clear();
 }
- 
+
 static void CleanupRdbData()
 {
-    for (const auto &seed : g_testSeeds) {
+    for (const auto &seed : FAKE_CERT_DATA) {
         (void)DeleteCertProperty(seed.uri);
     }
 }
- 
+
 /*
  * Drop every user-CA row so the count-based assertions below are deterministic
  * regardless of leftovers left by other suites running earlier in the binary.
@@ -185,16 +185,16 @@ static void CleanupAllUserCaRows()
     }
     free(results); /* owned by the C query API, allocated with malloc */
 }
- 
+
 static void SeedAllTestData()
 {
-    for (const auto &seed : g_testSeeds) {
+    for (const auto &seed : FAKE_CERT_DATA) {
         ASSERT_EQ(InsertUserCertProperty(seed), CM_SUCCESS);
         ASSERT_EQ(CreateCertFile(seed), CM_SUCCESS);
         ASSERT_EQ(CreateConfigFile(seed), CM_SUCCESS);
     }
 }
- 
+
 static struct FindCertRequest MakeFindRequest(enum CmFindCertScope scope)
 {
     struct FindCertRequest request;
@@ -203,29 +203,29 @@ static struct FindCertRequest MakeFindRequest(enum CmFindCertScope scope)
     return request;
 }
 } // namespace
- 
+
 class CmFindCertificateTest : public testing::Test {
 public:
     static void SetUpTestCase();
     static void TearDownTestCase();
     void SetUp();
     void TearDown();
- 
+
 private:
     MockHapToken *mockHap_ = nullptr;
 };
- 
+
 void CmFindCertificateTest::SetUpTestCase()
 {
     CmTestCommon::SetTestEnvironment(GetSelfTokenID());
     ASSERT_EQ(CreateCertPropertyRdb(), CM_SUCCESS);
 }
- 
+
 void CmFindCertificateTest::TearDownTestCase()
 {
     CmTestCommon::ResetTestEnvironment();
 }
- 
+
 void CmFindCertificateTest::SetUp()
 {
     /* mock a HAP caller with the common cert-manager permission */
@@ -234,7 +234,7 @@ void CmFindCertificateTest::SetUp()
     CleanupCreatedFiles();
     CleanupAllUserCaRows();
 }
- 
+
 void CmFindCertificateTest::TearDown()
 {
     CleanupRdbData();
@@ -244,22 +244,22 @@ void CmFindCertificateTest::TearDown()
         mockHap_ = nullptr;
     }
 }
- 
+
 /* ---------- CmServiceFindCertCheck ---------- */
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertCheckNullRequest, TestSize.Level0)
 {
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
     EXPECT_EQ(CmServiceFindCertCheck(&context, nullptr), CMR_ERROR_INVALID_ARGUMENT);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertCheckInvalidScope, TestSize.Level0)
 {
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
     struct FindCertRequest request = MakeFindRequest(static_cast<enum CmFindCertScope>(99));
     EXPECT_EQ(CmServiceFindCertCheck(&context, &request), CMR_ERROR_INVALID_ARGUMENT);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertCheckCertTypesNullWithCount, TestSize.Level0)
 {
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
@@ -268,7 +268,7 @@ HWTEST_F(CmFindCertificateTest, FindCertCheckCertTypesNullWithCount, TestSize.Le
     request.certTypes = nullptr;
     EXPECT_EQ(CmServiceFindCertCheck(&context, &request), CMR_ERROR_INVALID_ARGUMENT);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertCheckUnsupportedCertType, TestSize.Level0)
 {
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
@@ -278,7 +278,7 @@ HWTEST_F(CmFindCertificateTest, FindCertCheckUnsupportedCertType, TestSize.Level
     request.certTypes = types;
     EXPECT_EQ(CmServiceFindCertCheck(&context, &request), CMR_ERROR_INVALID_ARGUMENT);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertCheckValidRequest, TestSize.Level0)
 {
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
@@ -288,7 +288,7 @@ HWTEST_F(CmFindCertificateTest, FindCertCheckValidRequest, TestSize.Level0)
     request.certTypes = types;
     EXPECT_EQ(CmServiceFindCertCheck(&context, &request), CM_SUCCESS);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertCheckNoCommonPermission, TestSize.Level0)
 {
     /* a HAP without the common cert-manager permission must be rejected */
@@ -297,9 +297,9 @@ HWTEST_F(CmFindCertificateTest, FindCertCheckNoCommonPermission, TestSize.Level0
     struct FindCertRequest request = MakeFindRequest(CM_FIND_CERT_SCOPE_CURRENT_USER);
     EXPECT_EQ(CmServiceFindCertCheck(&context, &request), CMR_ERROR_PERMISSION_DENIED);
 }
- 
+
 /* ---------- CmServiceFindCertificate ---------- */
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateNullArgs, TestSize.Level0)
 {
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
@@ -308,7 +308,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateNullArgs, TestSize.Level0)
     EXPECT_EQ(CmServiceFindCertificate(nullptr, &request, &result), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(CmServiceFindCertificate(&context, &request, nullptr), CMR_ERROR_INVALID_ARGUMENT);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateNoResultsWhenNoData, TestSize.Level0)
 {
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
@@ -318,7 +318,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateNoResultsWhenNoData, TestSize.Lev
     EXPECT_EQ(result.count, 0u);
     EXPECT_EQ(result.certInfos, nullptr);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateCurrentUserScope, TestSize.Level0)
 {
     SeedAllTestData();
@@ -336,7 +336,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateCurrentUserScope, TestSize.Level0
     }
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateGlobalScope, TestSize.Level0)
 {
     SeedAllTestData();
@@ -350,7 +350,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateGlobalScope, TestSize.Level0)
     }
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateCurrentAndGlobalScope, TestSize.Level0)
 {
     SeedAllTestData();
@@ -361,7 +361,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateCurrentAndGlobalScope, TestSize.L
     ASSERT_EQ(result.count, 4u);
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateNameFilter, TestSize.Level0)
 {
     SeedAllTestData();
@@ -374,7 +374,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateNameFilter, TestSize.Level0)
     EXPECT_STREQ(result.certInfos[0].alias, "aliasAAA");
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateCertIdFilter, TestSize.Level0)
 {
     SeedAllTestData();
@@ -387,7 +387,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateCertIdFilter, TestSize.Level0)
     EXPECT_STREQ(result.certInfos[0].uri, "oh:t=c;o=ccc333;u=0;a=0");
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateCountLimit, TestSize.Level0)
 {
     SeedAllTestData();
@@ -399,7 +399,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateCountLimit, TestSize.Level0)
     ASSERT_EQ(result.count, 3u);
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateCountLimitZero, TestSize.Level0)
 {
     SeedAllTestData();
@@ -411,23 +411,23 @@ HWTEST_F(CmFindCertificateTest, FindCertificateCountLimitZero, TestSize.Level0)
     ASSERT_EQ(result.count, 4u);
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateSkipsMissingFile, TestSize.Level0)
 {
     /* only the first cert has its cert file present; the second must be skipped */
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[0]), CM_SUCCESS);
-    ASSERT_EQ(CreateCertFile(g_testSeeds[0]), CM_SUCCESS);
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[1]), CM_SUCCESS);
- 
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[0]), CM_SUCCESS);
+    ASSERT_EQ(CreateCertFile(FAKE_CERT_DATA[0]), CM_SUCCESS);
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[1]), CM_SUCCESS);
+
     struct CmContext context = { TEST_USERID, TEST_UID, { 0 } };
     struct FindCertRequest request = MakeFindRequest(CM_FIND_CERT_SCOPE_CURRENT_USER);
     struct FindCertResult result = { 0, nullptr };
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
     ASSERT_EQ(result.count, 1u);
-    EXPECT_STREQ(result.certInfos[0].uri, g_testSeeds[0].uri);
+    EXPECT_STREQ(result.certInfos[0].uri, FAKE_CERT_DATA[0].uri);
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateResultFields, TestSize.Level0)
 {
     SeedAllTestData();
@@ -458,7 +458,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateResultFields, TestSize.Level0)
     EXPECT_TRUE(foundBbb);
     CmFreeFindCertResultInner(&result);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, FindCertificateFreeResult, TestSize.Level0)
 {
     SeedAllTestData();
@@ -470,12 +470,12 @@ HWTEST_F(CmFindCertificateTest, FindCertificateFreeResult, TestSize.Level0)
     CmFreeFindCertResultInner(&result);
     EXPECT_EQ(result.count, 0u);
     EXPECT_EQ(result.certInfos, nullptr);
- 
+
     /* double-free / NULL result are no-ops */
     CmFreeFindCertResultInner(&result);
     CmFreeFindCertResultInner(nullptr);
 }
-  
+
 /* ---------- CmFindCertificate (innerkit API) ---------- */
 
 HWTEST_F(CmFindCertificateTest, FindCertificateApiNullArgs, TestSize.Level0)
@@ -512,7 +512,7 @@ HWTEST_F(CmFindCertificateTest, FreeFindCertResultApi, TestSize.Level0)
 }
 
 /* ---------- QueryCertPropertyByCondition ---------- */
- 
+
 HWTEST_F(CmFindCertificateTest, QueryByConditionNullArgs, TestSize.Level0)
 {
     struct CmFindCertCondition condition;
@@ -523,12 +523,12 @@ HWTEST_F(CmFindCertificateTest, QueryByConditionNullArgs, TestSize.Level0)
     EXPECT_EQ(QueryCertPropertyByCondition(&condition, nullptr, &count), CMR_ERROR_INVALID_ARGUMENT);
     EXPECT_EQ(QueryCertPropertyByCondition(&condition, &results, nullptr), CMR_ERROR_INVALID_ARGUMENT);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, QueryByConditionUserIdList, TestSize.Level0)
 {
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[0]), CM_SUCCESS);
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[2]), CM_SUCCESS);
- 
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[0]), CM_SUCCESS);
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[2]), CM_SUCCESS);
+
     struct CmFindCertCondition condition;
     (void)memset_s(&condition, sizeof(condition), 0, sizeof(condition));
     condition.certType = "c";
@@ -542,12 +542,12 @@ HWTEST_F(CmFindCertificateTest, QueryByConditionUserIdList, TestSize.Level0)
     EXPECT_NE(results, nullptr);
     free(results); /* owned by the C query API, allocated with malloc */
 }
- 
+
 HWTEST_F(CmFindCertificateTest, QueryByConditionNameFilter, TestSize.Level0)
 {
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[0]), CM_SUCCESS);
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[1]), CM_SUCCESS);
- 
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[0]), CM_SUCCESS);
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[1]), CM_SUCCESS);
+
     struct CmFindCertCondition condition;
     (void)memset_s(&condition, sizeof(condition), 0, sizeof(condition));
     condition.certType = "c";
@@ -559,11 +559,11 @@ HWTEST_F(CmFindCertificateTest, QueryByConditionNameFilter, TestSize.Level0)
     EXPECT_STREQ(results[0].alias, "aliasBBB");
     free(results);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, QueryByConditionCertIdFilter, TestSize.Level0)
 {
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[2]), CM_SUCCESS);
- 
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[2]), CM_SUCCESS);
+
     struct CmFindCertCondition condition;
     (void)memset_s(&condition, sizeof(condition), 0, sizeof(condition));
     condition.certType = "c";
@@ -575,11 +575,11 @@ HWTEST_F(CmFindCertificateTest, QueryByConditionCertIdFilter, TestSize.Level0)
     EXPECT_STREQ(results[0].uri, "oh:t=c;o=ccc333;u=0;a=0");
     free(results);
 }
- 
+
 HWTEST_F(CmFindCertificateTest, QueryByConditionNoMatch, TestSize.Level0)
 {
-    ASSERT_EQ(InsertUserCertProperty(g_testSeeds[0]), CM_SUCCESS);
- 
+    ASSERT_EQ(InsertUserCertProperty(FAKE_CERT_DATA[0]), CM_SUCCESS);
+
     struct CmFindCertCondition condition;
     (void)memset_s(&condition, sizeof(condition), 0, sizeof(condition));
     condition.certType = "c";
