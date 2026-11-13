@@ -19,6 +19,10 @@ module_output_path = "certificate_manager/certificate_manager"
 ohos_unittest("cm_sdk_test") {
   module_out_path = module_output_path
   sources = [
+    # cm_rdb_api_test.cpp must stay the first source of this binary: gtest
+    # registers cases in link order, and its first case must observe the
+    # engine rdb data managers before any other suite initializes them
+    "unittest/src/cm_rdb_api_test.cpp",
     "unittest/src/cm_abort_test.cpp",
     "unittest/src/cm_app_cert_test.cpp",
     "unittest/src/cm_engine_session_test.cpp",
