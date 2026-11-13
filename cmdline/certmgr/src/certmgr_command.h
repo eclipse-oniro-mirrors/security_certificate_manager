@@ -35,6 +35,7 @@ constexpr int32_t CM_CMD_ERR_DEVICE_ENTER_ADVSECMODE = 5;
 constexpr int32_t CM_CMD_ERR_PERMISSION_DENIED = 6;
 constexpr int32_t CM_CMD_ERR_INTERNAL_ERROR = 7;
 constexpr int32_t CM_CMD_ERR_USER_CANCELLED = 8;
+constexpr int32_t CM_CMD_ERR_CERT_NOT_FOUND = 9;
 
 int32_t MapSdkErrToCmdErr(int32_t sdkErr);
 

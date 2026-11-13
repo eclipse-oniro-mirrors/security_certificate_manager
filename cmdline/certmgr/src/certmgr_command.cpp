@@ -215,6 +215,9 @@ int32_t MapSdkErrToCmdErr(int32_t sdkErr)
             return CM_CMD_ERR_DEVICE_ENTER_ADVSECMODE;
         case CMR_ERROR_PERMISSION_DENIED:
             return CM_CMD_ERR_INTERNAL_ERROR;
+        case CMR_ERROR_NOT_EXIST:
+        case CMR_ERROR_NOT_FOUND:
+            return CM_CMD_ERR_CERT_NOT_FOUND;
         default:
             return CM_CMD_ERR_INTERNAL_ERROR;
     }
@@ -241,6 +244,8 @@ std::string GetErrName(int32_t errCode)
             return "INTERNAL_ERROR";
         case CM_CMD_ERR_USER_CANCELLED:
             return "USER_CANCELLED";
+        case CM_CMD_ERR_CERT_NOT_FOUND:
+            return "CERT_NOT_FOUND";
         default:
             return "UNKNOWN";
     }
@@ -265,6 +270,8 @@ static std::string GetErrDetail(int32_t errCode)
             return "Internal error";
         case CM_CMD_ERR_USER_CANCELLED:
             return "The user cancelled the operation";
+        case CM_CMD_ERR_CERT_NOT_FOUND:
+            return "Certificate not found";
         default:
             return "Unknown error";
     }
@@ -1026,16 +1033,16 @@ int32_t FindUserCACommand::Run()
 
 int32_t ParseUserIdFromUri(const std::string &uri, int32_t &userId)
 {
-    size_t uPos = uri.find("u=");
+    size_t uPos = uri.find(";u=");
     if (uPos == std::string::npos) {
         return CM_CMD_ERR_PARAM_INVALID;
     }
-    size_t valueStart = uPos + 2;
+    size_t valueStart = uPos + 3;
     size_t sepPos = uri.find(';', valueStart);
     std::string userIdStr = (sepPos == std::string::npos)
         ? uri.substr(valueStart)
         : uri.substr(valueStart, sepPos - valueStart);
-    if (userIdStr.empty()) {
+    if (userIdStr.empty() || userIdStr.size() > MAX_UINT32_LEN) {
         return CM_CMD_ERR_PARAM_INVALID;
     }
     for (char c : userIdStr) {
@@ -1043,7 +1050,12 @@ int32_t ParseUserIdFromUri(const std::string &uri, int32_t &userId)
             return CM_CMD_ERR_PARAM_INVALID;
         }
     }
-    userId = std::stoi(userIdStr);
+    char *endPtr = nullptr;
+    long val = strtol(userIdStr.c_str(), &endPtr, 10);
+    if (endPtr == userIdStr.c_str() || *endPtr != '\0' || val < 0 || val > INT_MAX) {
+        return CM_CMD_ERR_PARAM_INVALID;
+    }
+    userId = static_cast<int32_t>(val);
     return CM_CMD_SUCCESS;
 }
 
@@ -1148,6 +1160,8 @@ static bool MatchCertByHash(const struct CertList &certList,
         certInfo.certInfo.data = certDataBuf;
         certInfo.certInfo.size = MAX_LEN_CERTIFICATE;
 
+        /* CM_USER_TRUSTED_STORE is correct for both current and global scope:
+         * the SA resolves userId from the URI's u= field, not from the store */
         int32_t infoRet = CmGetUserCertInfo(&certUri, CM_USER_TRUSTED_STORE, &certInfo);
         if (infoRet != CM_SUCCESS || certInfo.certInfo.size == 0) {
             continue;
@@ -1186,6 +1200,7 @@ static int32_t GetUserCACertListByScope(bool hasG, struct CertList &certList)
         int32_t cmdErr = MapSdkErrToCmdErr(ret);
         WriteError(cmdErr, "Failed to get user CA cert list");
         free(certList.certAbstract);
+        certList.certAbstract = nullptr;
         return cmdErr;
     }
     return CM_CMD_SUCCESS;
@@ -1208,9 +1223,9 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
     bool found = MatchCertByHash(certList, certFileHash, outCertUri);
     free(certList.certAbstract);
     if (!found) {
-        WriteError(CM_CMD_ERR_INTERNAL_ERROR,
+        WriteError(CM_CMD_ERR_CERT_NOT_FOUND,
             "No matching user CA certificate found for the specified certFile");
-        return CM_CMD_ERR_INTERNAL_ERROR;
+        return CM_CMD_ERR_CERT_NOT_FOUND;
     }
     return CM_CMD_SUCCESS;
 }
@@ -1221,7 +1236,7 @@ int32_t UninstallUserCACommand::UninstallByCertUri(const std::string &certUri)
     int32_t ret = ParseUserIdFromUri(certUri, uriUserId);
     if (ret != CM_CMD_SUCCESS) {
         WriteError(CM_CMD_ERR_PARAM_INVALID,
-            "Failed to parse userId from certURI (error code: 29700006)");
+            "Failed to parse userId from certURI");
         WriteStdOut(HELP_UNINSTALL);
         return CM_CMD_ERR_PARAM_INVALID;
     }
