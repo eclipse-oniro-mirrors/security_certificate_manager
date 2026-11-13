@@ -531,3 +531,43 @@ HWTEST_F(CmEngineFileOpTest, CmGetCertConfigStatus_001, TestSize.Level0)
     EXPECT_EQ(CmGetCertConfigStatus(validUri, &status), CM_SUCCESS);
     EXPECT_EQ(status, CERT_STATUS_ENABLED);
 }
+
+/**
+ * @tc.name: CmFileRemoveDirectory_001
+ * @tc.desc: removing a directory through the file remove helper is rejected
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineFileOpTest, CmFileRemoveDirectory_001, TestSize.Level0)
+{
+    MakeDirOrExists(TEST_FILE_OP_ROOT);
+    std::string dir = JoinPath(TEST_FILE_OP_ROOT, "subdir");
+    MakeDirOrExists(dir.c_str());
+
+    /* a directory is not a certificate file: the remove must fail loudly */
+    EXPECT_EQ(CmFileRemove(TEST_FILE_OP_ROOT, "subdir"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CertManagerFileRemove(TEST_FILE_OP_ROOT, "subdir"), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmIsDirExist(dir.c_str()), CMR_OK);
+}
+
+/**
+ * @tc.name: CmUserBakupMakeDirEdge_001
+ * @tc.desc: the backup directory maker rejects dot-dot paths and applies the default mode
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineFileOpTest, CmUserBakupMakeDirEdge_001, TestSize.Level0)
+{
+    MakeDirOrExists(TEST_FILE_OP_ROOT);
+
+    /* paths containing a dot-dot segment are rejected before mkdir */
+    std::string hostile = JoinPath(TEST_FILE_OP_ROOT, "a..b");
+    EXPECT_EQ(CmUserBakupMakeDir(hostile.c_str(), nullptr), CMR_ERROR_MAKE_DIR_FAIL);
+    EXPECT_EQ(CmIsDirExist(hostile.c_str()), CMR_ERROR_NOT_EXIST);
+
+    /* without an explicit mode the default 0705 is applied */
+    std::string dir = JoinPath(TEST_FILE_OP_ROOT, "default_mode_dir");
+    EXPECT_EQ(CmUserBakupMakeDir(dir.c_str(), nullptr), CMR_OK);
+    EXPECT_EQ(CmIsDirExist(dir.c_str()), CMR_OK);
+
+    /* creating it again short circuits through the existence check */
+    EXPECT_EQ(CmUserBakupMakeDir(dir.c_str(), nullptr), CMR_OK);
+}

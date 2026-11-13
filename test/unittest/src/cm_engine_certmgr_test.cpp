@@ -734,6 +734,36 @@ HWTEST_F(CmEngineCertMgrTest, CmEngineRemoveUserCertFlow_001, TestSize.Level0)
 }
 
 /**
+ * @tc.name: CmBackupRemoveHappyPath_001
+ * @tc.desc: the backup remove helper cleans the config file and the backup file
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineCertMgrTest, CmBackupRemoveHappyPath_001, TestSize.Level0)
+{
+    const std::string uri = "oh:t=c;o=R7BackupHappy;u=8899;a=889901";
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(uriBuf), sizeof(uriBuf), uri.c_str()), EOK);
+    struct CmBlob certUri = { uri.size() + 1, uriBuf };
+
+    std::string confFile;
+    MakeConfigAndBackup(uri, "r7backuphappy.0", confFile);
+    ASSERT_EQ(CmIsFileExist(nullptr, confFile.c_str()), CMR_OK);
+
+    char backupDirBuf[CERT_MAX_PATH_LEN] = { 0 };
+    ASSERT_EQ(CmGetCertBackupDir(TEST_CM_USER, backupDirBuf, sizeof(backupDirBuf)), CM_SUCCESS);
+    ASSERT_EQ(CmIsFileExist(backupDirBuf, "r7backuphappy.0"), CMR_OK);
+
+    /* a numeric uid directory locates the config and removes config plus backup */
+    const std::string uidDir = MakeStoreUidDir(USER_CA_STORE, TEST_CM_USER, TEST_CM_UID);
+    EXPECT_EQ(CmBackupRemove(TEST_CM_USER, uidDir.c_str(), &certUri), CMR_OK);
+    EXPECT_NE(CmIsFileExist(nullptr, confFile.c_str()), CMR_OK);
+    EXPECT_NE(CmIsFileExist(backupDirBuf, "r7backuphappy.0"), CMR_OK);
+
+    /* with the config file gone the sa-conf step reports the missing file */
+    EXPECT_EQ(CmBackupRemove(TEST_CM_USER, uidDir.c_str(), &certUri), CMR_ERROR_NOT_EXIST);
+}
+
+/**
  * @tc.name: CmEngineRemoveAllUserCert_001
  * @tc.desc: the bulk removal wipes files, backups, config dirs and rdb rows.
  * @tc.type: FUNC

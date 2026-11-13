@@ -680,6 +680,231 @@ HWTEST_F(CmEngineAppCertTest, CmEngineGrantCertFlow_001, TestSize.Level0)
 }
 
 /**
+ * @tc.name: CmEngineGrantEdge_001
+ * @tc.desc: a credential file owned by another app does not authorize the grant.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineGrantEdge_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+
+    /* fake credential files in the caller's directory pass the existence
+     * check, but fail the uri type and the producer identity checks */
+    const std::string userDir = std::string(CREDNTIAL_STORE) + "0";
+    const std::string uidDir = userDir + "/" + std::to_string(TEST_APPCERT_UID);
+    if (CmIsDirExist(userDir.c_str()) != CMR_OK) {
+        ASSERT_EQ(CmMakeDir(userDir.c_str()), CMR_OK);
+    }
+    if (CmIsDirExist(uidDir.c_str()) != CMR_OK) {
+        ASSERT_EQ(CmMakeDir(uidDir.c_str()), CMR_OK);
+    }
+    struct CmBlob certData = { sizeof(g_rsa2048P12CertInfo),
+        const_cast<uint8_t *>(g_rsa2048P12CertInfo) };
+    const std::string strangerUri = "oh:t=ak;o=R7GrantEdge;u=0;a=" +
+        std::to_string(TEST_APPCERT_OTHER_UID);
+    const std::string certTypeUri = "oh:t=c;o=R7GrantEdge;u=0;a=" + std::to_string(TEST_APPCERT_UID);
+    ASSERT_EQ(CmFileWrite(uidDir.c_str(), strangerUri.c_str(), 0, certData.data, certData.size),
+        CMR_OK);
+    ASSERT_EQ(CmFileWrite(uidDir.c_str(), certTypeUri.c_str(), 0, certData.data, certData.size),
+        CMR_OK);
+
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    uint8_t authUriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob authUri = { sizeof(authUriBuf), authUriBuf };
+    struct CmBlob keyUri = StringBlobOn(strangerUri.c_str(), uriBuf, sizeof(uriBuf));
+    EXPECT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_THIRD_UID, &authUri),
+        CMR_ERROR_NOT_PERMITTED);
+
+    struct CmBlob certUri = StringBlobOn(certTypeUri.c_str(), uriBuf, sizeof(uriBuf));
+    EXPECT_EQ(CmServiceGrantAppCertificate(&context, &certUri, TEST_APPCERT_THIRD_UID, &authUri),
+        CMR_ERROR_INVALID_ARGUMENT_URI);
+}
+
+/**
+ * @tc.name: CmEngineAuthListEdge_001
+ * @tc.desc: the authorized app list rejects strangers and small buffers.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineAuthListEdge_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+    ASSERT_EQ(InstallP12Cert("R7ListEdge", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL1, &context, &keyUri), CM_SUCCESS);
+
+    /* an installed credential that was never granted reports an empty list */
+    uint32_t appUids[AUTH_UID_CAPACITY] = { 0 };
+    struct CmAppUidList appUidList = { AUTH_UID_CAPACITY, appUids };
+    ASSERT_EQ(CmServiceGetAuthorizedAppList(&context, &keyUri, &appUidList), CM_SUCCESS);
+    EXPECT_EQ(appUidList.appUidCount, 0u);
+
+    uint8_t authUriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob authUri = { sizeof(authUriBuf), authUriBuf };
+    ASSERT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_OTHER_UID, &authUri),
+        CM_SUCCESS);
+
+    /* a caller that is not the producer may not read the list */
+    struct CmContext stranger = BuildContext(0, TEST_APPCERT_THIRD_UID);
+    appUidList = { AUTH_UID_CAPACITY, appUids };
+    EXPECT_EQ(CmServiceGetAuthorizedAppList(&stranger, &keyUri, &appUidList),
+        CMR_ERROR_NOT_PERMITTED);
+
+    /* the real count does not fit into a zero sized output list */
+    appUidList = { 0, nullptr };
+    EXPECT_EQ(CmServiceGetAuthorizedAppList(&context, &keyUri, &appUidList),
+        CMR_ERROR_BUFFER_TOO_SMALL);
+
+    /* the grant also rejects an auth uri buffer that cannot hold the result */
+    uint8_t tinyBuf[8] = { 0 };
+    struct CmBlob tinyAuthUri = { sizeof(tinyBuf), tinyBuf };
+    EXPECT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_THIRD_UID,
+        &tinyAuthUri), CMR_ERROR_BUFFER_TOO_SMALL);
+
+    /* the failed grant left the auth list unchanged */
+    appUidList = { AUTH_UID_CAPACITY, appUids };
+    (void)memset_s(appUids, sizeof(appUids), 0, sizeof(appUids));
+    ASSERT_EQ(CmServiceGetAuthorizedAppList(&context, &keyUri, &appUidList), CM_SUCCESS);
+    EXPECT_EQ(appUidList.appUidCount, 1u);
+    EXPECT_EQ(appUidList.appUid[0], TEST_APPCERT_OTHER_UID);
+
+    ASSERT_EQ(CmServiceRemoveGrantedApp(&context, &keyUri, TEST_APPCERT_OTHER_UID), CM_SUCCESS);
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmEngineAuthUriParsingEdge_001
+ * @tc.desc: malformed uri type, client app and mac fields make an auth uri unusable.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineAuthUriParsingEdge_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+    ASSERT_EQ(InstallP12Cert("R7UriParse", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL1, &context, &keyUri), CM_SUCCESS);
+
+    uint8_t authUriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob authUri = { sizeof(authUriBuf), authUriBuf };
+    ASSERT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_OTHER_UID, &authUri),
+        CM_SUCCESS);
+    const std::string goodUri(reinterpret_cast<char *>(authUriBuf));
+    ASSERT_NE(goodUri.find("&m="), std::string::npos);
+
+    struct CmContext authed = BuildContext(0, TEST_APPCERT_OTHER_UID);
+    uint8_t badBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob badUri = { 0, nullptr };
+
+    /* a certificate uri is not an auth uri */
+    std::string bad = goodUri;
+    bad.replace(bad.find("t=ak"), 4, "t=c");
+    badUri = StringBlobOn(bad.c_str(), badBuf, sizeof(badBuf));
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &badUri), CMR_ERROR_INVALID_ARGUMENT_URI);
+
+    /* a non numeric client app is rejected after the mac parsed fine */
+    bad = goodUri;
+    bad.replace(bad.find("?ca=") + 4, 6, "xyz");
+    badUri = StringBlobOn(bad.c_str(), badBuf, sizeof(badBuf));
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &badUri), CMR_ERROR_INVALID_ARGUMENT_URI);
+
+    /* a mac containing non hex characters fails the byte conversion */
+    bad = goodUri;
+    bad.replace(bad.find("&m=") + 3, 64, std::string(64, 'z'));
+    badUri = StringBlobOn(bad.c_str(), badBuf, sizeof(badBuf));
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &badUri), CMR_ERROR_INVALID_ARGUMENT_URI);
+
+    /* an odd length mac is rejected by the hex parser */
+    bad = goodUri;
+    bad.replace(bad.find("&m=") + 3, 64, std::string(63, 'a'));
+    badUri = StringBlobOn(bad.c_str(), badBuf, sizeof(badBuf));
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &badUri), CMR_ERROR_INVALID_ARGUMENT_URI);
+
+    /* a valid but short mac matches no digest size */
+    bad = goodUri;
+    bad.replace(bad.find("&m=") + 3, bad.size() - bad.find("&m=") - 3, "abab");
+    badUri = StringBlobOn(bad.c_str(), badBuf, sizeof(badBuf));
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &badUri), CMR_ERROR_AUTH_FAILED_MAC_MISMATCH);
+
+    /* the untouched auth uri still authorizes the granted app */
+    badUri = StringBlobOn(goodUri.c_str(), badBuf, sizeof(badBuf));
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &badUri), CM_SUCCESS);
+
+    ASSERT_EQ(CmServiceRemoveGrantedApp(&context, &keyUri, TEST_APPCERT_OTHER_UID), CM_SUCCESS);
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmEngineAuthErrorLevelFlow_001
+ * @tc.desc: a missing rdb row degrades the grant and remove level to the default el1.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineAuthErrorLevelFlow_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+    ASSERT_EQ(InstallP12Cert("R7ErrLevel", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL1, &context, &keyUri), CM_SUCCESS);
+
+    uint8_t authUriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob authUri = { sizeof(authUriBuf), authUriBuf };
+    ASSERT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_OTHER_UID, &authUri),
+        CM_SUCCESS);
+
+    /* drop the rdb row: every level query now degrades to the default el1 */
+    ASSERT_EQ(DeleteCertProperty(reinterpret_cast<char *>(uriBuf)), CM_SUCCESS);
+    struct CmContext authed = BuildContext(0, TEST_APPCERT_OTHER_UID);
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &authUri), CM_SUCCESS);
+
+    /* a second grant also works with the recovered el1 level */
+    uint8_t authUriBuf2[MAX_LEN_URI] = { 0 };
+    struct CmBlob authUri2 = { sizeof(authUriBuf2), authUriBuf2 };
+    ASSERT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_THIRD_UID, &authUri2),
+        CM_SUCCESS);
+
+    /* revocation and removal keep working while the row is missing */
+    ASSERT_EQ(CmServiceRemoveGrantedApp(&context, &keyUri, TEST_APPCERT_OTHER_UID), CM_SUCCESS);
+    ASSERT_EQ(CmServiceRemoveGrantedApp(&context, &keyUri, TEST_APPCERT_THIRD_UID), CM_SUCCESS);
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmEngineAuthDeleteInfoPopulated_001
+ * @tc.desc: removing a credential wipes every granted mac key from the auth list.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineAuthDeleteInfoPopulated_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+    ASSERT_EQ(InstallP12Cert("R7DelAuthInfo", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL1, &context, &keyUri), CM_SUCCESS);
+
+    /* two grantees populate the auth list */
+    uint8_t authUriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob authUri = { sizeof(authUriBuf), authUriBuf };
+    ASSERT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_OTHER_UID, &authUri),
+        CM_SUCCESS);
+    ASSERT_EQ(CmServiceGrantAppCertificate(&context, &keyUri, TEST_APPCERT_THIRD_UID, &authUri),
+        CM_SUCCESS);
+
+    /* removing the credential deletes both granted mac keys through the
+     * populated auth list and still succeeds */
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+
+    /* the auth uri stopped authorizing: its mac key is gone */
+    struct CmContext authed = BuildContext(0, TEST_APPCERT_OTHER_UID);
+    EXPECT_EQ(CmServiceIsAuthorizedApp(&authed, &authUri), CMR_ERROR_AUTH_FAILED_MAC_FAILED);
+}
+
+/**
  * @tc.name: CmEngineSignVerifyCred_001
  * @tc.desc: the installed credential signs a message and verifies the signature.
  * @tc.type: FUNC
@@ -785,6 +1010,64 @@ HWTEST_F(CmEngineAppCertTest, CmEngineSignVerifyAuthedApp_001, TestSize.Level0)
 }
 
 /**
+ * @tc.name: CmEngineSignVerifySysCred_001
+ * @tc.desc: a system credential signs for the producer and for sa scoped callers.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineSignVerifySysCred_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext producer = BuildContext(TEST_APPCERT_USER, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+    ASSERT_EQ(InstallP12Cert("R7SysSign", CM_SYS_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL1, &producer, &keyUri), CM_SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<char *>(uriBuf)).rfind(
+        "oh:t=sk;o=R7SysSign;u=8899;a=889901", 0), 0u);
+
+    struct CmSignatureSpec spec;
+    InitSignatureSpec(&spec, CM_KEY_PURPOSE_SIGN);
+    struct CmBlob message;
+    MakeMessageBlob(&message);
+    uint64_t handleValue = 0;
+    struct CmBlob handle = { sizeof(handleValue), reinterpret_cast<uint8_t *>(&handleValue) };
+    uint8_t signData[1024] = { 0 };
+    struct CmBlob signature = { sizeof(signData), signData };
+    struct CmBlob emptyIn = { 0, nullptr };
+
+    /* the producer completes a full sign roundtrip */
+    ASSERT_EQ(CmServiceInit(&producer, &keyUri, &spec, &handle), CM_SUCCESS);
+    ASSERT_EQ(CmServiceUpdate(&producer, &handle, &message), CM_SUCCESS);
+    ASSERT_EQ(CmServiceFinish(&producer, &handle, &emptyIn, &signature), CM_SUCCESS);
+    EXPECT_EQ(signature.size, RSA2048_SIGNATURE_LEN);
+    EXPECT_EQ(CmServiceAbort(&producer, &handle), CM_SUCCESS);
+
+    /* verify the signature with the same credential */
+    InitSignatureSpec(&spec, CM_KEY_PURPOSE_VERIFY);
+    handleValue = 0;
+    ASSERT_EQ(CmServiceInit(&producer, &keyUri, &spec, &handle), CM_SUCCESS);
+    ASSERT_EQ(CmServiceUpdate(&producer, &handle, &message), CM_SUCCESS);
+    struct CmBlob sigIn = { signature.size, signature.data };
+    struct CmBlob verifyOut = { 0, nullptr };
+    EXPECT_EQ(CmServiceFinish(&producer, &handle, &sigIn, &verifyOut), CM_SUCCESS);
+    EXPECT_EQ(CmServiceAbort(&producer, &handle), CM_SUCCESS);
+
+    /* an sa scoped caller may init on the system store: the producer check
+     * is skipped for system credentials */
+    struct CmContext saCaller = BuildContext(0, TEST_APPCERT_OTHER_UID);
+    handleValue = 0;
+    ASSERT_EQ(CmServiceInit(&saCaller, &keyUri, &spec, &handle), CM_SUCCESS);
+    EXPECT_EQ(CmServiceAbort(&saCaller, &handle), CM_SUCCESS);
+
+    /* a caller bound to another front user is rejected by the uri user check */
+    struct CmContext otherUser = BuildContext(1, TEST_APPCERT_OTHER_UID);
+    EXPECT_EQ(CmServiceInit(&otherUser, &keyUri, &spec, &handle),
+        CMR_ERROR_INVALID_ARGUMENT_USER_ID);
+
+    ASSERT_EQ(CmRemoveAppCert(&producer, &keyUri, CM_SYS_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
  * @tc.name: CmEngineRemoveAllAppCert_001
  * @tc.desc: remove-all sweeps the private and system credentials of the caller user.
  * @tc.type: FUNC
@@ -827,6 +1110,40 @@ HWTEST_F(CmEngineAppCertTest, CmEngineRemoveAllAppCert_001, TestSize.Level0)
     level = CM_AUTH_STORAGE_LEVEL_EL1;
     ASSERT_EQ(GetRdbAuthStorageLevel(&sysKeyUri, &level), CM_SUCCESS);
     EXPECT_EQ(level, ERROR_LEVEL);
+}
+
+/**
+ * @tc.name: CmEngineRemoveAppCertStoreMismatch_001
+ * @tc.desc: a credential is only removable through the store it was installed to.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineRemoveAppCertStoreMismatch_001, TestSize.Level0)
+{
+    MockHapToken mockHap;
+    struct CmContext context = BuildContext(0, TEST_APPCERT_UID);
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob keyUri = { sizeof(uriBuf), uriBuf };
+    ASSERT_EQ(InstallP12Cert("R7StoreMis", CM_CREDENTIAL_STORE, INIT_INVALID_VALUE,
+        CM_AUTH_STORAGE_LEVEL_EL1, &context, &keyUri), CM_SUCCESS);
+
+    /* the rdb row records the public credential store: removing it through
+     * the private store is rejected */
+    EXPECT_EQ(CmRemoveAppCert(&context, &keyUri, CM_PRI_CREDENTIAL_STORE), CMR_ERROR_NOT_EXIST);
+
+    /* the matching store removes it */
+    ASSERT_EQ(CmRemoveAppCert(&context, &keyUri, CM_CREDENTIAL_STORE), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: CmEngineRemoveAllNotSystemApp_001
+ * @tc.desc: remove-all rejects a non system caller that holds the permissions.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineAppCertTest, CmEngineRemoveAllNotSystemApp_001, TestSize.Level0)
+{
+    MockHapToken notSystemApp(CmTestCommon::DefaultPermissions(), false);
+    struct CmContext context = BuildContext(TEST_APPCERT_USER, TEST_APPCERT_UID);
+    EXPECT_EQ(CmRemoveAllAppCert(&context), CMR_ERROR_NOT_SYSTEMP_APP);
 }
 
 namespace {

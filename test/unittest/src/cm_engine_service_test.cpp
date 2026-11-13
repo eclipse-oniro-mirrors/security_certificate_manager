@@ -186,6 +186,27 @@ int32_t InstallUserCertWithAlias(const std::string &alias, std::string &outUri)
     return ret;
 }
 
+/* install one user CA cert for an explicit target user id (0 installs globally) */
+int32_t InstallUserCertWithAliasForUser(const std::string &alias, uint32_t userId, std::string &outUri)
+{
+    struct CmContext context = BuildContext(userId, TEST_SERVICE_UID);
+    struct CmBlob userCert = { strlen(g_certData06), reinterpret_cast<uint8_t *>(g_certData06) };
+    uint8_t aliasBuf[MAX_LEN_CERT_ALIAS] = { 0 };
+    if (strcpy_s(reinterpret_cast<char *>(aliasBuf), sizeof(aliasBuf), alias.c_str()) != EOK) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    struct CmBlob certAlias = { alias.size() + 1, aliasBuf };
+    uint8_t uriBuf[MAX_LEN_URI] = { 0 };
+    struct CmBlob certUri = { sizeof(uriBuf), uriBuf };
+
+    int32_t ret = CmInstallUserCert(&context, &userCert, &certAlias, CERT_STATUS_ENABLED, &certUri);
+    if (ret == CM_SUCCESS) {
+        outUri = std::string(reinterpret_cast<char *>(uriBuf));
+        g_installedUris.emplace_back(outUri);
+    }
+    return ret;
+}
+
 /* number of certificates inside the P7B test data */
 int32_t CountP7bCerts(void)
 {
@@ -640,6 +661,46 @@ HWTEST_F(CmEngineServiceTest, CmServiceGetCertListScopes_002, TestSize.Level0)
     /* system store */
     ASSERT_EQ(CmServiceGetCertList(&hapContext, &allProp, CM_SYSTEM_TRUSTED_STORE, &certFileList), CM_SUCCESS);
     CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
+}
+
+/**
+ * @tc.name: CmServiceGetCertListSaScopes_001
+ * @tc.desc: get cert list covers the current, global and all-user scopes for sa callers.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceGetCertListSaScopes_001, TestSize.Level0)
+{
+    const std::string uidDir = std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER) + "/" +
+        std::to_string(TEST_SERVICE_UID);
+    MakeDirOrExists(uidDir);
+    const uint8_t *certData = reinterpret_cast<const uint8_t *>(g_certData06);
+    ASSERT_EQ(CmFileWrite(uidDir.c_str(), "oh:t=c;o=sascope;u=8899;a=889901", 0,
+        const_cast<uint8_t *>(certData), strlen(g_certData06)), CMR_OK);
+
+    struct CmContext saContext = BuildContext(0, 0);
+    struct CmMutableBlob certFileList = { 0, nullptr };
+
+    /* current user scope resolves the target user id for the sa caller */
+    struct UserCAProperty currentProp = { TEST_SERVICE_USER, CM_CURRENT_USER };
+    ASSERT_EQ(CmServiceGetCertList(&saContext, &currentProp, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
+    EXPECT_EQ(certFileList.size, 1u);
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
+    certFileList = { 0, nullptr };
+
+    /* global scope keeps the sa caller's own user id 0 */
+    struct UserCAProperty globalProp = { TEST_SERVICE_USER, CM_GLOBAL_USER };
+    ASSERT_EQ(CmServiceGetCertList(&saContext, &globalProp, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
+    CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
+    certFileList = { 0, nullptr };
+
+    /* all-user scope with the caller's own user id skips the target lookup and
+     * merges an empty caller path list */
+    RemoveTree(std::string(USER_CA_STORE) + std::to_string(TEST_SERVICE_USER));
+    RemoveTree(std::string(USER_CA_STORE) + "0");
+    struct UserCAProperty allProp = { 0, CM_ALL_USER };
+    ASSERT_EQ(CmServiceGetCertList(&saContext, &allProp, CM_USER_TRUSTED_STORE, &certFileList), CM_SUCCESS);
+    EXPECT_EQ(certFileList.size, 0u);
+    EXPECT_EQ(certFileList.data, nullptr);
 }
 
 /**
@@ -1314,6 +1375,254 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateMatch_002, TestSize.Level0
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
     ASSERT_GE(result.count, 2u);
+    FreeFindCertResult(&result);
+}
+
+/**
+ * @tc.name: CmServiceSetCertManagerConfigEdge_001
+ * @tc.desc: config set rejects bad counts, empty, unsupported, protected keys and bad values.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceSetCertManagerConfigEdge_001, TestSize.Level0)
+{
+    const char *enableListKey = "enableInstallGlobalUserCA_userList";
+    (void)DeleteConfigByKey(enableListKey);
+
+    struct CmConfigItem item;
+    (void)memset_s(&item, sizeof(item), 0, sizeof(item));
+    ASSERT_EQ(strcpy_s(item.key, sizeof(item.key), enableListKey), EOK);
+    ASSERT_EQ(strcpy_s(item.value, sizeof(item.value), "8899"), EOK);
+    struct CertManagerConfig config;
+    (void)memset_s(&config, sizeof(config), 0, sizeof(config));
+    config.configItems = &item;
+
+    MockHapToken mockHap;
+
+    /* count zero and beyond the item cap */
+    config.count = 0;
+    EXPECT_EQ(CmServiceSetCertManagerConfig(&config), CMR_ERROR_INVALID_ARGUMENT);
+    struct CmConfigItem items[MAX_COUNT_CONFIG_ITEM + 1];
+    (void)memset_s(items, sizeof(items), 0, sizeof(items));
+    struct CertManagerConfig tooMany = { MAX_COUNT_CONFIG_ITEM + 1, items };
+    EXPECT_EQ(CmServiceSetCertManagerConfig(&tooMany), CMR_ERROR_INVALID_ARGUMENT);
+
+    /* a single item walked through every rejection reason */
+    struct CmConfigItem badItem;
+    (void)memset_s(&badItem, sizeof(badItem), 0, sizeof(badItem));
+    struct CertManagerConfig oneBad = { 1, &badItem };
+    ASSERT_EQ(strcpy_s(badItem.value, sizeof(badItem.value), "8899"), EOK);
+    EXPECT_EQ(CmServiceSetCertManagerConfig(&oneBad), CMR_ERROR_INVALID_ARGUMENT); /* empty key */
+    ASSERT_EQ(strcpy_s(badItem.key, sizeof(badItem.key), "com.r7.unsupported.key"), EOK);
+    EXPECT_EQ(CmServiceSetCertManagerConfig(&oneBad), CMR_ERROR_INVALID_ARGUMENT);
+    ASSERT_EQ(strcpy_s(badItem.key, sizeof(badItem.key), "last_cleanup_utc"), EOK);
+    EXPECT_EQ(CmServiceSetCertManagerConfig(&oneBad), CMR_ERROR_INVALID_ARGUMENT); /* protected */
+    ASSERT_EQ(strcpy_s(badItem.key, sizeof(badItem.key), enableListKey), EOK);
+    ASSERT_EQ(strcpy_s(badItem.value, sizeof(badItem.value), "88a9"), EOK);
+    EXPECT_EQ(CmServiceSetCertManagerConfig(&oneBad), CMR_ERROR_INVALID_ARGUMENT); /* bad value */
+
+    /* a valid item stores */
+    config.count = 1;
+    ASSERT_EQ(CmServiceSetCertManagerConfig(&config), CM_SUCCESS);
+    (void)DeleteConfigByKey(enableListKey);
+}
+
+/**
+ * @tc.name: CmServiceGetCertManagerConfigEdge_001
+ * @tc.desc: config get validates the caller and falls back to query-all on empty key blobs.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceGetCertManagerConfigEdge_001, TestSize.Level0)
+{
+    const char *enableListKey = "enableInstallGlobalUserCA_userList";
+    const char *disableListKey = "disableInstallGlobalUserCA_userList";
+    (void)DeleteConfigByKey(enableListKey);
+    (void)DeleteConfigByKey(disableListKey);
+
+    uint8_t keyBuf[MAX_LEN_CONFIG_KEY * 2] = { 0 };
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(keyBuf), sizeof(keyBuf), enableListKey), EOK);
+    struct CmBlob keysBlob = { strlen(enableListKey) + 1, keyBuf };
+    struct CertManagerConfig outConfig;
+    (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
+
+    /* get without the common permission is rejected before any query */
+    EXPECT_EQ(CmServiceGetCertManagerConfig(&keysBlob, &outConfig), CMR_ERROR_PERMISSION_DENIED);
+
+    /* a non system hap caller gets the dedicated error */
+    {
+        MockHapToken mockNonSystem(std::vector<std::string>{ "ohos.permission.ACCESS_CERT_MANAGER" }, false);
+        EXPECT_EQ(CmServiceGetCertManagerConfig(&keysBlob, &outConfig), CMR_ERROR_NOT_SYSTEMP_APP);
+    }
+
+    MockHapToken mockHap;
+
+    /* store one row so the query-all paths have deterministic data */
+    struct CmConfigItem item;
+    (void)memset_s(&item, sizeof(item), 0, sizeof(item));
+    ASSERT_EQ(strcpy_s(item.key, sizeof(item.key), enableListKey), EOK);
+    ASSERT_EQ(strcpy_s(item.value, sizeof(item.value), "8899"), EOK);
+    struct CertManagerConfig config = { 1, &item };
+    ASSERT_EQ(CmServiceSetCertManagerConfig(&config), CM_SUCCESS);
+
+    /* null key data and a zero size both mean: query all config items */
+    struct CmBlob nullData = { 1, nullptr };
+    (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
+    ASSERT_EQ(CmServiceGetCertManagerConfig(&nullData, &outConfig), CM_SUCCESS);
+    EXPECT_GE(outConfig.count, 1u);
+    EXPECT_LE(outConfig.count, MAX_COUNT_CONFIG_ITEM);
+    FreeCertManagerConfig(&outConfig);
+
+    struct CmBlob emptyKeys = { 0, nullptr };
+    (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
+    ASSERT_EQ(CmServiceGetCertManagerConfig(&emptyKeys, &outConfig), CM_SUCCESS);
+    EXPECT_GE(outConfig.count, 1u);
+    FreeCertManagerConfig(&outConfig);
+
+    /* a blob without a terminating zero is rejected before parsing */
+    constexpr uint32_t RAW_KEY_BLOB_LEN = 32;
+    uint8_t rawBuf[RAW_KEY_BLOB_LEN];
+    (void)memset_s(rawBuf, sizeof(rawBuf), 'x', sizeof(rawBuf));
+    struct CmBlob rawBlob = { sizeof(rawBuf), rawBuf };
+    EXPECT_EQ(CmServiceGetCertManagerConfig(&rawBlob, &outConfig), CMR_ERROR_INVALID_ARGUMENT);
+
+    (void)DeleteConfigByKey(enableListKey);
+}
+
+/**
+ * @tc.name: CmServiceGetCertManagerConfigKeys_001
+ * @tc.desc: key blob parsing caps the key length and skips over unknown keys.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceGetCertManagerConfigKeys_001, TestSize.Level0)
+{
+    const char *enableListKey = "enableInstallGlobalUserCA_userList";
+    const char *disableListKey = "disableInstallGlobalUserCA_userList";
+    (void)DeleteConfigByKey(enableListKey);
+    (void)DeleteConfigByKey(disableListKey);
+
+    MockHapToken mockHap;
+
+    struct CmConfigItem item;
+    (void)memset_s(&item, sizeof(item), 0, sizeof(item));
+    ASSERT_EQ(strcpy_s(item.key, sizeof(item.key), enableListKey), EOK);
+    ASSERT_EQ(strcpy_s(item.value, sizeof(item.value), "8899"), EOK);
+    struct CertManagerConfig config = { 1, &item };
+    ASSERT_EQ(CmServiceSetCertManagerConfig(&config), CM_SUCCESS);
+
+    struct CertManagerConfig outConfig;
+
+    /* a key at the length cap is parsed but unknown: no items come back */
+    uint8_t kBuf[MAX_LEN_CONFIG_KEY + 1] = { 0 };
+    (void)memset_s(kBuf, sizeof(kBuf), 'k', MAX_LEN_CONFIG_KEY);
+    kBuf[MAX_LEN_CONFIG_KEY] = '\0';
+    struct CmBlob kBlob = { sizeof(kBuf), kBuf };
+    (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
+    ASSERT_EQ(CmServiceGetCertManagerConfig(&kBlob, &outConfig), CM_SUCCESS);
+    EXPECT_EQ(outConfig.count, 0u);
+    EXPECT_EQ(outConfig.configItems, nullptr);
+
+    /* a multi key blob returns only the stored key */
+    uint8_t mixedBuf[MAX_LEN_CONFIG_KEY * 2] = { 0 };
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(mixedBuf), sizeof(mixedBuf), enableListKey), EOK);
+    uint32_t secondPos = strlen(enableListKey) + 1;
+    ASSERT_EQ(memcpy_s(mixedBuf + secondPos, sizeof(mixedBuf) - secondPos, disableListKey,
+        strlen(disableListKey) + 1), EOK);
+    struct CmBlob mixedBlob = { secondPos + strlen(disableListKey) + 1, mixedBuf };
+    (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
+    ASSERT_EQ(CmServiceGetCertManagerConfig(&mixedBlob, &outConfig), CM_SUCCESS);
+    EXPECT_EQ(outConfig.count, 1u);
+    EXPECT_EQ(strcmp(outConfig.configItems[0].key, enableListKey), 0);
+    EXPECT_EQ(strcmp(outConfig.configItems[0].value, "8899"), 0);
+    FreeCertManagerConfig(&outConfig);
+
+    /* a blob with only an unset key skips it and returns nothing */
+    uint8_t missBuf[MAX_LEN_CONFIG_KEY * 2] = { 0 };
+    ASSERT_EQ(strcpy_s(reinterpret_cast<char *>(missBuf), sizeof(missBuf), disableListKey), EOK);
+    struct CmBlob missBlob = { strlen(disableListKey) + 1, missBuf };
+    (void)memset_s(&outConfig, sizeof(outConfig), 0, sizeof(outConfig));
+    ASSERT_EQ(CmServiceGetCertManagerConfig(&missBlob, &outConfig), CM_SUCCESS);
+    EXPECT_EQ(outConfig.count, 0u);
+    EXPECT_EQ(outConfig.configItems, nullptr);
+
+    (void)DeleteConfigByKey(enableListKey);
+}
+
+/**
+ * @tc.name: CmServiceFindCertificateGlobal_001
+ * @tc.desc: rows installed under the global user id zero are visible to the global scope only.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateGlobal_001, TestSize.Level0)
+{
+    std::string firstUri;
+    std::string secondUri;
+    ASSERT_EQ(InstallUserCertWithAliasForUser("R7GlobalOne", 0, firstUri), CM_SUCCESS);
+    ASSERT_EQ(InstallUserCertWithAliasForUser("R7GlobalTwo", 0, secondUri), CM_SUCCESS);
+
+    MockHapToken mockHap;
+
+    struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
+    struct FindCertRequest request;
+    (void)memset_s(&request, sizeof(request), 0, sizeof(request));
+    request.scope = CM_FIND_CERT_SCOPE_GLOBAL;
+    ASSERT_EQ(strcpy_s(request.name, sizeof(request.name), "R7Global"), EOK);
+
+    struct FindCertResult result;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+    ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
+    ASSERT_EQ(result.count, 2u);
+    EXPECT_STREQ(result.certInfos[0].uri, firstUri.c_str());
+    EXPECT_STREQ(result.certInfos[1].uri, secondUri.c_str());
+    EXPECT_EQ(result.certInfos[0].type, CM_FIND_CERT_TYPE_USER_CA);
+    EXPECT_EQ(result.certInfos[0].scope, CM_FIND_CERT_SCOPE_GLOBAL);
+    EXPECT_EQ(result.certInfos[0].state, CERT_STATUS_ENABLED);
+    EXPECT_GT(result.certInfos[0].certData.size, 0u);
+    FreeFindCertResult(&result);
+
+    /* the current user scope does not see the global rows */
+    request.scope = CM_FIND_CERT_SCOPE_CURRENT_USER;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+    ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
+    EXPECT_EQ(result.count, 0u);
+    EXPECT_EQ(result.certInfos, nullptr);
+
+    /* the global user id 0 files and backups are removed here, rdb rows in teardown */
+    RemoveTree(std::string(USER_CA_STORE) + "0");
+    RemoveTree(std::string(CERT_BACKUP_CONFIG_ROOT_DIR) + "/0");
+    RemoveTree(std::string(CERT_BACKUP_ROOT_DIR) + "/0");
+}
+
+/**
+ * @tc.name: CmServiceFindCertificateCountLimit_001
+ * @tc.desc: an oversized batch is rejected without a limit and truncated with one.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateCountLimit_001, TestSize.Level0)
+{
+    /* one cert more than the finder result cap: the batch alias isolates the rows */
+    for (uint32_t i = 0; i < MAX_COUNT_FIND_CERT_RESULT + 1; i++) {
+        std::string uri;
+        ASSERT_EQ(InstallUserCertWithAlias("R7Batch" + std::to_string(i), uri), CM_SUCCESS) << "index " << i;
+    }
+
+    MockHapToken mockHap;
+
+    struct CmContext context = BuildContext(TEST_SERVICE_USER, TEST_SERVICE_UID);
+    struct FindCertRequest request;
+    (void)memset_s(&request, sizeof(request), 0, sizeof(request));
+    request.scope = CM_FIND_CERT_SCOPE_CURRENT_USER;
+    ASSERT_EQ(strcpy_s(request.name, sizeof(request.name), "R7Batch"), EOK);
+
+    /* without an explicit limit the internal cap rejects the oversized batch */
+    request.countLimit = 0;
+    struct FindCertResult result;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+    EXPECT_EQ(CmServiceFindCertificate(&context, &request, &result), CMR_ERROR_INVALID_OPERATION);
+
+    /* an explicit limit truncates the batch to that many results */
+    request.countLimit = MAX_COUNT_FIND_CERT_RESULT;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+    ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
+    EXPECT_EQ(result.count, MAX_COUNT_FIND_CERT_RESULT);
     FreeFindCertResult(&result);
 }
 
