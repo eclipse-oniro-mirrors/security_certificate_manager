@@ -1035,7 +1035,6 @@ int32_t ParseUserIdFromUri(const std::string &uri, int32_t &userId)
     std::string userIdStr = (sepPos == std::string::npos)
         ? uri.substr(valueStart)
         : uri.substr(valueStart, sepPos - valueStart);
-
     if (userIdStr.empty()) {
         return CM_CMD_ERR_PARAM_INVALID;
     }
@@ -1169,6 +1168,29 @@ static bool MatchCertByHash(const struct CertList &certList,
     return false;
 }
 
+static int32_t GetUserCACertListByScope(bool hasG, struct CertList &certList)
+{
+    struct UserCAProperty property;
+    property.userId = static_cast<uint32_t>(INIT_INVALID_VALUE);
+    property.scope = hasG ? CM_GLOBAL_USER : CM_CURRENT_USER;
+
+    certList.certsCount = MAX_COUNT_CERTIFICATE;
+    certList.certAbstract = static_cast<struct CertAbstract *>(
+        malloc(sizeof(struct CertAbstract) * MAX_COUNT_CERTIFICATE));
+    if (certList.certAbstract == nullptr) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to allocate memory for cert list");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
+    int32_t ret = CmGetUserCACertList(&property, &certList);
+    if (ret != CM_SUCCESS) {
+        int32_t cmdErr = MapSdkErrToCmdErr(ret);
+        WriteError(cmdErr, "Failed to get user CA cert list");
+        free(certList.certAbstract);
+        return cmdErr;
+    }
+    return CM_CMD_SUCCESS;
+}
+
 int32_t UninstallUserCACommand::FindCertUriByHash(
     const struct CmBlob &certBlob, std::string &outCertUri)
 {
@@ -1178,30 +1200,13 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
         WriteError(CM_CMD_ERR_INVALID_CERT_FORMAT, "Failed to compute SHA-256 of certFile");
         return CM_CMD_ERR_INVALID_CERT_FORMAT;
     }
-
-    struct UserCAProperty property;
-    property.userId = static_cast<uint32_t>(INIT_INVALID_VALUE);
-    property.scope = hasG_ ? CM_GLOBAL_USER : CM_CURRENT_USER;
-
     struct CertList certList;
-    certList.certsCount = MAX_COUNT_CERTIFICATE;
-    certList.certAbstract = static_cast<struct CertAbstract *>(
-        malloc(sizeof(struct CertAbstract) * MAX_COUNT_CERTIFICATE));
-    if (certList.certAbstract == nullptr) {
-        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to allocate memory for cert list");
-        return CM_CMD_ERR_INTERNAL_ERROR;
-    }
-    ret = CmGetUserCACertList(&property, &certList);
+    ret = GetUserCACertListByScope(hasG_, certList);
     if (ret != CM_SUCCESS) {
-        int32_t cmdErr = MapSdkErrToCmdErr(ret);
-        WriteError(cmdErr, "Failed to get user CA cert list");
-        free(certList.certAbstract);
-        return cmdErr;
+        return ret;
     }
-
     bool found = MatchCertByHash(certList, certFileHash, outCertUri);
     free(certList.certAbstract);
-
     if (!found) {
         WriteError(CM_CMD_ERR_INTERNAL_ERROR,
             "No matching user CA certificate found for the specified certFile");
