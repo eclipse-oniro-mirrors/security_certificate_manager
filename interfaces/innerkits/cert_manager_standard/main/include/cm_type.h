@@ -47,6 +47,7 @@ extern "C" {
 #define MAX_SUFFIX_LEN           16
 #define MAX_COUNT_CERTIFICATE    256
 #define MAX_COUNT_CERTIFICATE_ALL  512
+#define MAX_LEN_CERT_STORE_VERSION 64    /* include 1 byte: the terminator('\0') */
 #define MAX_P7B_INSTALL_COUNT    256
 #define MAX_LEN_URI              256
 #define MAX_AUTH_LEN_URI         256
@@ -426,6 +427,17 @@ enum CmCertFileFormat {
 struct UserCAProperty {
     uint32_t userId;
     enum CmCertScope scope;
+};
+
+enum CmCertAlgorithm {
+    CM_CERT_ALG_ALL = 0,
+    CM_CERT_ALG_INTERNATIONAL = 1,
+    CM_CERT_ALG_SM = 2,
+};
+
+struct CmCertStoreInfo {
+    char certStoreVersion[MAX_LEN_CERT_STORE_VERSION];
+    char smcertStoreVersion[MAX_LEN_CERT_STORE_VERSION];
 };
 
 struct CmInstallCertInfo {

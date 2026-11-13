@@ -107,6 +107,80 @@ int32_t CmClientGetCertList(const uint32_t store, struct CertList *certificateLi
     return GetCertificateList(CM_MSG_GET_CERTIFICATE_LIST, store, certificateList);
 }
 
+static int32_t GetSystemTrustedCertListInitOutData(struct CmBlob *outBlob)
+{
+    /* cert list buffer + certStoreInfo trailer (2 fixed version strings) */
+    uint32_t listSize = sizeof(uint32_t) + (sizeof(uint32_t) + MAX_LEN_SUBJECT_NAME + sizeof(uint32_t) +
+        sizeof(uint32_t) + MAX_LEN_URI + sizeof(uint32_t) + MAX_LEN_CERT_ALIAS) * MAX_COUNT_CERTIFICATE_ALL;
+    uint32_t buffSize = listSize + 2 * MAX_LEN_CERT_STORE_VERSION;
+    outBlob->data = (uint8_t *)CmMalloc(buffSize);
+    if (outBlob->data == NULL) {
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    outBlob->size = buffSize;
+    return CM_SUCCESS;
+}
+
+int32_t CmClientGetSystemTrustedCertList(enum CmCertAlgorithm certAlg,
+    struct CertList *certificateList, struct CmCertStoreInfo *certStoreInfo)
+{
+    int32_t ret;
+    struct CmBlob outBlob = { 0, NULL };
+    struct CmBlob parcelBlob = { 0, NULL };
+    struct CmParamSet *sendParamSet = NULL;
+    uint32_t store = CM_SYSTEM_TRUSTED_STORE;
+    struct CmParam params[] = {
+        { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = store },
+        { .tag = CM_TAG_PARAM1_UINT32, .uint32Param = certAlg },
+    };
+
+    do {
+        ret = CmSendParcelInit(params, CM_ARRAY_SIZE(params), &parcelBlob, &sendParamSet);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("get system trusted cert list sendParcel failed");
+            break;
+        }
+
+        ret = GetSystemTrustedCertListInitOutData(&outBlob);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("malloc system trusted cert list outdata failed");
+            break;
+        }
+
+        ret = SendRequest(CM_MSG_GET_CERTIFICATE_LIST, &parcelBlob, &outBlob);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("CmClientGetSystemTrustedCertList request fail");
+            break;
+        }
+
+        ret = CmCertificateListUnpackFromService(&outBlob, certificateList);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("unpack system cert list failed");
+            break;
+        }
+
+        /* certStoreInfo trailer: the last 2 * MAX_LEN_CERT_STORE_VERSION bytes */
+        if (certStoreInfo != NULL && outBlob.size >= 2 * MAX_LEN_CERT_STORE_VERSION) {
+            uint32_t off = outBlob.size - 2 * MAX_LEN_CERT_STORE_VERSION;
+            if (memcpy_s(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION,
+                outBlob.data + off, MAX_LEN_CERT_STORE_VERSION) != EOK) {
+                CM_LOG_E("copy certStoreVersion failed");
+                ret = CMR_ERROR_MEM_OPERATION_COPY;
+                break;
+            }
+            if (memcpy_s(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION,
+                outBlob.data + off + MAX_LEN_CERT_STORE_VERSION, MAX_LEN_CERT_STORE_VERSION) != EOK) {
+                CM_LOG_E("copy smcertStoreVersion failed");
+                ret = CMR_ERROR_MEM_OPERATION_COPY;
+                break;
+            }
+        }
+    } while (0);
+    CmFreeParamSet(&sendParamSet);
+    CM_FREE_BLOB(outBlob);
+    return ret;
+}
+
 static int32_t GetCertInfoInitOutData(struct CmBlob *outInfoBlob)
 {
     /* buff struct: certDataBlob + status + aliasBlob + subjectName + issuerName + serial +

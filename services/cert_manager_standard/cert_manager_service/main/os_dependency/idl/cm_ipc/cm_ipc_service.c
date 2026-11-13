@@ -83,8 +83,10 @@ void CmIpcServiceGetCertificateList(const struct CmBlob *paramSetBlob, struct Cm
 {
     int32_t ret;
     uint32_t store;
+    uint32_t certAlg = CM_CERT_ALG_ALL; /* optional, default ALL for backward compatibility */
     struct CmContext cmContext = {0};
     struct CmMutableBlob certFileList = { 0, NULL };
+    struct CmCertStoreInfo certStoreInfo = {0};
     struct CmParamSet *paramSet = NULL;
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = &store },
@@ -95,6 +97,17 @@ void CmIpcServiceGetCertificateList(const struct CmBlob *paramSetBlob, struct Cm
         if (ret != CM_SUCCESS) {
             CM_LOG_E("GetCaCertList get input params failed, ret = %d", ret);
             break;
+        }
+
+        /* optional certAlg (tag CM_TAG_PARAM1_UINT32); absent => ALL (old client) */
+        struct CmParam *algParam = NULL;
+        if (CmGetParam(paramSet, CM_TAG_PARAM1_UINT32, &algParam) == CM_SUCCESS && algParam != NULL) {
+            if (algParam->uint32Param > CM_CERT_ALG_SM) {
+                CM_LOG_E("invalid certAlg: %u", algParam->uint32Param);
+                ret = CMR_ERROR_INVALID_ARGUMENT;
+                break;
+            }
+            certAlg = algParam->uint32Param;
         }
 
         ret = CmServiceGetSystemCertListCheck(store);
@@ -110,9 +123,10 @@ void CmIpcServiceGetCertificateList(const struct CmBlob *paramSetBlob, struct Cm
             break;
         }
 
-        ret = CmServiceGetCertListPack(&cmContext, store, &certFileList, outData);
+        ret = CmServiceGetSystemTrustedCertListPack(&cmContext, (enum CmCertAlgorithm)certAlg,
+            &certFileList, &certStoreInfo, outData);
         if (ret != CM_SUCCESS) {
-            CM_LOG_E("cert list data pack fail, ret = %d", ret);
+            CM_LOG_E("system trusted cert list pack fail, ret = %d", ret);
             break;
         }
 

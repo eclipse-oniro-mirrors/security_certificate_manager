@@ -40,7 +40,9 @@ struct GetCertListAsyncContextT {
     int32_t result = 0;
     uint32_t store = 0;
     enum CmCertScope scope = CM_ALL_USER;
+    enum CmCertAlgorithm certAlg = CM_CERT_ALG_ALL;
     struct CertList *certificateList = nullptr;
+    struct CmCertStoreInfo *certStoreInfo = nullptr;
     std::shared_ptr<OHOS::Security::CertManager::CmMetricsReport> metricsReport = nullptr;
 };
 using GetCertListAsyncContext = GetCertListAsyncContextT *;
@@ -66,6 +68,11 @@ static void DeleteGetCertListAsyncContext(napi_env env, GetCertListAsyncContext 
 
     if (context->certificateList != nullptr) {
         FreeCertList(context->certificateList);
+    }
+
+    if (context->certStoreInfo != nullptr) {
+        CmFree(context->certStoreInfo);
+        context->certStoreInfo = nullptr;
     }
 
     CmFree(context);
@@ -99,11 +106,26 @@ static napi_value GetCertListParseParams(napi_env env, napi_callback_info info,
 
     /* get system ca list */
     if (store == CM_SYSTEM_TRUSTED_STORE) {
-        if (argc != CM_NAPI_GET_CERT_LIST_MIN_ARGS) { /* no args when get system ca list */
+        if (argc != CM_NAPI_GET_CERT_LIST_MIN_ARGS && argc != CM_NAPI_GET_CERT_LIST_MAX_ARGS) {
             ThrowError(env, PARAM_ERROR, "arguments count invalid when getting system trusted certificate list",
                 context->metricsReport.get());
             CM_LOG_E("arguments count is not expected when getting system trusted certificate list");
             return nullptr;
+        }
+        if (argc == CM_NAPI_GET_CERT_LIST_MAX_ARGS) {
+            uint32_t alg = 0;
+            napi_value algVal = ParseUint32(env, argv[0], alg);
+            if (algVal == nullptr) {
+                ThrowError(env, PARAM_ERROR, "Failed to get certAlg", context->metricsReport.get());
+                CM_LOG_E("Failed to get certAlg when get system cert list");
+                return nullptr;
+            }
+            if (alg > CM_CERT_ALG_SM) {
+                ThrowError(env, PARAM_ERROR, "invalid certAlg", context->metricsReport.get());
+                CM_LOG_E("invalid certAlg: %u", alg);
+                return nullptr;
+            }
+            context->certAlg = static_cast<enum CmCertAlgorithm>(alg);
         }
         context->store = store;
         return GetInt32(env, 0);
@@ -145,6 +167,19 @@ static napi_value GetCertListWriteResult(napi_env env, GetCertListAsyncContext c
     } else {
         NAPI_CALL(env, napi_get_undefined(env, &result));
     }
+
+    if (context->store == CM_SYSTEM_TRUSTED_STORE && context->certStoreInfo != nullptr) {
+        napi_value storeInfoObj = nullptr;
+        NAPI_CALL(env, napi_create_object(env, &storeInfoObj));
+        napi_value ver = nullptr;
+        NAPI_CALL(env, napi_create_string_utf8(env, context->certStoreInfo->certStoreVersion,
+            NAPI_AUTO_LENGTH, &ver));
+        napi_set_named_property(env, storeInfoObj, "certStoreVersion", ver);
+        NAPI_CALL(env, napi_create_string_utf8(env, context->certStoreInfo->smcertStoreVersion,
+            NAPI_AUTO_LENGTH, &ver));
+        napi_set_named_property(env, storeInfoObj, "smcertStoreVersion", ver);
+        napi_set_named_property(env, result, "certStoreInfo", storeInfoObj);
+    }
     return result;
 }
 
@@ -172,7 +207,16 @@ static void GetCertListExecute(napi_env env, void *data)
     context->certificateList->certsCount = MAX_COUNT_CERTIFICATE_ALL;
 
     if (context->store == CM_SYSTEM_TRUSTED_STORE) {
-        context->result = CmGetCertList(context->store, context->certificateList);
+        context->certStoreInfo = static_cast<struct CmCertStoreInfo *>(CmMalloc(sizeof(struct CmCertStoreInfo)));
+        if (context->certStoreInfo == nullptr) {
+            CM_LOG_E("malloc certStoreInfo fail");
+            context->result = CMR_ERROR_MALLOC_FAIL;
+            return;
+        }
+        (void)memset_s(context->certStoreInfo, sizeof(struct CmCertStoreInfo), 0,
+            sizeof(struct CmCertStoreInfo));
+        context->result = CmGetSystemTrustedCertList(context->certAlg, context->certificateList,
+            context->certStoreInfo);
         return;
     }
 
