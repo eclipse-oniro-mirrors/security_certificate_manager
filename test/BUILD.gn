@@ -64,6 +64,7 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_engine_updateflag_event_test.cpp",
     "unittest/src/cm_engine_ukey_test.cpp",
     "unittest/src/cm_engine_certmgr_test.cpp",
+    "unittest/src/cm_engine_session_test.cpp",
   ]
 
   include_dirs = [

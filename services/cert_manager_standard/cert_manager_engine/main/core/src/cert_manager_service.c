@@ -21,6 +21,8 @@
 #include <openssl/pem.h>
 #include <openssl/safestack.h>
 
+#include <pthread.h>
+
 #include "securec.h"
 
 #include "cert_manager.h"
@@ -47,6 +49,14 @@
 #include "cert_manager_updateflag.h"
 #define MAX_PATH_LEN 256
 #define PERMISSION_GRANTED 1
+
+/* Serializes the whole user-cert install transaction (duplicate check ->
+ * count check -> file write -> rdb/backup update): IPC workers run
+ * concurrently, and without this lock two installs of the same subject can
+ * both pass FindDuplicateUserCert and CmCheckCertCount before either has
+ * written, producing duplicate entries and breaching the count limit. It is
+ * never taken while g_lock or g_authMgrLock is held (no nesting with them). */
+static pthread_mutex_t g_installUserCertLock = PTHREAD_MUTEX_INITIALIZER;
 
 static int32_t CheckPermission(bool needPriPermission, bool needCommonPermission)
 {
@@ -1006,9 +1016,13 @@ int32_t CmInstallUserCert(const struct CmContext *context, const struct CmBlob *
     struct CmBlob displayName = { sizeof(displayBuf), displayBuf };
     struct CertName certName = { &displayName, &objectName, &subjectName };
 
+    /* The duplicate check and the write below must be one atomic step per
+     * caller: hold the install lock across the whole transaction. */
+    pthread_mutex_lock(&g_installUserCertLock);
     ret = GetUserCertNameAndPath(context, userCert, certAlias, &certName, &pathBlob);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("GetUserCertNameAndPath fail");
+        pthread_mutex_unlock(&g_installUserCertLock);
         return ret;
     }
     struct CertPropertyOri propertyOri = { context, certUri, &displayName, &subjectName,
@@ -1035,6 +1049,7 @@ int32_t CmInstallUserCert(const struct CmContext *context, const struct CmBlob *
     }
     // Must free certFileInfo at last.
     FreeCertFileInfo(&certFileInfo);
+    pthread_mutex_unlock(&g_installUserCertLock);
     return ret;
 }
 

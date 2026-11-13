@@ -32,6 +32,28 @@ struct CmFileDirentInfo {
 
 uint32_t CmFileRead(const char *path, const char *fileName, uint32_t offset, uint8_t *buf, uint32_t len);
 
+/**
+ * @brief Read a whole file into a freshly allocated buffer.
+ *
+ * The size is taken with fstat() from the same fd that reads the content, so
+ * a concurrent remove of the file between a standalone stat() and a later
+ * open() cannot flip an existing file into a spurious failure: once the fd
+ * is open the inode stays readable until close (POSIX unlink-while-open).
+ *
+ * @param[in] path Directory of the file (may be NULL for a bare fileName)
+ * @param[in] fileName Name of the file inside path
+ * @param[in] maxSize Upper bound for the accepted file size
+ * @param[out] data Allocated buffer with the file content (caller frees)
+ * @param[out] readSize Bytes actually read into data
+ * @return int32_t Read result
+ * @retval CMR_OK Buffer filled
+ * @retval CMR_ERROR_NOT_EXIST File missing, empty, or nothing readable
+ * @retval CMR_ERROR_BUFFER_TOO_SMALL File larger than maxSize
+ * @retval CMR_ERROR_MALLOC_FAIL Allocation failed
+ */
+int32_t CmFileReadWhole(const char *path, const char *fileName, uint32_t maxSize,
+    uint8_t **data, uint32_t *readSize);
+
 int32_t CmFileWrite(const char *path, const char *fileName, uint32_t offset, const uint8_t *buf, uint32_t len);
 
 int32_t CmUserBackupFileWrite(
