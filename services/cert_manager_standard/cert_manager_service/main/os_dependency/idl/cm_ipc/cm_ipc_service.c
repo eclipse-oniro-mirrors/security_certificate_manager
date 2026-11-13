@@ -1899,31 +1899,6 @@ static int32_t UnpackFindCertId(const struct CmBlob *requestBlob, uint32_t *offs
     return CM_SUCCESS;
 }
 
-static int32_t UnpackFindCertHash(const struct CmBlob *requestBlob, uint32_t *offset,
-    struct FindCertRequest *request)
-{
-    if (*offset + sizeof(uint32_t) > requestBlob->size) {
-        CM_LOG_E("request blob too small for certHash size");
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-    uint32_t certHashSize = *(uint32_t *)(requestBlob->data + *offset);
-    *offset += sizeof(uint32_t);
-
-    if (certHashSize == 0 || certHashSize > MAX_LEN_FIND_CERT_HASH) {
-        return CM_SUCCESS;
-    }
-    if (*offset + certHashSize > requestBlob->size) {
-        CM_LOG_E("request blob too small for certHash data");
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-    if (memcpy_s(request->certHash, MAX_LEN_FIND_CERT_HASH,
-        requestBlob->data + *offset, certHashSize) != EOK) {
-        return CMR_ERROR_MEM_OPERATION_COPY;
-    }
-    *offset += certHashSize;
-    return CM_SUCCESS;
-}
-
 static int32_t UnpackFindCertRequest(const struct CmBlob *requestBlob, struct FindCertRequest *request)
 {
     if (requestBlob == NULL || request == NULL) {
@@ -1962,12 +1937,6 @@ static int32_t UnpackFindCertRequest(const struct CmBlob *requestBlob, struct Fi
     offset += sizeof(uint32_t);
 
     ret = UnpackFindCertId(requestBlob, &offset, request);
-    if (ret != CM_SUCCESS) {
-        CM_FREE_PTR(request->certTypes);
-        return ret;
-    }
-
-    ret = UnpackFindCertHash(requestBlob, &offset, request);
     if (ret != CM_SUCCESS) {
         CM_FREE_PTR(request->certTypes);
         return ret;

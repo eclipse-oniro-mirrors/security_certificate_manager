@@ -49,7 +49,6 @@ struct CmFindCertCondition {
     uint32_t userIdCount;
     const char *name;
     const char *certId;
-    const char *certHash;
 };
 
 int32_t QueryCertPropertyByCondition(const struct CmFindCertCondition *condition,

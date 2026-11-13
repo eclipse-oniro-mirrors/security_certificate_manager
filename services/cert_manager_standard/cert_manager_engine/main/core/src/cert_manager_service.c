@@ -1571,43 +1571,6 @@ static void BuildFindCertCondition(const struct CmContext *context,
     if (request->certId[0] != '\0') {
         condition->certId = request->certId;
     }
-
-    /* certHash filter (matched post-query in MatchCertHash) */
-    if (request->certHash[0] != '\0') {
-        condition->certHash = request->certHash;
-    }
-}
-
-static bool MatchCertHash(const struct CmBlob *certData, const char *expectedHash)
-{
-    if (expectedHash == NULL || expectedHash[0] == '\0') {
-        return true;
-    }
-    if (certData == NULL || certData->data == NULL || certData->size == 0) {
-        return false;
-    }
-
-    X509 *x509 = InitCertContext(certData->data, certData->size);
-    if (x509 == NULL) {
-        return false;
-    }
-
-    unsigned char md[SHA256_DIGEST_LENGTH];
-    unsigned int mdLen = 0;
-    int ret = X509_digest(x509, EVP_sha256(), md, &mdLen);
-    FreeCertContext(x509);
-    if (ret != 1 || mdLen != SHA256_DIGEST_LENGTH) {
-        return false;
-    }
-
-    char hexBuf[SHA256_DIGEST_LENGTH * 2 + 1] = {0};
-    for (uint32_t i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        if (snprintf_s(hexBuf + i * 2, 3, 2, "%02X", md[i]) < 0) {
-            return false;
-        }
-    }
-
-    return strncmp(hexBuf, expectedHash, SHA256_DIGEST_LENGTH * 2) == 0;
 }
 
 static int32_t FillFindCertInfo(const struct CertProperty *prop, struct FindCertInfo *info)
@@ -1750,24 +1713,6 @@ int32_t CmServiceFindCertificate(const struct CmContext *context,
     free(propResults);
     if (ret != CM_SUCCESS) {
         return ret;
-    }
-
-    /* filter by certHash if specified (post-query, requires cert data) */
-    if (request->certHash[0] != '\0') {
-        uint32_t filteredCount = 0;
-        for (uint32_t i = 0; i < validCount; i++) {
-            struct CmBlob certData = { certInfos[i].certData.size, certInfos[i].certData.data };
-            if (MatchCertHash(&certData, request->certHash)) {
-                if (filteredCount != i) {
-                    certInfos[filteredCount] = certInfos[i];
-                    (void)memset_s(&certInfos[i], sizeof(certInfos[i]), 0, sizeof(certInfos[i]));
-                }
-                filteredCount++;
-            } else {
-                CM_FREE_BLOB(certInfos[i].certData);
-            }
-        }
-        validCount = filteredCount;
     }
 
     result->count = validCount;
