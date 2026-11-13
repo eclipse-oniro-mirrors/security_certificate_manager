@@ -919,12 +919,12 @@ HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionScrubParamsWipesJson, testing::e
 
 /**
  * @tc.name: RealLauncherDisconnectUnknownConnectionIsSafe
- * @tc.desc: the real launcher only logs AMS errors for a connection that was never connected
+ * @tc.desc: the real launcher only logs ability manager errors for a connection that was never connected
  * @tc.type: FUNC
  */
 HWTEST_F(CmUkeyAuthDialogManagerTest, RealLauncherDisconnectUnknownConnectionIsSafe, testing::ext::TestSize.Level0)
 {
-    /* a never-connected connection object: the AMS disconnect reports an
+    /* a never-connected connection object: the ability manager disconnect reports an
      * error which the launcher only logs (already-disconnected is safe) */
     RealSystemDialogLauncher launcher;
     sptr<IAbilityConnection> conn = new CmSystemDialogConnection("req-never", "com.example.ukeydrv",

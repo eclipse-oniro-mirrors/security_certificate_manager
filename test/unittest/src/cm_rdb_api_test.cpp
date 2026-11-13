@@ -52,6 +52,9 @@ constexpr int64_t RDB_API_FUTURE_EXPIRE = 2000000000LL; /* fixed future timestam
 constexpr int64_t RDB_API_PAST_EXPIRE = 1000000000LL;   /* fixed past timestamp */
 constexpr uint64_t RDB_API_SENTINEL_SIZE = 77;          /* must be overwritten by the query */
 const std::string RDB_API_DIRECT_DB = "/cm_rdb_api_test_dm.db";
+/* fixed ids the raw-row helper writes past the MakeCertProperty buffers */
+constexpr int32_t RDB_API_RAW_USERID = 700009;
+constexpr int32_t RDB_API_RAW_UID = 700010;
 
 /* remove every revocation cache row and the meta entry left by earlier runs */
 void CleanupRevocationRows()
@@ -77,7 +80,7 @@ struct CertProperty MakeCertProperty(const char *uri, const char *alias, const c
     (void)strcpy_s(prop.alias, sizeof(prop.alias), alias);
     (void)strcpy_s(prop.subjectName, sizeof(prop.subjectName), subject);
     (void)strcpy_s(prop.certType, sizeof(prop.certType), certType);
-    prop.certStore = 2;
+    prop.certStore = CM_USER_TRUSTED_STORE;
     prop.userId = userId;
     prop.uid = userId + 1;
     prop.level = CM_AUTH_STORAGE_LEVEL_EL1;
@@ -129,9 +132,9 @@ void InsertCertPropertyRaw(const std::string &uri, const std::string &alias,
     bucket.PutString(COLUMN_ALIAS, alias);
     bucket.PutString(COLUMN_SUBJECT_NAME, subject);
     bucket.PutString(COLUMN_CERT_TYPE, certType);
-    bucket.PutInt(COLUMN_CERT_STORE, 2);
-    bucket.PutInt(COLUMN_USERID, 700009);
-    bucket.PutInt(COLUMN_UID, 700010);
+    bucket.PutInt(COLUMN_CERT_STORE, CM_USER_TRUSTED_STORE);
+    bucket.PutInt(COLUMN_USERID, RDB_API_RAW_USERID);
+    bucket.PutInt(COLUMN_UID, RDB_API_RAW_UID);
     bucket.PutInt(COLUMN_AUTH_STORAGE_LEVEL, 1);
     ASSERT_TRUE(mgr->InsertData(bucket));
 }
