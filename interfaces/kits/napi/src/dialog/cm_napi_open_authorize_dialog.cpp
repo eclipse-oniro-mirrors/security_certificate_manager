@@ -32,7 +32,6 @@ static OHOS::AAFwk::Want CMGetAuthCertWant(std::shared_ptr<CmUIExtensionRequestC
     OHOS::AAFwk::Want want;
     want.SetElementName(CERT_MANAGER_BUNDLENAME, CERT_MANAGER_ABILITYNAME);
     want.SetParam(CERT_MANAGER_CALLER_BUNDLENAME, asyncContext->labelName);
-    want.SetParam(CERT_MANAGER_CALLER_UID, asyncContext->appUid);
     want.SetParam(PARAM_UI_EXTENSION_TYPE, SYS_COMMON_UI);
     want.SetParam(CERT_MANAGER_PAGE_TYPE, static_cast<int32_t>(CmDialogPageType::PAGE_REQUEST_AUTHORIZE));
     if (!asyncContext->certTypes.empty()) {
