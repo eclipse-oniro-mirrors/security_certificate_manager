@@ -119,7 +119,7 @@ constexpr int32_t PARAM_SIZE_FOUR = 4;
 constexpr int32_t PARAM_SIZE_FIVE = 5;
 
 /* max length (bytes) of the optional keystorePwd of InstallCertificateRequest */
-constexpr int32_t KEYSTORE_PWD_MAX_LEN = 128;
+constexpr int32_t KEYSTORE_PWD_MAX_LEN = 32;
 
 enum CmDialogPageType {
     PAGE_MAIN = 1,
