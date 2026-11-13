@@ -1220,7 +1220,7 @@ int32_t UninstallUserCACommand::UninstallByCertUri(const std::string &certUri)
         return CM_CMD_ERR_INTERNAL_ERROR;
     }
     (void)memcpy_s(uriBuf, uriLen + 1, certUri.c_str(), uriLen + 1);
-    struct CmBlob certUriBlob = { uriLen, uriBuf };
+    struct CmBlob certUriBlob = { uriLen + 1, uriBuf };
 
     int32_t sdkRet = CmUninstallUserTrustedCert(&certUriBlob);
     free(uriBuf);
@@ -1277,7 +1277,7 @@ int32_t UninstallUserCACommand::UninstallByCertFile(const std::string &certFileP
         return CM_CMD_ERR_INTERNAL_ERROR;
     }
     (void)memcpy_s(uriBuf, uriLen + 1, matchedCertUri.c_str(), uriLen + 1);
-    struct CmBlob certUriBlob = { uriLen, uriBuf };
+    struct CmBlob certUriBlob = { uriLen + 1, uriBuf };
 
     int32_t sdkRet = CmUninstallUserTrustedCert(&certUriBlob);
     free(uriBuf);
