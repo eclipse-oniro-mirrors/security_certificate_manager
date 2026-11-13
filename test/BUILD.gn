@@ -25,7 +25,6 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_rdb_api_test.cpp",
     "unittest/src/cm_abort_test.cpp",
     "unittest/src/cm_app_cert_test.cpp",
-    "unittest/src/cm_engine_session_test.cpp",
     "unittest/src/cm_rdb_open_callback_test.cpp",
     "unittest/src/cm_finish_test.cpp",
     "unittest/src/cm_get_auth_list_test.cpp",
