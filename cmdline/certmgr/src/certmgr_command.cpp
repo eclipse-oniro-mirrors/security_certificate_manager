@@ -1173,15 +1173,18 @@ int32_t UninstallUserCACommand::FindCertUriByHash(
 
         struct CertInfo certInfo;
         (void)memset_s(&certInfo, sizeof(certInfo), 0, sizeof(certInfo));
+        uint8_t certDataBuf[MAX_LEN_CERTIFICATE] = { 0 };
+        certInfo.certInfo.data = certDataBuf;
+        certInfo.certInfo.size = MAX_LEN_CERTIFICATE;
+
         int32_t infoRet = CmGetUserCertInfo(&certUri, CM_USER_TRUSTED_STORE, &certInfo);
-        if (infoRet != CM_SUCCESS || certInfo.certInfo.data == nullptr || certInfo.certInfo.size == 0) {
+        if (infoRet != CM_SUCCESS || certInfo.certInfo.size == 0) {
             continue;
         }
 
         struct CmBlob certData = { certInfo.certInfo.size, certInfo.certInfo.data };
         std::string certHash;
         int32_t hashRet = GetCertSha256Hex(certData, certHash);
-        free(certInfo.certInfo.data);
         if (hashRet != CM_SUCCESS) {
             continue;
         }
