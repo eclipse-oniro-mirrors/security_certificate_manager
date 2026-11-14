@@ -99,9 +99,9 @@ void CmIpcServiceGetCertificateList(const struct CmBlob *paramSetBlob, struct Cm
     int32_t ret;
     uint32_t store;
     uint32_t certAlg = CM_CERT_ALG_ALL; /* optional, default ALL for backward compatibility */
-    struct CmContext cmContext{};
-    struct CmMutableBlob certFileList{0, NULL};
-    struct CmCertStoreInfo certStoreInfo{};
+    struct CmContext cmContext = {0};
+    struct CmMutableBlob certFileList = { 0, NULL };
+    struct CmCertStoreInfo certStoreInfo = {0};
     struct CmParamSet *paramSet = NULL;
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = &store },
