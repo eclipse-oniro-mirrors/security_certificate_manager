@@ -987,7 +987,7 @@ static int32_t UpdateUserCert(const struct UpdateUserCertProperty *updateProp,
         updateProp->certFileInfo->path.size,
         updateProp->certFileInfo->path.data,
     };
-    / the reused cert file belongs to the uid encoded in the uri, keep rdb uid consistent with it */
+    // the reused cert file belongs to the uid encoded in the uri, keep rdb uid consistent with it
     struct CmContext certFileContext = { 0 };
     int32_t ret = CmConstructContextFromUri((const char *)updateProp->certUri->data, &certFileContext);
     if (ret != CM_SUCCESS) {
