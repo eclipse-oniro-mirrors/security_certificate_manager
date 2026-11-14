@@ -987,14 +987,23 @@ static int32_t UpdateUserCert(const struct UpdateUserCertProperty *updateProp,
         updateProp->certFileInfo->path.size,
         updateProp->certFileInfo->path.data,
     };
+    / the reused cert file belongs to the uid encoded in the uri, keep rdb uid consistent with it */
+    struct CmContext certFileContext = { 0 };
+    int32_t ret = CmConstructContextFromUri((const char *)updateProp->certUri->data, &certFileContext);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("ConstructContextFromUri failed");
+        return ret;
+    }
+    struct CertPropertyOri updatePropertyOri = { &certFileContext, propertyOri->uri, propertyOri->alias,
+        propertyOri->subjectName, propertyOri->store, propertyOri->level };
     struct AfterInstallCertProperty afterPersistProp = {
-        .propertyOri = propertyOri,
+        .propertyOri = &updatePropertyOri,
         .context = updateProp->context,
         .userCert = updateProp->userCert,
         .certUri = updateProp->certUri,
         .pathBlob = &pathBlob
     };
-    int32_t ret = AfterInstallUserCert(&afterPersistProp);
+    ret = AfterInstallUserCert(&afterPersistProp);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("Update rdb table and backup user cert config fail");
         return ret;
