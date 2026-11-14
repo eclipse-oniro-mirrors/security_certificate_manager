@@ -173,6 +173,103 @@ static uint64_t CreateFdsanOwnTag(void* addr)
     return tag;
 }
 
+/* Derive size and content from one single fd: a standalone stat() followed
+ * by a later open() leaves a window where a concurrent uninstaller unlinks
+ * the file in between, turning a confirmed-existing file into a spurious
+ * read failure. Keeping the fd open pins the inode for the whole read
+ * (POSIX unlink-while-open semantics). */
+static int32_t GetRegularFileSize(int32_t fd, uint32_t maxSize, off_t *fileSize)
+{
+    struct stat fileStat;
+    (void)memset_s(&fileStat, sizeof(fileStat), 0, sizeof(fileStat));
+    if (fstat(fd, &fileStat) != 0) {
+        CM_LOG_E("file fstat fail, errno = 0x%x", errno);
+        return CMR_ERROR_NOT_EXIST;
+    }
+    if (!S_ISREG(fileStat.st_mode)) {
+        CM_LOG_E("not a regular file");
+        return CMR_ERROR_NOT_EXIST;
+    }
+    if (fileStat.st_size == 0) {
+        CM_LOG_E("file is empty");
+        return CMR_ERROR_NOT_EXIST;
+    }
+    if ((fileStat.st_size < 0) || ((uint64_t)fileStat.st_size > (uint64_t)maxSize)) {
+        CM_LOG_E("file size[%lld] beyond max[%u]", (long long)fileStat.st_size, maxSize);
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+    *fileSize = fileStat.st_size;
+    return CM_SUCCESS;
+}
+
+/* Read the whole content from an open fd. A concurrent truncation or a
+ * mid-stream error keeps whatever was already read, mirroring the
+ * offset-based CmFileRead semantics this helper replaces. */
+static void ReadFileContent(int32_t fd, uint8_t *buf, uint32_t fileSize, uint32_t *readOut)
+{
+    uint32_t total = 0;
+    while (total < fileSize) {
+        ssize_t nread = read(fd, buf + total, fileSize - total);
+        if (nread < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            CM_LOG_E("read file failed, errno = 0x%x", errno);
+            break;
+        }
+        if (nread == 0) { /* truncated concurrently: keep what was read */
+            break;
+        }
+        total += (uint32_t)nread;
+    }
+    *readOut = total;
+}
+
+static int32_t FileReadWhole(const char *fileName, uint32_t maxSize, uint8_t **data, uint32_t *readSize)
+{
+    char filePath[PATH_MAX + 1] = {0};
+    if (ValidatePath(fileName, filePath) != CMR_OK) {
+        return CMR_ERROR_NOT_EXIST;
+    }
+
+    int32_t fd = open(filePath, O_RDONLY);
+    if (fd < 0) {
+        CM_LOG_E("open file failed, errno = 0x%x", errno);
+        return CMR_ERROR_NOT_EXIST;
+    }
+    uint64_t tag = CreateFdsanOwnTag(&fd);
+    fdsan_exchange_owner_tag(fd, 0, tag);
+
+    off_t fileSize = 0;
+    int32_t ret = GetRegularFileSize(fd, maxSize, &fileSize);
+    if (ret != CM_SUCCESS) {
+        fdsan_close_with_tag(fd, tag);
+        return ret;
+    }
+
+    uint8_t *buf = (uint8_t *)CMMalloc((uint32_t)fileSize);
+    if (buf == NULL) {
+        CM_LOG_E("malloc file buffer failed");
+        fdsan_close_with_tag(fd, tag);
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    (void)memset_s(buf, (uint32_t)fileSize, 0, (uint32_t)fileSize);
+
+    uint32_t total = 0;
+    ReadFileContent(fd, buf, (uint32_t)fileSize, &total);
+    if (total == 0) {
+        CM_LOG_E("read file size 0 invalid");
+        CMFree(buf);
+        ret = CMR_ERROR_NOT_EXIST;
+    } else {
+        *data = buf;
+        *readSize = total;
+    }
+
+    fdsan_close_with_tag(fd, tag);
+    return ret;
+}
+
 static int32_t FileWrite(const char *fileName, uint32_t offset, const uint8_t *buf, uint32_t len, bool isWriteBakFile)
 {
     (void)offset;
@@ -358,6 +455,26 @@ uint32_t CmFileRead(const char *path, const char *fileName, uint32_t offset, uin
     uint32_t size = FileRead(fullFileName, offset, buf, len);
     CM_FREE_PTR(fullFileName);
     return size;
+}
+
+int32_t CmFileReadWhole(const char *path, const char *fileName, uint32_t maxSize,
+    uint8_t **data, uint32_t *readSize)
+{
+    if ((fileName == NULL) || (data == NULL) || (readSize == NULL) || (maxSize == 0)) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    *data = NULL;
+    *readSize = 0;
+
+    char *fullFileName = NULL;
+    int32_t ret = GetFullFileName(path, fileName, &fullFileName);
+    if (ret != CMR_OK) {
+        return CMR_ERROR_NOT_EXIST;
+    }
+
+    ret = FileReadWhole(fullFileName, maxSize, data, readSize);
+    CM_FREE_PTR(fullFileName);
+    return ret;
 }
 
 int32_t CmFileWrite(const char *path, const char *fileName, uint32_t offset, const uint8_t *buf, uint32_t len)

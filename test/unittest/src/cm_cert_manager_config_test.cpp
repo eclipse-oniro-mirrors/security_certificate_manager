@@ -384,3 +384,22 @@ HWTEST_F(CmCertManagerConfigTest, FreeCertManagerConfig010, TestSize.Level0)
     EXPECT_EQ(getConfig.count, 0u);
     EXPECT_EQ(getConfig.configItems, nullptr);
 }
+
+/**
+ * @tc.name: SetConfigCountEdge011
+ * @tc.desc: Test CmSetCertManagerConfig rejects zero and oversized config counts
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmCertManagerConfigTest, SetConfigCountEdge011, TestSize.Level0)
+{
+    /* a zero count with non null items is rejected by the client check */
+    struct CertManagerConfig zeroCount = { 0, g_setItems };
+    int32_t ret = CmSetCertManagerConfig(&zeroCount);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "zero count should return invalid argument";
+
+    /* more than the maximum count is rejected by the client check */
+    struct CmConfigItem items[MAX_COUNT_CONFIG_ITEM + 1] = {};
+    struct CertManagerConfig tooMany = { MAX_COUNT_CONFIG_ITEM + 1, items };
+    ret = CmSetCertManagerConfig(&tooMany);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT) << "oversized count should return invalid argument";
+}

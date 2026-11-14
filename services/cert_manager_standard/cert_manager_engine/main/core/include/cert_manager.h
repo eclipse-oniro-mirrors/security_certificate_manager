@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -49,10 +49,10 @@ int32_t CmServiceGetAppCertList(const struct CmContext *context, uint32_t store,
 int32_t CmServiceGetAppCertListByUid(const struct CmContext *context, uint32_t store, struct CmBlob *fileNames,
     const uint32_t fileSize, uint32_t *fileCount);
 
-int32_t CmServiceGetUkeyCertList(const struct CmBlob *ukeyProvider, uint32_t certPurpose, uint32_t paramsCount,
+int32_t CmServiceGetUkeyCertList(const struct CmBlob *ukeyProvider, uint32_t certPurpose,
     struct CredentialDetailList *credentialDetailList);
 
-int32_t CmServiceGetUkeyCert(const struct CmBlob *keyUri, uint32_t certPurpose, uint32_t paramsCount,
+int32_t CmServiceGetUkeyCert(const struct CmBlob *keyUri, uint32_t certPurpose,
     struct CredentialDetailList *credentialDetailList);
 
 int32_t CmServiceGetCallingAppCertList(const struct CmContext *context, uint32_t store, struct CmBlob *fileNames,

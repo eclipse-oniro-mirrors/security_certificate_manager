@@ -134,29 +134,20 @@ int32_t ConstructAuthListPath(const struct CmContext *context, uint32_t store,
 
 int32_t CmStorageGetBuf(const char *path, const char *fileName, struct CmBlob *storageBuf)
 {
-    uint32_t fileSize = CmFileSize(path, fileName);
-    if (fileSize > MAX_OUT_BLOB_SIZE) {
-        CM_LOG_E("file size[%u] invalid", fileSize);
+    uint8_t *data = NULL;
+    uint32_t readSize = 0;
+    /* Read the size and the content through a single pinned fd: the previous
+     * stat() -> malloc -> fopen() sequence left a window where a concurrent
+     * uninstaller could unlink the file in between, failing the read of a
+     * file whose existence had just been confirmed. */
+    int32_t ret = CmFileReadWhole(path, fileName, MAX_OUT_BLOB_SIZE, &data, &readSize);
+    if (ret == CMR_ERROR_BUFFER_TOO_SMALL) {
+        CM_LOG_E("file size invalid, beyond max out blob size");
         return CMR_ERROR_STORAGE;
     }
-
-    if (fileSize == 0) {
-        CM_LOG_E("file is not exist");
-        return CMR_ERROR_NOT_EXIST;
-    }
-
-    uint8_t *data = (uint8_t *)CMMalloc(fileSize);
-    if (data == NULL) {
-        CM_LOG_E("malloc file buffer failed");
-        return CMR_ERROR_MALLOC_FAIL;
-    }
-    (void)memset_s(data, fileSize, 0, fileSize);
-
-    uint32_t readSize = CmFileRead(path, fileName, 0, data, fileSize);
-    if (readSize == 0) {
-        CM_LOG_E("read file size 0 invalid");
-        CMFree(data);
-        return CMR_ERROR_NOT_EXIST;
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("read file to buf failed, ret = %d", ret);
+        return ret;
     }
 
     storageBuf->data = data;

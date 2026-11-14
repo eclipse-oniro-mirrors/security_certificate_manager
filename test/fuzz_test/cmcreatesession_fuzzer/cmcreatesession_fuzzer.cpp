@@ -84,7 +84,7 @@ namespace OHOS {
         (void)memset_s(&listHead, sizeof(DoubleList), 0, sizeof(DoubleList));
         CertmanagerTest::MockHapToken mockHap;
         (void)CmCreateSession(&info, &handle, abortable);
-        (void)CmDeleteSession(&handle);
+        (void)CmReleaseSession(&handle, false);
         (void)CmDeleteSessionByNodeInfo(deleteType, &info);
         (void)CmInitList(&listNode);
         (void)CmAddNodeAfterListHead(&listHead, &listNode);
