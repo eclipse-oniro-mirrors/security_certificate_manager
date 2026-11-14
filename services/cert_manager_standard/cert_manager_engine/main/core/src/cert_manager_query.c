@@ -632,36 +632,18 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
     return ret;
 }
 
-#define CM_SYSTEM_CERT_DIR "/etc/security/certificates/"
 #define CM_CERT_STORE_VERSION_FILE "/system/etc/security/certStore.cfg"
-/* SM2 key OID 1.2.156.10197.1.301, DER encoding */
-static const uint8_t SM2_OID[] = { 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D };
 
-static enum CmCertAlgorithm GetSystemCertAlgorithm(const char *uri)
+/* Judge algorithm by the cert store directory path: GM certs reside under
+ * SYSTEM_CA_STORE_GM ("/system/etc/security/certificates_gm/"), international
+ * under SYSTEM_CA_STORE ("/system/etc/security/certificates/"). cFileList[i].path
+ * is filled by GetCertNameAndPath, so judge by path instead of scanning cert content. */
+static bool IsSystemCertGm(const struct CmBlob *path)
 {
-    if (uri == NULL) {
-        return CM_CERT_ALG_INTERNATIONAL;
+    if (path == NULL || path->data == NULL) {
+        return false;
     }
-    char path[MAX_LEN_URI] = {0};
-    if (snprintf_s(path, sizeof(path), sizeof(path) - 1, "%s%s", CM_SYSTEM_CERT_DIR, uri) < 0) {
-        return CM_CERT_ALG_INTERNATIONAL;
-    }
-    FILE *fp = fopen(path, "rb");
-    if (fp == NULL) {
-        return CM_CERT_ALG_INTERNATIONAL;
-    }
-    uint8_t buf[MAX_LEN_CERTIFICATE] = {0};
-    size_t n = fread(buf, 1, sizeof(buf), fp);
-    (void)fclose(fp);
-    if (n == 0) {
-        return CM_CERT_ALG_INTERNATIONAL;
-    }
-    for (size_t i = 0; i + sizeof(SM2_OID) <= n; i++) {
-        if (memcmp(buf + i, SM2_OID, sizeof(SM2_OID)) == 0) {
-            return CM_CERT_ALG_SM;
-        }
-    }
-    return CM_CERT_ALG_INTERNATIONAL;
+    return strstr((const char *)path->data, "certificates_gm") != NULL;
 }
 
 static void ReadCertStoreVersion(struct CmCertStoreInfo *certStoreInfo)
@@ -699,7 +681,7 @@ static void ReadCertStoreVersion(struct CmCertStoreInfo *certStoreInfo)
         if (strcmp(key, "certStoreVersion") == 0) {
             (void)memcpy_s(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION, val, valLen);
         } else if (strcmp(key, "smCertStoreVersion") == 0) {
-            (void)memcpy_s(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION, val, valLen);
+            (void)memcpy_s(certStoreInfo->smCertStoreVersion, MAX_LEN_CERT_STORE_VERSION, val, valLen);
         }
     }
     (void)fclose(fp);
@@ -725,7 +707,8 @@ int32_t CmGetSystemTrustedCertListInfo(const struct CmContext *context, enum CmC
             if (certBlob->uri[i].size == 0) {
                 continue; /* already skipped by CmGetCertListInfo */
             }
-            enum CmCertAlgorithm alg = GetSystemCertAlgorithm((char *)cFileList[i].fileName.data);
+            enum CmCertAlgorithm alg = IsSystemCertGm(&cFileList[i].path) ?
+                CM_CERT_ALG_SM : CM_CERT_ALG_INTERNATIONAL;
             if (alg != certAlg) {
                 certBlob->uri[i].size = 0; /* filter out: CmGetCertListPack will skip */
             }

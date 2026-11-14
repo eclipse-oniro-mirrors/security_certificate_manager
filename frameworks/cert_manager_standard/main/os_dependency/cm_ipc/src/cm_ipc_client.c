@@ -132,9 +132,9 @@ static int32_t CopyCertStoreInfoFromTrailer(const struct CmBlob *outBlob, struct
         CM_LOG_E("copy certStoreVersion failed");
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
-    if (memcpy_s(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION,
+    if (memcpy_s(certStoreInfo->smCertStoreVersion, MAX_LEN_CERT_STORE_VERSION,
         outBlob->data + off + MAX_LEN_CERT_STORE_VERSION, MAX_LEN_CERT_STORE_VERSION) != EOK) {
-        CM_LOG_E("copy smcertStoreVersion failed");
+        CM_LOG_E("copy smCertStoreVersion failed");
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
     return CM_SUCCESS;

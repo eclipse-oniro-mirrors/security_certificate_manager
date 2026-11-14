@@ -26,6 +26,17 @@ using namespace CertmanagerTest;
 namespace {
 static uint32_t PATH_COUNT = 1;
 static uint32_t g_selfTokenId = 0;
+
+static uint32_t CountKeptCerts(const struct CertBlob *certBlob, uint32_t total)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < total; i++) {
+        if (certBlob->uri[i].size != 0) {
+            n++;
+        }
+    }
+    return n;
+}
 }
 
 class CmGetSystemTrustedCertListByAlgTest : public testing::Test {
@@ -110,6 +121,8 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_002
     int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_INTERNATIONAL, &certFileList,
         &certBlob, status, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(CountKeptCerts(&certBlob, certFileList.size), 125); /* international preset count */
+    EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
 
 /**
@@ -123,11 +136,13 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_003
     int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_SM, &certFileList,
         &certBlob, status, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(CountKeptCerts(&certBlob, certFileList.size), 14); /* SM preset count */
+    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
 }
 
 /**
  * @tc.name: CmGetSystemTrustedCertListInfo_004
- * @tc.desc: certAlg=SM on overseas device (no SM certs) -> no crash, storeInfo sm version empty.
+ * @tc.desc: certAlg=SM, SM version non-empty and SM count > 0 on domestic device.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_004, TestSize.Level2)
@@ -136,13 +151,13 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_004
     int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_SM, &certFileList,
         &certBlob, status, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
-    /* SM list may be empty; function must not crash. storeInfo fields are readable. */
-    EXPECT_GE(strlen(storeInfo.smcertStoreVersion), 0);
+    EXPECT_GT(CountKeptCerts(&certBlob, certFileList.size), 0);
+    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
 }
 
 /**
  * @tc.name: CmGetSystemTrustedCertListInfo_005
- * @tc.desc: version file missing -> storeInfo fields empty, no crash.
+ * @tc.desc: certAlg=ALL, intl version non-empty and total count == intl + sm.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_005, TestSize.Level2)
@@ -151,8 +166,8 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_005
     int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_ALL, &certFileList,
         &certBlob, status, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
-    /* version file may be absent in test env; fields remain zero-filled, no crash */
-    EXPECT_GE(strlen(storeInfo.certStoreVersion), 0);
+    EXPECT_EQ(CountKeptCerts(&certBlob, certFileList.size), 125 + 14);
+    EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
 
 /**

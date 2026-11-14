@@ -117,12 +117,12 @@ static napi_value GetCertListParseParams(napi_env env, napi_callback_info info,
             uint32_t alg = 0;
             napi_value algVal = ParseUint32(env, argv[0], alg);
             if (algVal == nullptr) {
-                ThrowError(env, PARAM_ERROR, "Failed to get certAlg", context->metricsReport.get());
+                ThrowError(env, PARAMETER_VALIDATION_FAILED, "Failed to get certAlg", context->metricsReport.get());
                 CM_LOG_E("Failed to get certAlg when get system cert list");
                 return nullptr;
             }
             if (alg > CM_CERT_ALG_SM) {
-                ThrowError(env, PARAM_ERROR, "invalid certAlg", context->metricsReport.get());
+                ThrowError(env, PARAMETER_VALIDATION_FAILED, "invalid certAlg", context->metricsReport.get());
                 CM_LOG_E("invalid certAlg: %u", alg);
                 return nullptr;
             }
@@ -177,9 +177,9 @@ static napi_value GetCertListWriteResult(napi_env env, GetCertListAsyncContext c
         NAPI_CALL(env, napi_create_string_utf8(env, context->certStoreInfo->certStoreVersion,
             NAPI_AUTO_LENGTH, &ver));
         napi_set_named_property(env, storeInfoObj, "certStoreVersion", ver);
-        NAPI_CALL(env, napi_create_string_utf8(env, context->certStoreInfo->smcertStoreVersion,
+        NAPI_CALL(env, napi_create_string_utf8(env, context->certStoreInfo->smCertStoreVersion,
             NAPI_AUTO_LENGTH, &ver));
-        napi_set_named_property(env, storeInfoObj, "smcertStoreVersion", ver);
+        napi_set_named_property(env, storeInfoObj, "smCertStoreVersion", ver);
         napi_set_named_property(env, result, "certStoreInfo", storeInfoObj);
     }
     return result;

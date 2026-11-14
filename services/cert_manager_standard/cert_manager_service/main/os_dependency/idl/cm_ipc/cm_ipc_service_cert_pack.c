@@ -134,8 +134,8 @@ static int32_t CmCertStoreInfoPack(const struct CmCertStoreInfo *certStoreInfo, 
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
     if (memcpy_s(certificateList->data + certificateList->size + MAX_LEN_CERT_STORE_VERSION,
-        MAX_LEN_CERT_STORE_VERSION, certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION) != EOK) {
-        CM_LOG_E("copy smcertStoreVersion failed");
+        MAX_LEN_CERT_STORE_VERSION, certStoreInfo->smCertStoreVersion, MAX_LEN_CERT_STORE_VERSION) != EOK) {
+        CM_LOG_E("copy smCertStoreVersion failed");
         return CMR_ERROR_MEM_OPERATION_COPY;
     }
     certificateList->size += trailer;
