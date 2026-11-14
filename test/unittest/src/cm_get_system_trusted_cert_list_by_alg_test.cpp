@@ -17,26 +17,12 @@
 #include "cm_test_log.h"
 #include "cm_test_common.h"
 #include "cert_manager_api.h"
-#include "cert_manager_query.h"
-#include "cm_mem.h"
 #include "securec.h"
 
 using namespace testing::ext;
 using namespace CertmanagerTest;
 namespace {
-static uint32_t PATH_COUNT = 1;
 static uint32_t g_selfTokenId = 0;
-
-static uint32_t CountKeptCerts(const struct CertBlob *certBlob, uint32_t total)
-{
-    uint32_t n = 0;
-    for (uint32_t i = 0; i < total; i++) {
-        if (certBlob->uri[i].size != 0) {
-            n++;
-        }
-    }
-    return n;
-}
 }
 
 class CmGetSystemTrustedCertListByAlgTest : public testing::Test {
@@ -46,11 +32,7 @@ public:
     void SetUp();
     void TearDown();
 
-    struct CmContext context{};
-    struct CmMutableBlob pathList{0, nullptr};
-    struct CmMutableBlob certFileList{0, nullptr};
-    struct CertBlob certBlob{};
-    uint32_t status[MAX_COUNT_CERTIFICATE_ALL]{};
+    struct CertList *lstCert = nullptr;
     struct CmCertStoreInfo storeInfo{};
 };
 
@@ -67,117 +49,89 @@ void CmGetSystemTrustedCertListByAlgTest::TearDownTestCase(void)
 
 void CmGetSystemTrustedCertListByAlgTest::SetUp(void)
 {
-    (void)memset_s(&certBlob, sizeof(struct CertBlob), 0, sizeof(struct CertBlob));
-    (void)memset_s(status, sizeof(status), 0, sizeof(status));
+    ASSERT_EQ(InitCertList(&lstCert), CM_SUCCESS);
     (void)memset_s(&storeInfo, sizeof(struct CmCertStoreInfo), 0, sizeof(struct CmCertStoreInfo));
 }
 
 void CmGetSystemTrustedCertListByAlgTest::TearDown(void)
 {
-    CmFreeCertBlob(&certBlob);
-    if (certFileList.data != nullptr) {
-        CmFreeCertFiles(reinterpret_cast<struct CertFileInfo *>(certFileList.data), certFileList.size);
-        certFileList.data = nullptr;
-        certFileList.size = 0;
-    }
-    if (pathList.data != nullptr) {
-        CmFreePathList(&pathList, pathList.size);
-        pathList.data = nullptr;
-        pathList.size = 0;
-    }
-}
-
-static int32_t PrepareSystemCertFileList(struct CmContext *ctx, struct CmMutableBlob *pathList,
-    struct CmMutableBlob *certFileList)
-{
-    int32_t ret = CmGetSysCertPathList(ctx, pathList);
-    if (ret != CM_SUCCESS) {
-        return ret;
-    }
-    return CreateCertFileList(pathList, certFileList);
+    FreeCertList(lstCert);
+    lstCert = nullptr;
 }
 
 /**
- * @tc.name: CmGetSystemTrustedCertListInfo_001
- * @tc.desc: certAlg=ALL, returns all system certs and reads store version.
+ * @tc.name: CmGetSystemTrustedCertListByAlg_001
+ * @tc.desc: certAlg=ALL, returns all system certs (intl+sm) and store version.
  * @tc.type: FUNC
  */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_001, TestSize.Level1)
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_001, TestSize.Level1)
 {
-    ASSERT_EQ(PrepareSystemCertFileList(&context, &pathList, &certFileList), CM_SUCCESS);
-    int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_ALL, &certFileList,
-        &certBlob, status, &storeInfo);
+    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
-}
-
-/**
- * @tc.name: CmGetSystemTrustedCertListInfo_002
- * @tc.desc: certAlg=INTERNATIONAL, filters out SM certs.
- * @tc.type: FUNC
- */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_002, TestSize.Level1)
-{
-    ASSERT_EQ(PrepareSystemCertFileList(&context, &pathList, &certFileList), CM_SUCCESS);
-    int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_INTERNATIONAL, &certFileList,
-        &certBlob, status, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_EQ(CountKeptCerts(&certBlob, certFileList.size), 125); /* international preset count */
+    EXPECT_EQ(lstCert->certsCount, 125 + 14);
     EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
 
 /**
- * @tc.name: CmGetSystemTrustedCertListInfo_003
- * @tc.desc: certAlg=SM, returns only SM certs (may be empty on overseas devices).
+ * @tc.name: CmGetSystemTrustedCertListByAlg_002
+ * @tc.desc: certAlg=INTERNATIONAL, returns only international certs (125) and intl version.
  * @tc.type: FUNC
  */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_003, TestSize.Level1)
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_002, TestSize.Level1)
 {
-    ASSERT_EQ(PrepareSystemCertFileList(&context, &pathList, &certFileList), CM_SUCCESS);
-    int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_SM, &certFileList,
-        &certBlob, status, &storeInfo);
+    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_INTERNATIONAL, lstCert, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_EQ(CountKeptCerts(&certBlob, certFileList.size), 14); /* SM preset count */
-    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
-}
-
-/**
- * @tc.name: CmGetSystemTrustedCertListInfo_004
- * @tc.desc: certAlg=SM, SM version non-empty and SM count > 0 on domestic device.
- * @tc.type: FUNC
- */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_004, TestSize.Level2)
-{
-    ASSERT_EQ(PrepareSystemCertFileList(&context, &pathList, &certFileList), CM_SUCCESS);
-    int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_SM, &certFileList,
-        &certBlob, status, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_GT(CountKeptCerts(&certBlob, certFileList.size), 0);
-    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
-}
-
-/**
- * @tc.name: CmGetSystemTrustedCertListInfo_005
- * @tc.desc: certAlg=ALL, intl version non-empty and total count == intl + sm.
- * @tc.type: FUNC
- */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_005, TestSize.Level2)
-{
-    ASSERT_EQ(PrepareSystemCertFileList(&context, &pathList, &certFileList), CM_SUCCESS);
-    int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_ALL, &certFileList,
-        &certBlob, status, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_EQ(CountKeptCerts(&certBlob, certFileList.size), 125 + 14);
+    EXPECT_EQ(lstCert->certsCount, 125);
     EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
 
 /**
- * @tc.name: CmGetSystemTrustedCertListInfo_006
- * @tc.desc: null inputs -> CMR_ERROR_INVALID_ARGUMENT.
+ * @tc.name: CmGetSystemTrustedCertListByAlg_003
+ * @tc.desc: certAlg=SM, returns only SM certs (14) and sm version.
  * @tc.type: FUNC
  */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListInfo_006, TestSize.Level2)
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_003, TestSize.Level1)
 {
-    int32_t ret = CmGetSystemTrustedCertListInfo(&context, CM_CERT_ALG_ALL, nullptr,
-        &certBlob, status, &storeInfo);
-    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
+    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_SM, lstCert, &storeInfo);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(lstCert->certsCount, 14);
+    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
+}
+
+/**
+ * @tc.name: CmGetSystemTrustedCertListByAlg_004
+ * @tc.desc: certAlg=SM on domestic device, SM count > 0 and sm version non-empty.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_004, TestSize.Level2)
+{
+    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_SM, lstCert, &storeInfo);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_GT(lstCert->certsCount, 0);
+    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
+}
+
+/**
+ * @tc.name: CmGetSystemTrustedCertListByAlg_005
+ * @tc.desc: certAlg=ALL, total count == intl(125) + sm(14), intl version non-empty.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_005, TestSize.Level2)
+{
+    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, &storeInfo);
+    EXPECT_EQ(ret, CM_SUCCESS);
+    EXPECT_EQ(lstCert->certsCount, 125 + 14);
+    EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
+}
+
+/**
+ * @tc.name: CmGetSystemTrustedCertListByAlg_006
+ * @tc.desc: invalid inputs -> error code.
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_006, TestSize.Level2)
+{
+    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, nullptr, &storeInfo), CMR_ERROR_NULL_POINTER);
+    EXPECT_EQ(CmGetSystemTrustedCertList((enum CmCertAlgorithm)99, lstCert, &storeInfo),
+        CMR_ERROR_INVALID_ARGUMENT);
 }
