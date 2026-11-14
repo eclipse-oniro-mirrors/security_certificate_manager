@@ -46,6 +46,11 @@ extern "C" {
  */
 int32_t CmThreadPoolAddTask(void (*task)(void *), void *arg, uint32_t delayMs);
 
+/* test-only interfaces, compiled only when the build target defines
+ * CM_TEST_API_ENABLE (the engine core test twin library that unit tests
+ * link): production artifacts carry none of these symbols, so a
+ * production call site fails at compile time */
+#ifdef CM_TEST_API_ENABLE
 /* test-only: shorten the worker idle keep-alive (milliseconds) so thread
  * reaping and respawn can be exercised without waiting for the 30 s
  * default; production code must not call this. The new value also reaches
@@ -55,6 +60,7 @@ void CmThreadPoolSetKeepAliveMsForTest(uint32_t keepAliveMs);
 
 /* test-only: live worker count for lifecycle assertions */
 uint32_t CmThreadPoolGetWorkerCountForTest(void);
+#endif /* CM_TEST_API_ENABLE */
 
 #ifdef __cplusplus
 }

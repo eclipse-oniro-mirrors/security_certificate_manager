@@ -404,6 +404,9 @@ void CmUkeyAuthDialogManager::SetAbilityQuerier(AbilityQuerier querier)
     querier_ = querier;
 }
 
+/* compiled only for test binaries (CM_TEST_API_ENABLE, see the header):
+ * never linked into production artifacts */
+#ifdef CM_TEST_API_ENABLE
 void CmUkeyAuthDialogManager::SetTimeoutRangeForTest(uint32_t minSec, uint32_t defaultSec,
     uint32_t maxSec, uint32_t graceMs)
 {
@@ -414,6 +417,7 @@ void CmUkeyAuthDialogManager::SetTimeoutRangeForTest(uint32_t minSec, uint32_t d
     maxTimeoutSec_ = maxSec;
     graceTimeoutMs_ = graceMs;
 }
+#endif
 
 void CmUkeyAuthDialogManager::SetUnloadRenewal(std::function<void()> renewal)
 {
@@ -423,6 +427,7 @@ void CmUkeyAuthDialogManager::SetUnloadRenewal(std::function<void()> renewal)
     unloadRenewal_ = std::move(renewal);
 }
 
+#ifdef CM_TEST_API_ENABLE
 void CmUkeyAuthDialogManager::SetKeepAliveIntervalForTest(uint32_t intervalMs)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -436,6 +441,7 @@ void CmUkeyAuthDialogManager::SetTimerPostFailForTest(bool fail)
     std::lock_guard<std::mutex> lock(mutex_);
     timerPostFailForTest_ = fail;
 }
+#endif
 
 void CmUkeyAuthDialogManager::SetPcChecker(PcChecker checker)
 {
@@ -771,11 +777,13 @@ void CmUkeyAuthDialogManager::HandleGraceTimeout(const std::string &requestId)
     FinishSessionLocked(requestId, CMR_DIALOG_ERROR_OPERATION_CANCELS);
 }
 
+#ifdef CM_TEST_API_ENABLE
 std::string CmUkeyAuthDialogManager::GetRequestIdForTest()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return (session_ == nullptr) ? std::string() : session_->requestId;
 }
+#endif
 
 bool CmUkeyAuthDialogManager::EnsureTimerHandlerLocked()
 {

@@ -132,6 +132,9 @@ int32_t CmThreadPoolAddTask(void (*task)(void *), void *arg, uint32_t delayMs)
     return CM_SUCCESS;
 }
 
+/* compiled only for test binaries (CM_TEST_API_ENABLE, see the header):
+ * never linked into production artifacts */
+#ifdef CM_TEST_API_ENABLE
 void CmThreadPoolSetKeepAliveMsForTest(uint32_t keepAliveMs)
 {
     g_cmPoolKeepAliveMs.store(keepAliveMs);
@@ -142,3 +145,4 @@ uint32_t CmThreadPoolGetWorkerCountForTest(void)
     std::unique_lock<std::mutex> lock(g_cmPoolMutex);
     return g_cmPoolLiveWorkers;
 }
+#endif /* CM_TEST_API_ENABLE */
