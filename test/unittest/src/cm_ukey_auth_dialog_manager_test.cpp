@@ -64,10 +64,11 @@ public:
             lastCode_ = data.ReadInt32();
             called_++;
         }
-        return 0;
+        return sendRequestRet_; /* non-zero simulates the client callback IPC failing */
     }
     int32_t lastCode_ = -1;
     int called_ = 0;
+    int32_t sendRequestRet_ = 0;
 };
 
 class CmUkeyAuthDialogManagerTest : public testing::Test {
@@ -395,6 +396,11 @@ public:
     int OnRemoteRequest(uint32_t code, MessageParcel &data, MessageParcel &reply,
         MessageOption &option) override
     {
+        lastRawCode_ = code;
+        rawCalled_++;
+        if (sendRet_ != 0) {
+            return sendRet_; /* simulate the ipc failing before the parcel is read */
+        }
         if (code == IAbilityConnection::ON_ABILITY_CONNECT_DONE) {
             int32_t size = data.ReadInt32();
             for (int32_t i = 0; i < size; ++i) {
@@ -404,6 +410,9 @@ public:
         }
         return 0;
     }
+    int32_t sendRet_ = 0;
+    int rawCalled_ = 0; /* every SendRequest attempt, regardless of the command */
+    uint32_t lastRawCode_ = 0;
     std::vector<std::string> keys_;
     std::vector<std::string> values_;
 };
@@ -614,5 +623,313 @@ HWTEST_F(CmUkeyAuthDialogManagerTest, GraceTimerPostFailFinishesSession, testing
     EXPECT_EQ(manager_->GetRequestIdForTest(), "");
     EXPECT_EQ(launcher_->disconnectCount_, 1);
     manager_->SetTimerPostFailForTest(false);
+}
+
+/* ---- direct CmSystemDialogConnection behaviour ---- */
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionNullRemoteReportsDisconnect, testing::ext::TestSize.Level0)
+{
+    /* a null remote object can still arrive from the framework: the
+     * connection must report the disconnect instead of dereferencing it */
+    CmSystemDialogConnection conn("req-unknown", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), nullptr, 0);
+    /* the unknown request id is dropped by the manager: nothing else to do */
+    SUCCEED();
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionSendFailReportsDisconnect, testing::ext::TestSize.Level0)
+{
+    /* the start command fails on the service side: the parcel is never read
+     * and the connection reports the disconnect for the request id */
+    sptr<FakeDialogService> svc = sptr<FakeDialogService>(new FakeDialogService());
+    svc->sendRet_ = -1;
+    CmSystemDialogConnection conn("req-unknown", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), svc, 0);
+    EXPECT_EQ(svc->rawCalled_, 1); /* the start command was attempted */
+    EXPECT_TRUE(svc->keys_.empty()); /* ... and aborted before the parcel was read */
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionConnectIgnoredAfterRelease, testing::ext::TestSize.Level0)
+{
+    /* ReleaseWindow marks the connection as released: a late connect done
+     * callback must not send the start command anymore */
+    sptr<FakeDialogService> svc = sptr<FakeDialogService>(new FakeDialogService());
+    CmSystemDialogConnection conn("req-rel", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.ReleaseWindow(nullptr); /* nothing stored yet: pure flag set */
+    EXPECT_EQ(svc->rawCalled_, 0);
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), svc, 0);
+    EXPECT_EQ(svc->rawCalled_, 0); /* released: the start command is suppressed */
+    EXPECT_TRUE(svc->keys_.empty());
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionReleaseWithoutStoredRemote, testing::ext::TestSize.Level0)
+{
+    /* releasing before any connect done holds no remote object: the null
+     * target takes the early exit; an explicit remote still goes out */
+    sptr<FakeDialogService> svc = sptr<FakeDialogService>(new FakeDialogService());
+    CmSystemDialogConnection conn("req-silent", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.ReleaseWindow(nullptr); /* no explicit and no stored remote: silent */
+    EXPECT_EQ(svc->rawCalled_, 0);
+    conn.ReleaseWindow(svc); /* an explicit remote goes out exactly once */
+    EXPECT_EQ(svc->rawCalled_, 1);
+    EXPECT_EQ(svc->lastRawCode_, static_cast<uint32_t>(IAbilityConnection::ON_REMOTE_STATE_CHANGED));
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionReleasePrefersExplicitRemote, testing::ext::TestSize.Level0)
+{
+    /* the explicit remote wins over the one stored at connect time */
+    sptr<FakeDialogService> startSvc = sptr<FakeDialogService>(new FakeDialogService());
+    sptr<FakeDialogService> releaseSvc = sptr<FakeDialogService>(new FakeDialogService());
+    CmSystemDialogConnection conn("req-x", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityConnectDone(AppExecFwk::ElementName(), startSvc, 0);
+    EXPECT_EQ(startSvc->rawCalled_, 1);
+    conn.ReleaseWindow(releaseSvc);
+    EXPECT_EQ(releaseSvc->rawCalled_, 1);
+    EXPECT_EQ(releaseSvc->lastRawCode_, static_cast<uint32_t>(IAbilityConnection::ON_REMOTE_STATE_CHANGED));
+    EXPECT_EQ(startSvc->rawCalled_, 1); /* the stored remote was not reused */
+    /* a second release finds the slot cleared: no further command */
+    conn.ReleaseWindow(nullptr);
+    EXPECT_EQ(releaseSvc->rawCalled_, 1);
+    EXPECT_EQ(startSvc->rawCalled_, 1);
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionDisconnectDoneReportsDisconnect, testing::ext::TestSize.Level0)
+{
+    /* the framework delivered disconnect notification forwards straight to
+     * the manager; an unknown request id is dropped safely */
+    CmSystemDialogConnection conn("req-unknown", "com.example.ukeydrv", "DrvUIExtAbility", "{}");
+    conn.OnAbilityDisconnectDone(AppExecFwk::ElementName(), 0);
+    SUCCEED();
+}
+
+HWTEST_F(CmUkeyAuthDialogManagerTest, RealLauncherRejectsNullConnection, testing::ext::TestSize.Level0)
+{
+    /* the real launcher only guards its arguments here: a null connection is
+     * rejected without touching the ability manager */
+    RealSystemDialogLauncher launcher;
+    EXPECT_EQ(launcher.Connect(nullptr), CMR_ERROR_INVALID_ARGUMENT);
+    launcher.Disconnect(nullptr); /* must stay a safe no-op */
+    SUCCEED();
+}
+
+/* ---- guard arms the routing matrix above leaves cold ---- */
+
+/**
+ * @tc.name: OpenDialogMissingQuerierRejected
+ * @tc.desc: a null ability querier fails closed as not registered
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogMissingQuerierRejected, testing::ext::TestSize.Level0)
+{
+    manager_->SetAbilityQuerier(nullptr);
+    EXPECT_EQ(Open(), CMR_DIALOG_ERROR_NOT_REGISTERED);
+    EXPECT_EQ(launcher_->connectCount_, 0);
+    EXPECT_EQ(manager_->GetRequestIdForTest(), "");
+}
+
+/**
+ * @tc.name: OpenDialogDriverCheckerMissingRejected
+ * @tc.desc: a null driver ability checker fails closed as not registered
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogDriverCheckerMissingRejected, testing::ext::TestSize.Level0)
+{
+    manager_->SetDriverAbilityChecker(nullptr);
+    EXPECT_EQ(Open(), CMR_DIALOG_ERROR_NOT_REGISTERED);
+    EXPECT_EQ(launcher_->connectCount_, 0);
+}
+
+/**
+ * @tc.name: OpenDialogDriverCheckerFalseRejected
+ * @tc.desc: a failed driver ability check on the OpenDialog path rejects the open
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogDriverCheckerFalseRejected, testing::ext::TestSize.Level0)
+{
+    bmsOk_ = false;
+    EXPECT_EQ(Open(), CMR_DIALOG_ERROR_NOT_REGISTERED);
+    EXPECT_EQ(launcher_->connectCount_, 0);
+}
+
+/**
+ * @tc.name: OpenDialogUnknownAbilityTypeRejected
+ * @tc.desc: an ability type outside the known set rejects the open as internal error
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogUnknownAbilityTypeRejected, testing::ext::TestSize.Level0)
+{
+    abilityType_ = 7; /* neither UIAbility nor UIExtension */
+    EXPECT_EQ(Open(), CMR_DIALOG_ERROR_INTERNAL);
+    EXPECT_EQ(launcher_->connectCount_, 0);
+    EXPECT_EQ(manager_->GetRequestIdForTest(), "");
+}
+
+/**
+ * @tc.name: OpenDialogMissingLauncherRejected
+ * @tc.desc: a null system dialog launcher rejects the launch as internal error
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, OpenDialogMissingLauncherRejected, testing::ext::TestSize.Level0)
+{
+    manager_->SetLauncher(nullptr);
+    EXPECT_EQ(Open(), CMR_DIALOG_ERROR_INTERNAL);
+    EXPECT_EQ(manager_->GetRequestIdForTest(), ""); /* session not stored */
+    EXPECT_EQ(launcher_->connectCount_, 0); /* the fake launcher is no longer installed */
+}
+
+/* ---- report code whitelist: every known driver code maps to its result ---- */
+
+/**
+ * @tc.name: ReportWhitelistMapsEachKnownCode
+ * @tc.desc: every whitelisted driver report code maps to its internal result code
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, ReportWhitelistMapsEachKnownCode, testing::ext::TestSize.Level0)
+{
+    const struct {
+        int32_t reported;
+        int32_t delivered;
+    } maps[] = {
+        { 0, CM_SUCCESS },                                         /* success */
+        { 29700001, CMR_DIALOG_ERROR_INTERNAL },                   /* generic failure */
+        { 29700002, CMR_DIALOG_ERROR_OPERATION_CANCELS },          /* user cancel */
+        { 29700003, CMR_DIALOG_ERROR_INSTALL_FAILED },             /* operation failure */
+        { 29700006, CMR_DIALOG_ERROR_PARAMETER_VALIDATION_FAILED } /* param validation */
+    };
+    for (const auto &m : maps) {
+        ASSERT_EQ(Open(0), CM_SUCCESS);
+        std::string reqId = manager_->GetRequestIdForTest();
+        ASSERT_EQ(manager_->OnReport(reqId, driverBundle_, m.reported), CM_SUCCESS);
+        EXPECT_EQ(client_->lastCode_, m.delivered);
+        EXPECT_EQ(launcher_->disconnectCount_, 1); /* each report finishes its session */
+        launcher_->disconnectCount_ = 0;
+    }
+}
+
+/**
+ * @tc.name: ReportWrongRequestIdRejected
+ * @tc.desc: a report with a mismatched request id is rejected while the live session stays usable
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, ReportWrongRequestIdRejected, testing::ext::TestSize.Level0)
+{
+    ASSERT_EQ(Open(0), CM_SUCCESS);
+    std::string reqId = manager_->GetRequestIdForTest();
+    /* a request id matching no live session is rejected */
+    ASSERT_EQ(manager_->OnReport(reqId + "00", driverBundle_, 0), CMR_DIALOG_ERROR_INTERNAL);
+    EXPECT_EQ(client_->called_, 0); /* nothing delivered for the unknown id */
+    EXPECT_EQ(manager_->GetRequestIdForTest(), reqId); /* the live session survives */
+    /* the correct id still completes the very same session afterwards */
+    ASSERT_EQ(manager_->OnReport(reqId, driverBundle_, 0), CM_SUCCESS);
+    EXPECT_EQ(client_->called_, 1);
+    EXPECT_EQ(client_->lastCode_, 0);
+}
+
+/**
+ * @tc.name: SecondDisconnectDuringGraceIsIgnored
+ * @tc.desc: a second disconnect while already grace waiting must not disturb the session flow
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, SecondDisconnectDuringGraceIsIgnored, testing::ext::TestSize.Level0)
+{
+    manager_->SetTimeoutRangeForTest(2, 3, 5, 500); /* wide grace: no timing sensitivity */
+    ASSERT_EQ(Open(0), CM_SUCCESS);
+    std::string reqId = manager_->GetRequestIdForTest();
+    manager_->OnDialogDisconnected(reqId); /* WAITING_REPORT -> GRACE_WAITING */
+    manager_->OnDialogDisconnected(reqId); /* duplicate in grace: the state guard returns */
+    ASSERT_EQ(manager_->OnReport(reqId, driverBundle_, 0), CM_SUCCESS); /* still completes */
+    EXPECT_EQ(client_->lastCode_, 0);
+    EXPECT_EQ(launcher_->disconnectCount_, 1);
+}
+
+/**
+ * @tc.name: ReportDeliveryFailureStillFinishesSession
+ * @tc.desc: a failed client delivery is logged but still finishes and frees the session
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, ReportDeliveryFailureStillFinishesSession, testing::ext::TestSize.Level0)
+{
+    client_->sendRequestRet_ = 29201; /* simulate the client callback IPC failing */
+    ASSERT_EQ(Open(0), CM_SUCCESS);
+    std::string reqId = manager_->GetRequestIdForTest();
+    ASSERT_EQ(manager_->OnReport(reqId, driverBundle_, 0), CM_SUCCESS); /* accepted anyway */
+    EXPECT_EQ(client_->called_, 1); /* the delivery was attempted */
+    EXPECT_EQ(manager_->GetRequestIdForTest(), ""); /* session finished regardless */
+    EXPECT_EQ(launcher_->disconnectCount_, 1); /* the dialog was torn down */
+    /* the single-flight slot is free: a new session opens normally */
+    client_->sendRequestRet_ = 0;
+    ASSERT_EQ(Open(0), CM_SUCCESS);
+    manager_->OnReport(manager_->GetRequestIdForTest(), driverBundle_, 0);
+}
+
+/**
+ * @tc.name: KeepAliveSkippedWithoutRenewalHook
+ * @tc.desc: a session without a renewal hook opens fine and never fires keep-alive
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, KeepAliveSkippedWithoutRenewalHook, testing::ext::TestSize.Level0)
+{
+    manager_->SetUnloadRenewal(nullptr);
+    ASSERT_EQ(Open(0), CM_SUCCESS); /* no keep-alive task posted: still a valid session */
+    std::this_thread::sleep_for(std::chrono::milliseconds(150)); /* > 2 keep-alive intervals */
+    EXPECT_EQ(renewalCount_, 0); /* nothing fired with no hook registered */
+    ASSERT_EQ(manager_->OnReport(manager_->GetRequestIdForTest(), driverBundle_, 0), CM_SUCCESS);
+}
+
+/**
+ * @tc.name: InitRealDependenciesAssemblesRealQuerierOnce
+ * @tc.desc: the production assembly installs real dependencies exactly once and stays idempotent
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, InitRealDependenciesAssemblesRealQuerierOnce, testing::ext::TestSize.Level0)
+{
+    /* null pc checker / driver checker: the real assembly must fill both in */
+    manager_->SetPcChecker(nullptr);
+    manager_->SetDriverAbilityChecker(nullptr);
+    manager_->InitRealDependencies();
+    /* the real querier replaced the fake: the HUKS lookup of this test key uri
+     * fails on the device, which routes into the not-registered reject */
+    EXPECT_EQ(Open(), CMR_DIALOG_ERROR_NOT_REGISTERED);
+    EXPECT_EQ(launcher_->connectCount_, 0); /* the fake launcher is no longer installed */
+    /* re-inject all four fakes: a second init must not overwrite them */
+    manager_->SetLauncher(launcher_);
+    manager_->SetAbilityQuerier(querier_);
+    manager_->SetPcChecker([this]() { return pcMode_; });
+    manager_->SetDriverAbilityChecker(driverChecker_);
+    manager_->InitRealDependencies(); /* idempotent: must return without re-assembling */
+    ASSERT_EQ(Open(0), CM_SUCCESS); /* the fakes survived: proof of the early return */
+    manager_->OnReport(manager_->GetRequestIdForTest(), driverBundle_, 0); /* cleanup */
+}
+
+/* ---- direct connection privacy and real-launcher robustness ---- */
+
+/**
+ * @tc.name: ConnectionScrubParamsWipesJson
+ * @tc.desc: scrubbing clears the parameters json that may carry customData base64
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, ConnectionScrubParamsWipesJson, testing::ext::TestSize.Level0)
+{
+    CmSystemDialogConnection conn("req-scrub", "com.example.ukeydrv", "DrvUIExtAbility",
+        R"({"keyUri":"u1","customData":"YWJj"})");
+    EXPECT_FALSE(conn.GetParamsJson().empty()); /* the json is readable before scrubbing */
+    conn.ScrubParams();
+    EXPECT_TRUE(conn.GetParamsJson().empty()); /* and wiped afterwards (privacy R10) */
+}
+
+/**
+ * @tc.name: RealLauncherDisconnectUnknownConnectionIsSafe
+ * @tc.desc: the real launcher only logs ability manager errors for a connection that was never connected
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmUkeyAuthDialogManagerTest, RealLauncherDisconnectUnknownConnectionIsSafe, testing::ext::TestSize.Level0)
+{
+    /* a never-connected connection object: the ability manager disconnect reports an
+     * error which the launcher only logs (already-disconnected is safe) */
+    RealSystemDialogLauncher launcher;
+    sptr<IAbilityConnection> conn = new CmSystemDialogConnection("req-never", "com.example.ukeydrv",
+        "DrvUIExtAbility", "{}");
+    launcher.Disconnect(conn);
+    SUCCEED(); /* no crash and no throw is the whole contract */
 }
 }

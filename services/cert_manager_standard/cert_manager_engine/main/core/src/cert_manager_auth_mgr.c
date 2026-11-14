@@ -535,6 +535,12 @@ int32_t CmAuthIsAuthorizedApp(const struct CmContext *context, const struct CmBl
     }
     struct CmBlob commonUri = { 0, NULL };
 
+    /* The MAC key and the auth state must be verified under g_authMgrLock:
+     * without the lock a concurrent CmAuthRemoveGrantedApp may delete the
+     * HUKS mac key (and rewrite the auth list) between the existence check
+     * and CalcUriMac's HksInit/HksFinish, flipping the authorization
+     * decision on this security-sensitive path. */
+    pthread_mutex_lock(&g_authMgrLock);
     do {
         ret = ConstructCommonUri(&uriObj, &commonUri, CM_CREDENTIAL_STORE);
         if (ret != CM_SUCCESS) {
@@ -559,6 +565,7 @@ int32_t CmAuthIsAuthorizedApp(const struct CmContext *context, const struct CmBl
             break;
         }
     } while (0);
+    pthread_mutex_unlock(&g_authMgrLock);
 
     CM_FREE_PTR(commonUri.data);
     (void)CertManagerFreeUri(&uriObj);
@@ -819,7 +826,13 @@ static int32_t CheckCommonPermission(const struct CmContext *context, const stru
     }
 
     CM_LOG_D("caller may be authed app, need check");
-    return CheckIsAuthorizedApp(uriObj, level);
+    /* CheckIsAuthorizedApp reads the HUKS mac key that the grant/remove
+     * writers own: hold g_authMgrLock so a concurrent revoke cannot delete
+     * the mac key mid-verification (same pattern as every other auth read). */
+    pthread_mutex_lock(&g_authMgrLock);
+    ret = CheckIsAuthorizedApp(uriObj, level);
+    pthread_mutex_unlock(&g_authMgrLock);
+    return ret;
 }
 
 int32_t CmCheckAndGetCommonUri(const struct CmContext *context, uint32_t store, const struct CmBlob *uri,

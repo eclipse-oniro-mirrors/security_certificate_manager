@@ -60,6 +60,7 @@ class MockHapToken {
 public:
     explicit MockHapToken();
     explicit MockHapToken(const std::vector<std::string> permissionList);
+    MockHapToken(const std::vector<std::string> permissionList, bool isSystemApp);
     ~MockHapToken();
 private:
     uint64_t selfToken_;
@@ -80,6 +81,10 @@ public:
     static AccessTokenID GetNativeTokenIdFromProcess(const std::string& process);
     static AccessTokenIDEx SetupHapAndAllocateToken();
     static AccessTokenIDEx SetupHapAndAllocateToken(const std::vector<std::string> permissionList);
+    static AccessTokenIDEx SetupHapAndAllocateToken(const std::vector<std::string> permissionList,
+        bool isSystemApp);
+    /* the full permission list the default mock hap token is allocated with */
+    static const std::vector<std::string>& DefaultPermissions();
 };
 
 void FreeCMBlobData(struct CmBlob *blob);

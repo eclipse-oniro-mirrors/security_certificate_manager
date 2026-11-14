@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -22,10 +22,10 @@
 extern "C" {
 #endif
 
-int32_t CmGetUkeyCertListByHksCertInfoSet(const struct CmBlob *ukeyProvider, uint32_t certPurpose, uint32_t paramsCount,
+int32_t CmGetUkeyCertListByHksCertInfoSet(const struct CmBlob *ukeyProvider, uint32_t certPurpose,
     struct CredentialDetailList *credentialDetailList);
 
-int32_t CmGetUkeyCertByHksCertInfoSet(const struct CmBlob *keyUri, uint32_t certPurpose, uint32_t paramsCount,
+int32_t CmGetUkeyCertByHksCertInfoSet(const struct CmBlob *keyUri, uint32_t certPurpose,
     struct CredentialDetailList *credentialDetailList);
 
 int32_t CmServiceImportUkeyCert(struct CmBlob *keyUri, struct CmBlob *cert, uint32_t certPurpose);

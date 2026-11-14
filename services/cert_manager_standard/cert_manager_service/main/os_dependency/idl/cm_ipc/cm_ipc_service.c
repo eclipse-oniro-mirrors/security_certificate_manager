@@ -643,11 +643,9 @@ static int32_t CmIpcServiceGetUkeyCertListCommon(uint32_t code, const struct CmB
         }
 
         if (mode == LIST_UKEY) {
-            ret = CmServiceGetUkeyCertList(&ukeyParam, certPurpose, CM_ARRAY_SIZE(params),
-                &credentialDetailList);
+            ret = CmServiceGetUkeyCertList(&ukeyParam, certPurpose, &credentialDetailList);
         } else {
-            ret = CmServiceGetUkeyCert(&ukeyParam, certPurpose, CM_ARRAY_SIZE(params),
-                &credentialDetailList);
+            ret = CmServiceGetUkeyCert(&ukeyParam, certPurpose, &credentialDetailList);
         }
         if (ret != CM_SUCCESS) {
             CM_LOG_E("get ukey cert fail, ret = %d", ret);
@@ -1702,6 +1700,7 @@ static int32_t PackConfigToBuffer(const struct CertManagerConfig *config, struct
             return ret;
         }
     }
+    outData->size = outOffset;
     return CM_SUCCESS;
 }
 

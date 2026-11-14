@@ -176,7 +176,7 @@ export namespace certificateManagerDialog {
 
   const MIN_DATA_LEN: double = 1;
   const MAX_DATA_LEN: double = 0x6400000;
-  const KEYSTORE_PWD_MAX_LEN: double = 128;
+  const KEYSTORE_PWD_MAX_LEN: double = 32;
   /* wrong parameter types -> 401; value range or length violations -> 29700006 */
   const PARAM_TYPE_INVALID: int = 401;
   const PARAM_VALIDATION_FAILED: int = 29700006;

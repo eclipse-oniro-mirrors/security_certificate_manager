@@ -76,7 +76,10 @@ const std::vector<std::string> PERMISSION_LIST = {
     "ohos.permission.ACCESS_CERT_MANAGER",
     "ohos.permission.ACCESS_USER_TRUSTED_CERT",
     "ohos.permission.ACCESS_SYSTEM_APP_CERT",
-    "ohos.permission.CRYPTO_EXTENSION_REGISTER"
+    "ohos.permission.CRYPTO_EXTENSION_REGISTER",
+    /* EL2 (HUKS CE level) imports carry HKS_TAG_SPECIFIC_USER_ID and require
+       the across-accounts sensitive permission on the caller token */
+    "ohos.permission.INTERACT_ACROSS_LOCAL_ACCOUNTS"
 };
 }
 
@@ -104,6 +107,14 @@ MockHapToken::MockHapToken(const std::vector<std::string> permissionList)
 {
     selfToken_ = GetSelfTokenID();
     AccessTokenIDEx tokenIdEx = CmTestCommon::SetupHapAndAllocateToken(permissionList);
+    mockToken_ = tokenIdEx.tokenIdExStruct.tokenID;
+    SetSelfTokenID(tokenIdEx.tokenIDEx);
+}
+
+MockHapToken::MockHapToken(const std::vector<std::string> permissionList, bool isSystemApp)
+{
+    selfToken_ = GetSelfTokenID();
+    AccessTokenIDEx tokenIdEx = CmTestCommon::SetupHapAndAllocateToken(permissionList, isSystemApp);
     mockToken_ = tokenIdEx.tokenIdExStruct.tokenID;
     SetSelfTokenID(tokenIdEx.tokenIDEx);
 }
@@ -215,6 +226,22 @@ AccessTokenIDEx CmTestCommon::SetupHapAndAllocateToken(const std::vector<std::st
         hapInfo, hapPolicy);
     AccessTokenIDEx tokenIdEx = CmTestCommon::AllocTestHapToken(hapInfo, hapPolicy);
     return tokenIdEx;
+}
+
+AccessTokenIDEx CmTestCommon::SetupHapAndAllocateToken(const std::vector<std::string> permissionList,
+    bool isSystemApp)
+{
+    HapInfoParams hapInfo;
+    HapPolicyParams hapPolicy;
+    CmTestCommon::SetHapInfoAndPolicy(BUNDLE_NAME, permissionList, isSystemApp,
+        hapInfo, hapPolicy);
+    AccessTokenIDEx tokenIdEx = CmTestCommon::AllocTestHapToken(hapInfo, hapPolicy);
+    return tokenIdEx;
+}
+
+const std::vector<std::string>& CmTestCommon::DefaultPermissions()
+{
+    return PERMISSION_LIST;
 }
 
 int32_t CmTestCommon::DeleteTestHapToken(AccessTokenID tokenID)
