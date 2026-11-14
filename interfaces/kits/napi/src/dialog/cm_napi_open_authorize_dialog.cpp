@@ -303,7 +303,6 @@ napi_value CMNapiOpenAuthorizeDialog(napi_env env, napi_callback_info info)
         ThrowError(env, DIALOG_ERROR_GENERIC, "get caller labelName faild", reportHolder.get());
         return nullptr;
     }
-    asyncContext->appUid = static_cast<int32_t>(getuid());
     NAPI_CALL(env, napi_create_promise(env, &asyncContext->deferred, &result));
     auto want = CMGetAuthCertWant(asyncContext);
     if (argc == PARAM_SIZE_ONE) {
