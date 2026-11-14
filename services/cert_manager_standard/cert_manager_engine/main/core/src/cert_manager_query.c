@@ -633,7 +633,7 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
 }
 
 #define CM_SYSTEM_CERT_DIR "/etc/security/certificates/"
-#define CM_CERT_STORE_VERSION_FILE "/etc/security/certificates/cert_store_version"
+#define CM_CERT_STORE_VERSION_FILE "/system/etc/security/certStore.cfg"
 /* SM2 key OID 1.2.156.10197.1.301, DER encoding */
 static const uint8_t SM2_OID[] = { 0x06, 0x08, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x82, 0x2D };
 
@@ -675,17 +675,33 @@ static void ReadCertStoreVersion(struct CmCertStoreInfo *certStoreInfo)
         CM_LOG_D("cert store version file not found");
         return;
     }
-    /* line 1: international version, line 2: sm version */
-    if (fgets(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION, fp) == NULL) {
-        (void)fclose(fp);
-        return;
+    /* certStore.cfg format: key=value per line
+     *   certStoreVersion=20251230      (international algorithm CA store version)
+     *   smCertStoreVersion=20261030    (SM algorithm CA store version)
+     */
+    char line[256] = {0};
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t len = strnlen(line, sizeof(line));
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+        char *eq = strchr(line, '=');
+        if (eq == NULL) {
+            continue;
+        }
+        *eq = '\0';
+        const char *key = line;
+        const char *val = eq + 1;
+        size_t valLen = strnlen(val, MAX_LEN_CERT_STORE_VERSION);
+        if (valLen >= MAX_LEN_CERT_STORE_VERSION) {
+            valLen = MAX_LEN_CERT_STORE_VERSION - 1;
+        }
+        if (strcmp(key, "certStoreVersion") == 0) {
+            (void)memcpy_s(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION, val, valLen);
+        } else if (strcmp(key, "smCertStoreVersion") == 0) {
+            (void)memcpy_s(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION, val, valLen);
+        }
     }
-    certStoreInfo->certStoreVersion[strnlen(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION) - 1] = '\0';
-    if (fgets(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION, fp) == NULL) {
-        (void)fclose(fp);
-        return;
-    }
-    certStoreInfo->smcertStoreVersion[strnlen(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION) - 1] = '\0';
     (void)fclose(fp);
 }
 
