@@ -48,6 +48,7 @@ extern "C" {
 #define MAX_COUNT_CERTIFICATE    256
 #define MAX_COUNT_CERTIFICATE_ALL  512
 #define MAX_LEN_CERT_STORE_VERSION 64    /* include 1 byte: the terminator('\0') */
+#define CM_CERT_STORE_INFO_TRAILER_SIZE (2 * MAX_LEN_CERT_STORE_VERSION)
 #define MAX_P7B_INSTALL_COUNT    256
 #define MAX_LEN_URI              256
 #define MAX_AUTH_LEN_URI         256
@@ -433,6 +434,7 @@ enum CmCertAlgorithm {
     CM_CERT_ALG_ALL = 0,
     CM_CERT_ALG_INTERNATIONAL = 1,
     CM_CERT_ALG_SM = 2,
+    CM_CERT_ALG_BUTT,
 };
 
 struct CmCertStoreInfo {

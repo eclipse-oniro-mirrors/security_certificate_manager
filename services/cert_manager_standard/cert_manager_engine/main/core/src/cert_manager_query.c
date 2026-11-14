@@ -643,7 +643,7 @@ static bool IsSystemCertGm(const struct CmBlob *path)
     if (path == NULL || path->data == NULL) {
         return false;
     }
-    return strstr((const char *)path->data, "certificates_gm") != NULL;
+    return strncmp((const char *)path->data, SYSTEM_CA_STORE_GM, strlen(SYSTEM_CA_STORE_GM)) == 0;
 }
 
 static void ReadCertStoreVersion(struct CmCertStoreInfo *certStoreInfo)

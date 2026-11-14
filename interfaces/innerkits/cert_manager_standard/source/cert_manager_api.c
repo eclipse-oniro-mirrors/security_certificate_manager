@@ -57,7 +57,7 @@ CM_API_EXPORT int32_t CmGetSystemTrustedCertList(enum CmCertAlgorithm certAlg,
         CM_LOG_E("invalid certificateList");
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    if (certAlg != CM_CERT_ALG_ALL && certAlg != CM_CERT_ALG_INTERNATIONAL && certAlg != CM_CERT_ALG_SM) {
+    if (certAlg >= CM_CERT_ALG_BUTT) {
         CM_LOG_E("invalid certAlg:%u", certAlg);
         return CMR_ERROR_INVALID_ARGUMENT;
     }

@@ -85,7 +85,7 @@ static int32_t GetOptionalCertAlg(const struct CmParamSet *paramSet, uint32_t *c
     if (CmGetParam(paramSet, CM_TAG_PARAM1_UINT32, &algParam) != CM_SUCCESS || algParam == NULL) {
         return CM_SUCCESS;
     }
-    if (algParam->uint32Param > CM_CERT_ALG_SM) {
+        if (algParam->uint32Param >= CM_CERT_ALG_BUTT) {
         CM_LOG_E("invalid certAlg: %u", algParam->uint32Param);
         return CMR_ERROR_INVALID_ARGUMENT;
     }

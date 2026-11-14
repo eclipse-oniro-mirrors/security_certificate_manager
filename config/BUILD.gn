@@ -1373,5 +1373,6 @@ ohos_prebuilt_etc("cert_store_version_cfg") {
   relative_install_dir = "security"
   install_images = [
     "system",
+    "updater",
   ]
 }

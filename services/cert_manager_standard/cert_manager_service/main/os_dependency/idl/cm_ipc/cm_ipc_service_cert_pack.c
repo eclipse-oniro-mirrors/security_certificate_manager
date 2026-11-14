@@ -123,7 +123,7 @@ static int32_t CmCertStoreInfoPack(const struct CmCertStoreInfo *certStoreInfo, 
     if (certStoreInfo == NULL || CmCheckBlob(certificateList) != CM_SUCCESS) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
-    uint32_t trailer = 2 * MAX_LEN_CERT_STORE_VERSION;
+    uint32_t trailer = CM_CERT_STORE_INFO_TRAILER_SIZE;
     if (certificateList->size + trailer < certificateList->size) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
@@ -153,6 +153,7 @@ int32_t CmServiceGetSystemTrustedCertListPack(const struct CmContext *context, e
     uint32_t status[MAX_COUNT_CERTIFICATE_ALL] = {0};
     struct CertBlob certBlob;
     (void)memset_s(&certBlob, sizeof(struct CertBlob), 0, sizeof(struct CertBlob));
+    uint32_t origCapacity = certificateList->size;
     int32_t ret = CmGetSystemTrustedCertListInfo(context, certAlg, certFileList, &certBlob, status,
         certStoreInfo);
     if (ret != CM_SUCCESS) {
@@ -166,6 +167,12 @@ int32_t CmServiceGetSystemTrustedCertListPack(const struct CmContext *context, e
         CM_LOG_E("CmGetCertListPack fail");
         CmFreeCertBlob(&certBlob);
         return ret;
+    }
+
+    if (certificateList->size + CM_CERT_STORE_INFO_TRAILER_SIZE > origCapacity) {
+        CM_LOG_E("certificateList capacity too small for certStoreInfo trailer");
+        CmFreeCertBlob(&certBlob);
+        return CMR_ERROR_BUFFER_TOO_SMALL;
     }
 
     ret = CmCertStoreInfoPack(certStoreInfo, certificateList);

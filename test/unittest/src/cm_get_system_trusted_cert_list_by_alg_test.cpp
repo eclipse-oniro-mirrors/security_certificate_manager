@@ -33,7 +33,7 @@ public:
     void TearDown();
 
     struct CertList *lstCert = nullptr;
-    struct CmCertStoreInfo storeInfo{};
+    struct CmCertStoreInfo storeInfo = {0};
 };
 
 void CmGetSystemTrustedCertListByAlgTest::SetUpTestCase(void)
@@ -61,49 +61,36 @@ void CmGetSystemTrustedCertListByAlgTest::TearDown(void)
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_001
- * @tc.desc: certAlg=ALL, returns all system certs (intl+sm) and store version.
+ * @tc.desc: certAlg=ALL, returns system certs and store version.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_001, TestSize.Level1)
 {
     int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_EQ(lstCert->certsCount, 125 + 14);
+    EXPECT_GT(lstCert->certsCount, 0);
     EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_002
- * @tc.desc: certAlg=INTERNATIONAL, returns only international certs (125) and intl version.
+ * @tc.desc: certAlg=INTERNATIONAL, returns international certs and intl version.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_002, TestSize.Level1)
 {
     int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_INTERNATIONAL, lstCert, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_EQ(lstCert->certsCount, 125);
+    EXPECT_GT(lstCert->certsCount, 0);
     EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_003
- * @tc.desc: certAlg=SM, returns only SM certs (14) and sm version.
+ * @tc.desc: certAlg=SM, returns SM certs and sm version.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_003, TestSize.Level1)
-{
-    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_SM, lstCert, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_EQ(lstCert->certsCount, 14);
-    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
-}
-
-/**
- * @tc.name: CmGetSystemTrustedCertListByAlg_004
- * @tc.desc: certAlg=SM on domestic device, SM count > 0 and sm version non-empty.
- * @tc.type: FUNC
- */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_004, TestSize.Level2)
 {
     int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_SM, lstCert, &storeInfo);
     EXPECT_EQ(ret, CM_SUCCESS);
@@ -112,26 +99,46 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_00
 }
 
 /**
+ * @tc.name: CmGetSystemTrustedCertListByAlg_004
+ * @tc.desc: ALL count == INTERNATIONAL count + SM count (relationship, no hardcoded mirror values).
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_004, TestSize.Level2)
+{
+    struct CertList *allList = nullptr;
+    struct CertList *intlList = nullptr;
+    struct CertList *smList = nullptr;
+    ASSERT_EQ(InitCertList(&allList), CM_SUCCESS);
+    ASSERT_EQ(InitCertList(&intlList), CM_SUCCESS);
+    ASSERT_EQ(InitCertList(&smList), CM_SUCCESS);
+
+    ASSERT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, allList, &storeInfo), CM_SUCCESS);
+    ASSERT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_INTERNATIONAL, intlList, &storeInfo), CM_SUCCESS);
+    ASSERT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_SM, smList, &storeInfo), CM_SUCCESS);
+
+    EXPECT_EQ(allList->certsCount, intlList->certsCount + smList->certsCount);
+
+    FreeCertList(allList);
+    FreeCertList(intlList);
+    FreeCertList(smList);
+}
+
+/**
  * @tc.name: CmGetSystemTrustedCertListByAlg_005
- * @tc.desc: certAlg=ALL, total count == intl(125) + sm(14), intl version non-empty.
+ * @tc.desc: all parameter validation branches.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_005, TestSize.Level2)
 {
-    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
-    EXPECT_EQ(lstCert->certsCount, 125 + 14);
-    EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
-}
-
-/**
- * @tc.name: CmGetSystemTrustedCertListByAlg_006
- * @tc.desc: invalid inputs -> error code.
- * @tc.type: FUNC
- */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_006, TestSize.Level2)
-{
+    /* null certificateList */
     EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, nullptr, &storeInfo), CMR_ERROR_NULL_POINTER);
+    /* null certStoreInfo */
+    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, nullptr), CMR_ERROR_NULL_POINTER);
+    /* null certAbstract inside CertList */
+    struct CertList emptyList = {0, nullptr};
+    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, &emptyList, &storeInfo),
+        CMR_ERROR_INVALID_ARGUMENT);
+    /* invalid certAlg */
     EXPECT_EQ(CmGetSystemTrustedCertList((enum CmCertAlgorithm)99, lstCert, &storeInfo),
         CMR_ERROR_INVALID_ARGUMENT);
 }

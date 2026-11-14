@@ -121,7 +121,7 @@ static napi_value GetCertListParseParams(napi_env env, napi_callback_info info,
                 CM_LOG_E("Failed to get certAlg when get system cert list");
                 return nullptr;
             }
-            if (alg > CM_CERT_ALG_SM) {
+            if (alg >= CM_CERT_ALG_BUTT) {
                 ThrowError(env, PARAMETER_VALIDATION_FAILED, "invalid certAlg", context->metricsReport.get());
                 CM_LOG_E("invalid certAlg: %u", alg);
                 return nullptr;

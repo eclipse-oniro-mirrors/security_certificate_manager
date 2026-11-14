@@ -112,7 +112,7 @@ static int32_t GetSystemTrustedCertListInitOutData(struct CmBlob *outBlob)
     /* cert list buffer + certStoreInfo trailer (2 fixed version strings) */
     uint32_t listSize = sizeof(uint32_t) + (sizeof(uint32_t) + MAX_LEN_SUBJECT_NAME + sizeof(uint32_t) +
         sizeof(uint32_t) + MAX_LEN_URI + sizeof(uint32_t) + MAX_LEN_CERT_ALIAS) * MAX_COUNT_CERTIFICATE_ALL;
-    uint32_t buffSize = listSize + 2 * MAX_LEN_CERT_STORE_VERSION;
+    uint32_t buffSize = listSize + CM_CERT_STORE_INFO_TRAILER_SIZE;
     outBlob->data = (uint8_t *)CmMalloc(buffSize);
     if (outBlob->data == NULL) {
         return CMR_ERROR_MALLOC_FAIL;
@@ -123,10 +123,15 @@ static int32_t GetSystemTrustedCertListInitOutData(struct CmBlob *outBlob)
 
 static int32_t CopyCertStoreInfoFromTrailer(const struct CmBlob *outBlob, struct CmCertStoreInfo *certStoreInfo)
 {
-    if (certStoreInfo == NULL || outBlob == NULL || outBlob->size < 2 * MAX_LEN_CERT_STORE_VERSION) {
-        return CM_SUCCESS;
+    if (certStoreInfo == NULL || outBlob == NULL) {
+        CM_LOG_E("CopyCertStoreInfoFromTrailer invalid param");
+        return CMR_ERROR_INVALID_ARGUMENT;
     }
-    uint32_t off = outBlob->size - 2 * MAX_LEN_CERT_STORE_VERSION;
+    if (outBlob->size < CM_CERT_STORE_INFO_TRAILER_SIZE) {
+        CM_LOG_E("outBlob size too small for certStoreInfo trailer");
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+    uint32_t off = outBlob->size - CM_CERT_STORE_INFO_TRAILER_SIZE;
     if (memcpy_s(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION,
         outBlob->data + off, MAX_LEN_CERT_STORE_VERSION) != EOK) {
         CM_LOG_E("copy certStoreVersion failed");
