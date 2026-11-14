@@ -33,7 +33,13 @@ ohos_fuzztest("CmUkeyAuthDialogManagerFuzzTest") {
   deps = [
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
     "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main:cert_manager_sdk",
-    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/dialog:libcm_ukey_auth_dialog_static",
+
+    # the dialog test twin: the fuzzer drives the manager's *ForTest
+    # hooks (short timeout range, keep-alive interval, timer post
+    # failure, live request id) to reach the timeout/grace/cancel
+    # paths within a single fuzz run; production artifacts carry
+    # none of those symbols
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/dialog:libcm_ukey_auth_dialog_static_test",
     "${cert_manager_root_dir}/test/fuzz_test/fuzz_test_common:libcert_manager_fuzz_test_common_static",
   ]
   external_deps = [
