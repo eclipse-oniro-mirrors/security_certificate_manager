@@ -987,15 +987,22 @@ static int32_t UpdateUserCert(const struct UpdateUserCertProperty *updateProp,
         updateProp->certFileInfo->path.size,
         updateProp->certFileInfo->path.data,
     };
-    // the reused cert file belongs to the uid encoded in the uri, keep rdb uid consistent with it
     struct CmContext certFileContext = { 0 };
+    const struct CmContext *rdbContext = propertyOri->context;
     int32_t ret = CmConstructContextFromUri((const char *)updateProp->certUri->data, &certFileContext);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("ConstructContextFromUri failed");
-        return ret;
+    if (ret == CM_SUCCESS) {
+        rdbContext = &certFileContext;
+    } else {
+        CM_LOG_W("ConstructContextFromUri failed, ret: %d, fall back to caller context", ret);
     }
-    struct CertPropertyOri updatePropertyOri = { &certFileContext, propertyOri->uri, propertyOri->alias,
-        propertyOri->subjectName, propertyOri->store, propertyOri->level };
+    struct CertPropertyOri updatePropertyOri = {
+        .context = rdbContext,
+        .uri = propertyOri->uri,
+        .alias = propertyOri->alias,
+        .subjectName = propertyOri->subjectName,
+        .store = propertyOri->store,
+        .level = propertyOri->level,
+    };
     struct AfterInstallCertProperty afterPersistProp = {
         .propertyOri = &updatePropertyOri,
         .context = updateProp->context,
