@@ -37,6 +37,10 @@ constexpr uint32_t CM_THREAD_POOL_CORE_THREADS = 4;
  * error log instead of blocking the caller; callers drop the task or
  * fall back to synchronous execution */
 constexpr size_t CM_THREAD_POOL_QUEUE_SIZE = 8;
+/* idle wait slice: the keep-alive is re-read after every slice, so a value
+ * shortened at runtime (tests shrink it to milliseconds) also reaches
+ * workers that are already waiting */
+constexpr uint32_t CM_THREAD_POOL_IDLE_POLL_MS = 100;
 
 struct CmPooledTask {
     void (*task)(void *);
@@ -73,8 +77,19 @@ void *CmPoolWorkerEntry(void *arg)
             lock.lock();
             continue;
         }
-        bool timedOut = g_cmPoolCv.wait_for(lock,
-            std::chrono::milliseconds(g_cmPoolKeepAliveMs.load())) == std::cv_status::timeout;
+        /* idle wait in keep-alive-sized slices instead of one long wait: the
+         * value is re-read after every slice, so a keep-alive shortened at
+         * runtime takes effect for workers that are already waiting */
+        bool timedOut = true;
+        uint32_t waitedMs = 0;
+        do {
+            uint32_t keepAliveMs = g_cmPoolKeepAliveMs.load();
+            uint32_t sliceMs = (keepAliveMs > CM_THREAD_POOL_IDLE_POLL_MS) ? CM_THREAD_POOL_IDLE_POLL_MS :
+                keepAliveMs;
+            timedOut = g_cmPoolCv.wait_for(lock, std::chrono::milliseconds(sliceMs)) ==
+                std::cv_status::timeout;
+            waitedMs += sliceMs;
+        } while (timedOut && waitedMs < g_cmPoolKeepAliveMs.load());
         if (timedOut && g_cmPoolQueue.empty()) {
             g_cmPoolLiveWorkers--;
             CM_LOG_I("cm thread pool worker exited after idle");

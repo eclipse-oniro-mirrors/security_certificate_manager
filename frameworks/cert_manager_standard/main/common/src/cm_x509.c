@@ -585,9 +585,14 @@ int32_t GetX509Fingerprint(const X509 *x509cert, char *outBuf, uint32_t outBufMa
     return (int32_t)length;
 }
 
-int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex)
+int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex,
+    uint32_t outPkHashHexLen)
 {
     if (certData == NULL || certData->data == NULL || outPkHashHex == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (outPkHashHexLen < CM_PK_HASH_HEX_LEN + 1) {
+        CM_LOG_E("outPkHashHex buffer too small: %u bytes", outPkHashHexLen);
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
@@ -627,9 +632,9 @@ int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex
             ret = CMR_ERROR_INVALID_CERT_FORMAT;
             break;
         }
-        /* two uppercase hex chars per byte; 64 chars + NUL fit the 65-byte
-         * contract documented in cm_x509.h */
-        if ((CM_X509_HEX_CHARS_PER_BYTE * mdLen + 1) > 65) { /* more than SHA256 would overflow it */
+        /* two uppercase hex chars per byte; the entry check already sized
+         * the buffer, this only guards a digest longer than SHA256 */
+        if ((CM_X509_HEX_CHARS_PER_BYTE * mdLen + 1) > CM_PK_HASH_HEX_LEN + 1) {
             CM_LOG_E("unexpected pubkey digest length %u", mdLen);
             ret = CMR_ERROR;
             break;

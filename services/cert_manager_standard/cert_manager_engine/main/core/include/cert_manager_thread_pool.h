@@ -48,7 +48,9 @@ int32_t CmThreadPoolAddTask(void (*task)(void *), void *arg, uint32_t delayMs);
 
 /* test-only: shorten the worker idle keep-alive (milliseconds) so thread
  * reaping and respawn can be exercised without waiting for the 30 s
- * default; production code must not call this */
+ * default; production code must not call this. The new value also reaches
+ * idle workers that are already waiting: the idle wait re-reads the
+ * keep-alive every 100 ms slice */
 void CmThreadPoolSetKeepAliveMsForTest(uint32_t keepAliveMs);
 
 /* test-only: live worker count for lifecycle assertions */

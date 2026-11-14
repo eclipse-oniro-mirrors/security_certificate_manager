@@ -20,6 +20,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -305,9 +306,8 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusUnknownUriRejected)
     (void)memset_s(&context, sizeof(context), 0, sizeof(context));
     char uriBuf[] = "INVALIDXXXX";
     struct CmBlob uri = { sizeof(uriBuf), (uint8_t *)uriBuf };
-    /* uri not in the system store: nothing recorded, nothing rewritten;
-     * NULL out param is accepted on the rejection path */
-    EXPECT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED, NULL), CMR_ERROR_NOT_EXIST);
+    /* uri not in the system store: nothing recorded, nothing rewritten */
+    EXPECT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CMR_ERROR_NOT_EXIST);
 
     struct RootCaStoreRecord records[TEST_RECORD_CAPACITY] = {};
     uint32_t count = 1;
@@ -338,9 +338,10 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
     CmFreeCertFiles(files, certFileList.size);
 
     struct CmBlob uri = { (uint32_t)strlen(uriBuf) + 1, (uint8_t *)uriBuf };
+    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CM_SUCCESS);
+    /* the getter reports the hash the engine committed to the store */
     char outPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
-    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED, outPkHash), CM_SUCCESS);
-    /* the out hash is the value the engine committed to the store */
+    ASSERT_EQ(CmGetSystemCertPkHash(&context, &uri, outPkHash, sizeof(outPkHash)), CM_SUCCESS);
     EXPECT_EQ(strlen(outPkHash), CM_ROOT_CA_PK_HASH_HEX_LEN);
 
     uint32_t enable = 1;
@@ -354,17 +355,81 @@ TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRealUriRoundTrip)
     constexpr size_t policyLineLen = policyPrefixLen + CM_ROOT_CA_PK_HASH_HEX_LEN + 1;
     ASSERT_EQ(content.size(), policyLineLen);
     EXPECT_EQ(content.substr(0, policyPrefixLen), "1,");
-    /* the policy line carries the same hash the engine reported */
+    /* the policy line carries the same hash the getter reported */
     EXPECT_EQ(content.substr(policyPrefixLen, CM_ROOT_CA_PK_HASH_HEX_LEN), std::string(outPkHash));
     EXPECT_EQ(content[policyLineLen - 1], '\n');
 
-    /* re-enable empties the policy file and clears the disabled row; NULL
-     * out param on a success path exercises the internal fallback buffer */
-    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED, NULL), CM_SUCCESS);
+    /* re-enable empties the policy file and clears the disabled row */
+    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED), CM_SUCCESS);
     std::string cleared;
     ASSERT_TRUE(ReadPolicyFile(cleared));
     EXPECT_EQ(cleared.size(), 0u);
     uint32_t reenable = 0;
     ASSERT_EQ(QueryRootCaEnable(uriBuf, strlen(uriBuf), &reenable), CM_SUCCESS);
     EXPECT_EQ(reenable, 1u);
+}
+
+/* a failed policy regeneration must roll the committed row back: occupy
+ * the tmp file path with a directory so the regeneration cannot write;
+ * both directions must fail with the store left in its pre-toggle state
+ * and the published policy file unchanged (the rename is the last write
+ * step, so any failure leaves the file exactly as it was) */
+TEST_F(CmRootCaStoreRdbTest, SetSystemCertStatusRollsBackWhenPolicyFileFails)
+{
+    struct CmContext context;
+    (void)memset_s(&context, sizeof(context), 0, sizeof(context));
+    /* first REAL system root CA, same as the round-trip test */
+    struct CmMutableBlob certFileList = { 0, nullptr };
+    const struct UserCAProperty prop = { INIT_INVALID_VALUE, CM_ALL_USER };
+    ASSERT_EQ(CmServiceGetCertList(&context, &prop, CM_SYSTEM_TRUSTED_STORE, &certFileList), CM_SUCCESS);
+    ASSERT_GT(certFileList.size, 0u);
+    struct CertFileInfo *files = (struct CertFileInfo *)certFileList.data;
+    char uriBuf[MAX_LEN_URI] = {0};
+    ASSERT_EQ(memcpy_s(uriBuf, sizeof(uriBuf), files[0].fileName.data, files[0].fileName.size), EOK);
+    CmFreeCertFiles(files, certFileList.size);
+
+    struct CmBlob uri = { (uint32_t)strlen(uriBuf) + 1, (uint8_t *)uriBuf };
+    mode_t mode0701 = S_IRWXU | S_IXOTH;
+
+    /* clean start: nothing disabled, empty policy file */
+    struct RootCaStoreRecord disabled[TEST_RECORD_CAPACITY] = {};
+    uint32_t disabledCount = 1;
+    ASSERT_EQ(QueryDisabledRootCa(disabled, TEST_RECORD_CAPACITY, &disabledCount), CM_SUCCESS);
+    ASSERT_EQ(disabledCount, 0u);
+    ASSERT_EQ(CmRegenerateRevocationPolicyFile(), CM_SUCCESS);
+
+    /* occupy the tmp path: the regeneration cannot write its tmp file */
+    ASSERT_EQ(mkdir(FORCE_CHECK_POLICY_FILE ".tmp", mode0701), 0);
+
+    /* disable fails after the row was committed: rollback must restore
+     * the pre-toggle state and leave the published file unchanged */
+    EXPECT_NE(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CM_SUCCESS);
+    disabledCount = 1;
+    EXPECT_EQ(QueryDisabledRootCa(disabled, TEST_RECORD_CAPACITY, &disabledCount), CM_SUCCESS);
+    EXPECT_EQ(disabledCount, 0u);
+    uint32_t enable = 0;
+    EXPECT_EQ(QueryRootCaEnable(uriBuf, strlen(uriBuf), &enable), CM_SUCCESS);
+    EXPECT_EQ(enable, 1u);
+    std::string policy;
+    ASSERT_TRUE(ReadPolicyFile(policy));
+    EXPECT_EQ(policy.size(), 0u);
+
+    /* unblock and disable for real: the row lands and the file lists it */
+    ASSERT_EQ(rmdir(FORCE_CHECK_POLICY_FILE ".tmp"), 0);
+    ASSERT_EQ(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_DISABLED), CM_SUCCESS);
+    char pkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
+    ASSERT_EQ(CmGetSystemCertPkHash(&context, &uri, pkHash, sizeof(pkHash)), CM_SUCCESS);
+
+    /* enable fails with the tmp path blocked: the disabled row must
+     * survive the rollback and the file must still list it */
+    ASSERT_EQ(mkdir(FORCE_CHECK_POLICY_FILE ".tmp", mode0701), 0);
+    EXPECT_NE(CmSetSystemCertStatus(&context, &uri, CERT_STATUS_ENANLED), CM_SUCCESS);
+    enable = 1;
+    EXPECT_EQ(QueryRootCaEnable(uriBuf, strlen(uriBuf), &enable), CM_SUCCESS);
+    EXPECT_EQ(enable, 0u);
+    ASSERT_TRUE(ReadPolicyFile(policy));
+    EXPECT_NE(policy.find(std::string("1,") + pkHash), std::string::npos);
+
+    /* leave the tmp path usable again; the fixture cleanup wipes the row */
+    ASSERT_EQ(rmdir(FORCE_CHECK_POLICY_FILE ".tmp"), 0);
 }

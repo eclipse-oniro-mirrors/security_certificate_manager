@@ -599,8 +599,8 @@ static uint32_t GetSystemCertManualStatus(const struct CmBlob *fileName,
 }
 
 /* fetch the disabled rows in one shot so the per-certificate loop only does
- * an in-memory match */
-static int32_t GetDisabledRootCaRecords(struct RootCaStoreRecord **records, uint32_t *count)
+ * an in-memory match; shared with the policy file regeneration */
+int32_t GetDisabledRootCaRecords(struct RootCaStoreRecord **records, uint32_t *count)
 {
     *records = (struct RootCaStoreRecord *)CMMalloc(MAX_COUNT_CERTIFICATE_ALL *
         sizeof(struct RootCaStoreRecord));

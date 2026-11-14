@@ -330,4 +330,40 @@ HWTEST_F(CmSetCertStatusTest, SystemCaAlgTypeByDirectory005, TestSize.Level0)
     EXPECT_EQ(CmGetSystemCaAlgType(nullptr), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
     EXPECT_EQ(CmGetSystemCaAlgType("/data/service/el1/public"), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
 }
+
+/**
+ * @tc.name: GetSystemCertPkHash006
+ * @tc.desc: the pk hash getter returns the precomputed SPKI digest of the
+ *           preset system CA and validates its out buffer size
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MJA /SR000H096P
+ */
+HWTEST_F(CmSetCertStatusTest, GetSystemCertPkHash006, TestSize.Level0)
+{
+    struct CmContext context;
+    (void)memset_s(&context, sizeof(context), 0, sizeof(context));
+    struct CmBlob uriBlob = {strlen(g_expectList[0].uri) + 1, (uint8_t *)(g_expectList[0].uri)};
+
+    char pkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = {0};
+    /* argument and buffer-size validation, nothing written */
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, nullptr, pkHash, sizeof(pkHash)),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, &uriBlob, nullptr, sizeof(pkHash)),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, &uriBlob, pkHash, CM_ROOT_CA_PK_HASH_HEX_LEN),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(pkHash[0], '\0');
+
+    /* the real hash: the same SPKI SHA256 the store row and the policy
+     * file line carry */
+    ASSERT_EQ(CmGetSystemCertPkHash(&context, &uriBlob, pkHash, sizeof(pkHash)), CM_SUCCESS);
+    EXPECT_EQ(strlen(pkHash), CM_ROOT_CA_PK_HASH_HEX_LEN);
+    EXPECT_STREQ(pkHash, g_expectedSystemPkHashes[0]);
+
+    /* uri not in the system store */
+    const char *invalidUri = "INVALIDXXXX";
+    struct CmBlob invalidUriBlob = {strlen(invalidUri) + 1, (uint8_t *)invalidUri};
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, &invalidUriBlob, pkHash, sizeof(pkHash)),
+        CMR_ERROR_NOT_EXIST);
+}
 }

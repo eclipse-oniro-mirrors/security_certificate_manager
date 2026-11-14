@@ -44,14 +44,25 @@ int32_t CmGetCertConfigStatus(const char *fileName, uint32_t *status);
 uint32_t CmGetSystemCaAlgType(const char *certPath);
 
 /* set the manual enable/disable state of one SYSTEM root CA certificate
- * (certUri must match a file enumerated from the system store); writes the
- * root_ca_cert_store row and regenerates the force-check policy file
- * @param certPkHash optional out: receives the pk hash of the committed
- *        certificate (CM_ROOT_CA_PK_HASH_HEX_LEN uppercase hex chars,
- *        NUL-terminated; provide at least CM_ROOT_CA_PK_HASH_HEX_LEN + 1
- *        bytes); pass NULL when the hash is not needed */
+ * (certUri must match a file enumerated from the system store); commits the
+ * root_ca_cert_store row and regenerates the force-check policy file.
+ * Atomic on failure: when the regeneration fails the committed row is
+ * rolled back to its pre-call state (a previously absent uri keeps an
+ * enable=1 row, functionally the same "not disabled" state) and the
+ * published policy file stays untouched (its rename is the last write
+ * step), so the store never contradicts the published file */
 int32_t CmSetSystemCertStatus(const struct CmContext *context,
-    const struct CmBlob *certUri, uint32_t status, char *certPkHash);
+    const struct CmBlob *certUri, uint32_t status);
+
+/* pk hash of one SYSTEM root CA certificate (certUri must match a file
+ * enumerated from the system store): the SHA256 over its SubjectPublicKeyInfo
+ * DER as CM_ROOT_CA_PK_HASH_HEX_LEN uppercase hex chars
+ * @param outPkHashHex buffer of at least CM_ROOT_CA_PK_HASH_HEX_LEN + 1
+ *        bytes, receives the NUL-terminated hash
+ * @param outPkHashHexLen size of outPkHashHex in bytes; too small a buffer
+ *        fails with CMR_ERROR_INVALID_ARGUMENT and writes nothing */
+int32_t CmGetSystemCertPkHash(const struct CmContext *context,
+    const struct CmBlob *certUri, char *outPkHashHex, uint32_t outPkHashHexLen);
 
 /* rewrite the force-check policy file from the disabled rows of
  * root_ca_cert_store (atomic tmp + rename); 0 bytes when nothing is disabled */

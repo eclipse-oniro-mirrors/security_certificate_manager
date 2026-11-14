@@ -95,8 +95,22 @@ void CmThreadPoolTest::TearDown()
  */
 HWTEST_F(CmThreadPoolTest, CmThreadPoolTest001, TestSize.Level0)
 {
-    /* relies on a fresh pool: must be the first test of the suite to use the pool */
+    /* shrink the keep-alive first: the sliced idle wait re-reads it, so
+     * workers already waiting under a longer value also exit soon */
     CmThreadPoolSetKeepAliveMsForTest(POOL_TEST_KEEP_ALIVE_MS);
+
+    /* order-independent entry: drain workers an earlier test may have left
+     * behind before asserting against a fresh pool */
+    bool drained = false;
+    for (uint32_t elapsed = 0; elapsed < POOL_TEST_WAIT_TIMEOUT_MS;
+        elapsed += POOL_TEST_POLL_INTERVAL_MS) {
+        if (CmThreadPoolGetWorkerCountForTest() == 0) {
+            drained = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(POOL_TEST_POLL_INTERVAL_MS));
+    }
+    EXPECT_TRUE(drained) << "pool did not drain before CmThreadPoolTest001";
 
     std::atomic<uint32_t> done{0};
     int32_t ret = CmThreadPoolAddTask(SetFlag, &done, 0);

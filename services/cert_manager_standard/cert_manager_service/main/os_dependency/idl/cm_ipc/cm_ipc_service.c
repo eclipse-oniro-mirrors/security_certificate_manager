@@ -195,7 +195,8 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
     uint32_t status = INIT_INVALID_VALUE;
     struct CmContext cmContext = {0};
     struct CmBlob certUri = { 0, NULL };
-    /* pk hash of the committed certificate, handed to the status event */
+    /* pk hash of the committed certificate, fetched after the commit and
+     * handed to the status event */
     char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
     struct CmParamSet *paramSet = NULL;
     struct CmParamOut params[] = {
@@ -217,16 +218,21 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
             break;
         }
 
-        ret = CmSetSystemCertStatus(&cmContext, &certUri, status, certPkHash);
+        ret = CmSetSystemCertStatus(&cmContext, &certUri, status);
         if (ret != CM_SUCCESS) {
             CM_LOG_E("CmSetSystemCertStatus failed, ret = %d", ret);
             break;
         }
 
         /* the status change is committed; notify subscribers best-effort:
-         * the event wrapper logs failures internally and a failed broadcast
-         * must not fail the already committed status update */
-        (void)CmPublishSystemCaStatusEvent(certPkHash, status);
+         * the pk hash is fetched from the committed certificate and a
+         * failed fetch or broadcast must not fail the already committed
+         * status update (the event is skipped instead) */
+        if (CmGetSystemCertPkHash(&cmContext, &certUri, certPkHash, sizeof(certPkHash)) != CM_SUCCESS) {
+            CM_LOG_E("get committed cert pk hash failed, skip the status event");
+        } else {
+            (void)CmPublishSystemCaStatusEvent(certPkHash, status);
+        }
     } while (0);
     CmReport(__func__, &cmContext, &certUri, ret);
 
