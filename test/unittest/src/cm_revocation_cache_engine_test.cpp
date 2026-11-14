@@ -134,6 +134,17 @@ static int RemoveTreeEntry(const char *path, const struct stat *st, int type, st
     if (entry == base) {
         return 0;
     }
+    /* the forceCheck policy directory is a sibling of the cache type
+     * directories and belongs to the SA lifecycle too: the boot cfg
+     * pre-creates it with the SA's own ownership and the published policy
+     * file lives in it. It must survive together with its whole subtree;
+     * FTW_DEPTH visits children before their parent, so every entry inside
+     * is skipped individually */
+    const size_t policyDirLen = strlen(FORCE_CHECK_POLICY_DIR);
+    if (entry.rfind(FORCE_CHECK_POLICY_DIR, 0) == 0 &&
+        (entry.size() == policyDirLen || entry[policyDirLen] == '/')) {
+        return 0;
+    }
     if (type == FTW_D || type == FTW_DP) {
         (void)rmdir(path); /* FTW_DEPTH visits children first, so dirs are empty here */
     } else {
@@ -149,7 +160,8 @@ static int RemoveTreeEntry(const char *path, const struct stat *st, int type, st
  * saving through IPC. Deleting is allowed though (same as teardown cleanup), so
  * drop the tree contents before pulling up the SA and let its own save
  * pipeline recreate the levels below with the SA's ownership; the base
- * directory itself belongs to the SA lifecycle and is kept.
+ * directory itself belongs to the SA lifecycle and is kept, and so is the
+ * forceCheck policy directory that lives next to the cache type directories.
  */
 static void RemoveRevocationCacheTree(void)
 {
