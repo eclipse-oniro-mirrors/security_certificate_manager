@@ -437,7 +437,7 @@ enum CmCertAlgorithm {
 
 struct CmCertStoreInfo {
     char certStoreVersion[MAX_LEN_CERT_STORE_VERSION];
-    char smcertStoreVersion[MAX_LEN_CERT_STORE_VERSION];
+    char smCertStoreVersion[MAX_LEN_CERT_STORE_VERSION];
 };
 
 struct CmInstallCertInfo {
