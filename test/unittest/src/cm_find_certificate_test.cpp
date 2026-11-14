@@ -62,7 +62,7 @@ const std::vector<TestCertSeed> g_testSeeds = {
     { "oh:t=c;o=ddd444;u=0;a=0",     "aliasDDD", "CN=DDD Global CA", 0, 0 },
 };
 
-const uint8_t g_fakeCertData[] = {
+const uint8_t FAKE_CERT_BYTES[] = {
     0x30, 0x82, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c
 };
 
@@ -102,7 +102,7 @@ static int32_t CreateCertFile(const struct TestCertSeed &seed)
 {
     const std::string fullPath = GetCertFilePath(seed);
     MakeParentDirs(fullPath);
-    int32_t ret = CmFileWrite(nullptr, fullPath.c_str(), 0, g_fakeCertData, sizeof(g_fakeCertData));
+    int32_t ret = CmFileWrite(nullptr, fullPath.c_str(), 0, FAKE_CERT_BYTES, sizeof(FAKE_CERT_BYTES));
     if (ret == CM_SUCCESS) {
         g_createdCertFiles.push_back(fullPath);
     }
@@ -114,7 +114,7 @@ static int32_t CreateConfigFile(const struct TestCertSeed &seed)
 {
     const std::string fullPath = GetConfigFilePath(seed);
     MakeParentDirs(fullPath);
-    int32_t ret = CmFileWrite(nullptr, fullPath.c_str(), 0, g_fakeCertData, sizeof(g_fakeCertData));
+    int32_t ret = CmFileWrite(nullptr, fullPath.c_str(), 0, FAKE_CERT_BYTES, sizeof(FAKE_CERT_BYTES));
     if (ret == CM_SUCCESS) {
         g_createdConfigFiles.push_back(fullPath);
     }
@@ -443,7 +443,7 @@ HWTEST_F(CmFindCertificateTest, FindCertificateResultFields, TestSize.Level0)
         EXPECT_EQ(info.type, static_cast<uint32_t>(CM_FIND_CERT_TYPE_USER_CA));
         EXPECT_EQ(info.state, CERT_STATUS_ENABLED);
         EXPECT_EQ(info.scope, CM_FIND_CERT_SCOPE_CURRENT_USER);
-        EXPECT_EQ(info.certData.size, sizeof(g_fakeCertData));
+        EXPECT_EQ(info.certData.size, sizeof(FAKE_CERT_BYTES));
         if (strcmp(info.alias, "aliasAAA") == 0) {
             foundAaa = true;
             EXPECT_STREQ(info.uri, "oh:t=c;o=aaa111;u=100;a=500");
@@ -496,11 +496,11 @@ HWTEST_F(CmFindCertificateTest, FreeFindCertResultApi, TestSize.Level0)
     result.certInfos = static_cast<struct FindCertInfo *>(CmMalloc(sizeof(struct FindCertInfo)));
     ASSERT_NE(result.certInfos, nullptr);
     (void)memset_s(result.certInfos, sizeof(struct FindCertInfo), 0, sizeof(struct FindCertInfo));
-    result.certInfos[0].certData.data = static_cast<uint8_t *>(CmMalloc(sizeof(g_fakeCertData)));
+    result.certInfos[0].certData.data = static_cast<uint8_t *>(CmMalloc(sizeof(FAKE_CERT_BYTES)));
     ASSERT_NE(result.certInfos[0].certData.data, nullptr);
-    (void)memcpy_s(result.certInfos[0].certData.data, sizeof(g_fakeCertData),
-        g_fakeCertData, sizeof(g_fakeCertData));
-    result.certInfos[0].certData.size = sizeof(g_fakeCertData);
+    (void)memcpy_s(result.certInfos[0].certData.data, sizeof(FAKE_CERT_BYTES),
+        FAKE_CERT_BYTES, sizeof(FAKE_CERT_BYTES));
+    result.certInfos[0].certData.size = sizeof(FAKE_CERT_BYTES);
 
     CmFreeFindCertResult(&result);
     EXPECT_EQ(result.count, 0u);
