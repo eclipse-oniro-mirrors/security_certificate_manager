@@ -25,6 +25,7 @@ using namespace testing::ext;
 using namespace CertmanagerTest;
 namespace {
 static uint32_t PATH_COUNT = 1;
+static uint32_t g_selfTokenId = 0;
 }
 
 class CmGetSystemTrustedCertListByAlgTest : public testing::Test {
@@ -34,25 +35,27 @@ public:
     void SetUp();
     void TearDown();
 
-    struct CmContext context = {0};
-    struct CmMutableBlob pathList = { 0, nullptr };
-    struct CmMutableBlob certFileList = { 0, nullptr };
-    struct CertBlob certBlob = {0};
-    uint32_t status[MAX_COUNT_CERTIFICATE_ALL] = {0};
-    struct CmCertStoreInfo storeInfo = {0};
+    struct CmContext context{};
+    struct CmMutableBlob pathList{0, nullptr};
+    struct CmMutableBlob certFileList{0, nullptr};
+    struct CertBlob certBlob{};
+    uint32_t status[MAX_COUNT_CERTIFICATE_ALL]{};
+    struct CmCertStoreInfo storeInfo{};
 };
 
 void CmGetSystemTrustedCertListByAlgTest::SetUpTestCase(void)
 {
     g_selfTokenId = GetSelfTokenID();
-    SetATokenPerm();
+    CmTestCommon::SetTestEnvironment(g_selfTokenId);
 }
 
-void CmGetSystemTrustedCertListByAlgTest::TearDownTestCase(void) {}
+void CmGetSystemTrustedCertListByAlgTest::TearDownTestCase(void)
+{
+    CmTestCommon::ResetTestEnvironment();
+}
 
 void CmGetSystemTrustedCertListByAlgTest::SetUp(void)
 {
-    CmSetAToken(g_selfTokenId);
     (void)memset_s(&certBlob, sizeof(struct CertBlob), 0, sizeof(struct CertBlob));
     (void)memset_s(status, sizeof(status), 0, sizeof(status));
     (void)memset_s(&storeInfo, sizeof(struct CmCertStoreInfo), 0, sizeof(struct CmCertStoreInfo));
