@@ -33,7 +33,7 @@ public:
     void TearDown();
 
     struct CertList *lstCert = nullptr;
-    struct CmCertStoreInfo storeInfo = {0};
+    struct CmCertStoreInfo storeInfo{};
 };
 
 void CmGetSystemTrustedCertListByAlgTest::SetUpTestCase(void)
