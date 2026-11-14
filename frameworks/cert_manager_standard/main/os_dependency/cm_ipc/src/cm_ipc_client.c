@@ -121,6 +121,25 @@ static int32_t GetSystemTrustedCertListInitOutData(struct CmBlob *outBlob)
     return CM_SUCCESS;
 }
 
+static int32_t CopyCertStoreInfoFromTrailer(const struct CmBlob *outBlob, struct CmCertStoreInfo *certStoreInfo)
+{
+    if (certStoreInfo == NULL || outBlob == NULL || outBlob->size < 2 * MAX_LEN_CERT_STORE_VERSION) {
+        return CM_SUCCESS;
+    }
+    uint32_t off = outBlob->size - 2 * MAX_LEN_CERT_STORE_VERSION;
+    if (memcpy_s(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION,
+        outBlob->data + off, MAX_LEN_CERT_STORE_VERSION) != EOK) {
+        CM_LOG_E("copy certStoreVersion failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    if (memcpy_s(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION,
+        outBlob->data + off + MAX_LEN_CERT_STORE_VERSION, MAX_LEN_CERT_STORE_VERSION) != EOK) {
+        CM_LOG_E("copy smcertStoreVersion failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    return CM_SUCCESS;
+}
+
 int32_t CmClientGetSystemTrustedCertList(enum CmCertAlgorithm certAlg,
     struct CertList *certificateList, struct CmCertStoreInfo *certStoreInfo)
 {
@@ -160,20 +179,9 @@ int32_t CmClientGetSystemTrustedCertList(enum CmCertAlgorithm certAlg,
         }
 
         /* certStoreInfo trailer: the last 2 * MAX_LEN_CERT_STORE_VERSION bytes */
-        if (certStoreInfo != NULL && outBlob.size >= 2 * MAX_LEN_CERT_STORE_VERSION) {
-            uint32_t off = outBlob.size - 2 * MAX_LEN_CERT_STORE_VERSION;
-            if (memcpy_s(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION,
-                outBlob.data + off, MAX_LEN_CERT_STORE_VERSION) != EOK) {
-                CM_LOG_E("copy certStoreVersion failed");
-                ret = CMR_ERROR_MEM_OPERATION_COPY;
-                break;
-            }
-            if (memcpy_s(certStoreInfo->smcertStoreVersion, MAX_LEN_CERT_STORE_VERSION,
-                outBlob.data + off + MAX_LEN_CERT_STORE_VERSION, MAX_LEN_CERT_STORE_VERSION) != EOK) {
-                CM_LOG_E("copy smcertStoreVersion failed");
-                ret = CMR_ERROR_MEM_OPERATION_COPY;
-                break;
-            }
+        ret = CopyCertStoreInfoFromTrailer(&outBlob, certStoreInfo);
+        if (ret != CM_SUCCESS) {
+            break;
         }
     } while (0);
     CmFreeParamSet(&sendParamSet);

@@ -78,15 +78,30 @@ static inline void CleanAppCert(struct CmBlob *appCertPwd, struct CmBlob *appCer
     (void)memset_s(appCertPrivKey->data, appCertPrivKey->size, 0, appCertPrivKey->size);
 }
 
+static int32_t GetOptionalCertAlg(const struct CmParamSet *paramSet, uint32_t *certAlg)
+{
+    *certAlg = CM_CERT_ALG_ALL; /* default ALL for backward compatibility */
+    struct CmParam *algParam = NULL;
+    if (CmGetParam(paramSet, CM_TAG_PARAM1_UINT32, &algParam) != CM_SUCCESS || algParam == NULL) {
+        return CM_SUCCESS;
+    }
+    if (algParam->uint32Param > CM_CERT_ALG_SM) {
+        CM_LOG_E("invalid certAlg: %u", algParam->uint32Param);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    *certAlg = algParam->uint32Param;
+    return CM_SUCCESS;
+}
+
 void CmIpcServiceGetCertificateList(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
     const struct CmContext *context)
 {
     int32_t ret;
     uint32_t store;
     uint32_t certAlg = CM_CERT_ALG_ALL; /* optional, default ALL for backward compatibility */
-    struct CmContext cmContext = {0};
-    struct CmMutableBlob certFileList = { 0, NULL };
-    struct CmCertStoreInfo certStoreInfo = {0};
+    struct CmContext cmContext{};
+    struct CmMutableBlob certFileList{0, NULL};
+    struct CmCertStoreInfo certStoreInfo{};
     struct CmParamSet *paramSet = NULL;
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_UINT32, .uint32Param = &store },
@@ -99,15 +114,9 @@ void CmIpcServiceGetCertificateList(const struct CmBlob *paramSetBlob, struct Cm
             break;
         }
 
-        /* optional certAlg (tag CM_TAG_PARAM1_UINT32); absent => ALL (old client) */
-        struct CmParam *algParam = NULL;
-        if (CmGetParam(paramSet, CM_TAG_PARAM1_UINT32, &algParam) == CM_SUCCESS && algParam != NULL) {
-            if (algParam->uint32Param > CM_CERT_ALG_SM) {
-                CM_LOG_E("invalid certAlg: %u", algParam->uint32Param);
-                ret = CMR_ERROR_INVALID_ARGUMENT;
-                break;
-            }
-            certAlg = algParam->uint32Param;
+        ret = GetOptionalCertAlg(paramSet, &certAlg);
+        if (ret != CM_SUCCESS) {
+            break;
         }
 
         ret = CmServiceGetSystemCertListCheck(store);
