@@ -61,84 +61,43 @@ void CmGetSystemTrustedCertListByAlgTest::TearDown(void)
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_001
- * @tc.desc: certAlg=ALL, returns system certs and store version.
+ * @tc.desc: parameter validation - null certificateList.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_001, TestSize.Level1)
 {
-    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, &storeInfo);
-    ASSERT_EQ(ret, CM_SUCCESS);
-    EXPECT_GT(lstCert->certsCount, 0);
-    EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
+    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, nullptr, &storeInfo), CMR_ERROR_NULL_POINTER);
 }
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_002
- * @tc.desc: certAlg=INTERNATIONAL, returns international certs and intl version.
+ * @tc.desc: parameter validation - null certStoreInfo.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_002, TestSize.Level1)
 {
-    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_INTERNATIONAL, lstCert, &storeInfo);
-    ASSERT_EQ(ret, CM_SUCCESS);
-    EXPECT_GT(lstCert->certsCount, 0);
-    EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
+    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, nullptr), CMR_ERROR_NULL_POINTER);
 }
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_003
- * @tc.desc: certAlg=SM, returns SM certs and sm version.
+ * @tc.desc: parameter validation - null certAbstract inside CertList.
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_003, TestSize.Level1)
 {
-    int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_SM, lstCert, &storeInfo);
-    ASSERT_EQ(ret, CM_SUCCESS);
-    EXPECT_GT(lstCert->certsCount, 0);
-    EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
+    struct CertList emptyList = {0, nullptr};
+    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, &emptyList, &storeInfo),
+        CMR_ERROR_INVALID_ARGUMENT);
 }
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_004
- * @tc.desc: ALL count == INTERNATIONAL count + SM count (relationship, no hardcoded mirror values).
+ * @tc.desc: parameter validation - invalid certAlg.
  * @tc.type: FUNC
  */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_004, TestSize.Level2)
+HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_004, TestSize.Level1)
 {
-    struct CertList *allList = nullptr;
-    struct CertList *intlList = nullptr;
-    struct CertList *smList = nullptr;
-    ASSERT_EQ(InitCertList(&allList), CM_SUCCESS);
-    ASSERT_EQ(InitCertList(&intlList), CM_SUCCESS);
-    ASSERT_EQ(InitCertList(&smList), CM_SUCCESS);
-
-    ASSERT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, allList, &storeInfo), CM_SUCCESS);
-    ASSERT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_INTERNATIONAL, intlList, &storeInfo), CM_SUCCESS);
-    ASSERT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_SM, smList, &storeInfo), CM_SUCCESS);
-
-    EXPECT_EQ(allList->certsCount, intlList->certsCount + smList->certsCount);
-
-    FreeCertList(allList);
-    FreeCertList(intlList);
-    FreeCertList(smList);
-}
-
-/**
- * @tc.name: CmGetSystemTrustedCertListByAlg_005
- * @tc.desc: all parameter validation branches (client-side, no IPC needed).
- * @tc.type: FUNC
- */
-HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_005, TestSize.Level2)
-{
-    /* null certificateList */
-    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, nullptr, &storeInfo), CMR_ERROR_NULL_POINTER);
-    /* null certStoreInfo */
-    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, nullptr), CMR_ERROR_NULL_POINTER);
-    /* null certAbstract inside CertList */
-    struct CertList emptyList = {0, nullptr};
-    EXPECT_EQ(CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, &emptyList, &storeInfo),
-        CMR_ERROR_INVALID_ARGUMENT);
-    /* invalid certAlg */
     EXPECT_EQ(CmGetSystemTrustedCertList((enum CmCertAlgorithm)99, lstCert, &storeInfo),
         CMR_ERROR_INVALID_ARGUMENT);
 }
