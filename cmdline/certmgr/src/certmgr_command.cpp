@@ -751,6 +751,14 @@ int32_t InstallUserCACommand::Validate()
     return CM_CMD_SUCCESS;
 }
 
+int32_t InstallUserCACommand::ReadCertData(struct CmBlob &certBlob)
+{
+    if (hasCertFile_) {
+        return ReadFileData(certFilePath_, certBlob);
+    }
+    return ReadPipeData(certBlob);
+}
+
 int32_t InstallUserCACommand::AuthenticateAndCheckPermission(int32_t &userId)
 {
     int32_t authUserId = GetUserId();
@@ -770,14 +778,6 @@ int32_t InstallUserCACommand::AuthenticateAndCheckPermission(int32_t &userId)
 
     userId = static_cast<int32_t>(INIT_INVALID_VALUE);
     return AuthenticateCurrentUser(authUserId);
-}
-
-int32_t InstallUserCACommand::ReadCertData(struct CmBlob &certBlob)
-{
-    if (hasCertFile_) {
-        return ReadFileData(certFilePath_, certBlob);
-    }
-    return ReadPipeData(certBlob);
 }
 
 int32_t InstallUserCACommand::InstallPemDer(const struct CmBlob &certBlob, int32_t userId)
