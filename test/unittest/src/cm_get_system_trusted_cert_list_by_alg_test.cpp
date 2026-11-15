@@ -67,7 +67,7 @@ void CmGetSystemTrustedCertListByAlgTest::TearDown(void)
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_001, TestSize.Level1)
 {
     int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_ALL, lstCert, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
+    ASSERT_EQ(ret, CM_SUCCESS);
     EXPECT_GT(lstCert->certsCount, 0);
     EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
@@ -80,7 +80,7 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_00
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_002, TestSize.Level1)
 {
     int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_INTERNATIONAL, lstCert, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
+    ASSERT_EQ(ret, CM_SUCCESS);
     EXPECT_GT(lstCert->certsCount, 0);
     EXPECT_GT(strlen(storeInfo.certStoreVersion), 0);
 }
@@ -93,7 +93,7 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_00
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_003, TestSize.Level1)
 {
     int32_t ret = CmGetSystemTrustedCertList(CM_CERT_ALG_SM, lstCert, &storeInfo);
-    EXPECT_EQ(ret, CM_SUCCESS);
+    ASSERT_EQ(ret, CM_SUCCESS);
     EXPECT_GT(lstCert->certsCount, 0);
     EXPECT_GT(strlen(storeInfo.smCertStoreVersion), 0);
 }
@@ -125,7 +125,7 @@ HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_00
 
 /**
  * @tc.name: CmGetSystemTrustedCertListByAlg_005
- * @tc.desc: all parameter validation branches.
+ * @tc.desc: all parameter validation branches (client-side, no IPC needed).
  * @tc.type: FUNC
  */
 HWTEST_F(CmGetSystemTrustedCertListByAlgTest, CmGetSystemTrustedCertListByAlg_005, TestSize.Level2)
