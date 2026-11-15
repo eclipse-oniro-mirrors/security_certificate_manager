@@ -640,27 +640,6 @@ int32_t AuthenticateCurrentUser(int32_t userId)
 #endif
 }
 
-int32_t AuthenticateForCertFile(bool hasG, int32_t &userId)
-{
-    int32_t currentUserId = CertMgrCommand::GetUserId();
-    if (currentUserId < 0) {
-        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
-        return CM_CMD_ERR_INTERNAL_ERROR;
-    }
-
-    if (hasG) {
-        int32_t ret = CheckGlobalUserCaPermission(currentUserId);
-        if (ret != CM_CMD_SUCCESS) {
-            return ret;
-        }
-        userId = 0;
-        return AuthenticateAdmin();
-    }
-
-    userId = static_cast<int32_t>(INIT_INVALID_VALUE);
-    return AuthenticateCurrentUser(currentUserId);
-}
-
 int32_t CertMgrCommand::Execute(int argc, char *argv[])
 {
     int32_t ret = ParseArgs(argc, argv);
@@ -772,6 +751,27 @@ int32_t InstallUserCACommand::Validate()
     return CM_CMD_SUCCESS;
 }
 
+int32_t InstallUserCACommand::AuthenticateAndCheckPermission(int32_t &userId)
+{
+    int32_t authUserId = GetUserId();
+    if (authUserId < 0) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
+
+    if (hasG_) {
+        int32_t ret = CheckGlobalUserCaPermission(authUserId);
+        if (ret != CM_CMD_SUCCESS) {
+            return ret;
+        }
+        userId = 0;
+        return AuthenticateAdmin();
+    }
+
+    userId = static_cast<int32_t>(INIT_INVALID_VALUE);
+    return AuthenticateCurrentUser(authUserId);
+}
+
 int32_t InstallUserCACommand::ReadCertData(struct CmBlob &certBlob)
 {
     if (hasCertFile_) {
@@ -843,7 +843,7 @@ int32_t InstallUserCACommand::Run()
     }
 
     int32_t userId;
-    ret = AuthenticateForCertFile(hasG_, userId);
+    ret = AuthenticateAndCheckPermission(userId);
     if (ret != CM_CMD_SUCCESS) {
         free(certBlob.data);
         return ret;
