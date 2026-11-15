@@ -1126,12 +1126,12 @@ int32_t UninstallUserCACommand::Validate()
 int32_t UninstallUserCACommand::AuthenticateForUninstall(
     int32_t uriUserId, bool hasUriUserId, int32_t &authUserId)
 {
+    int32_t currentUserId = GetUserId();
+    if (currentUserId < 0) {
+        WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
+        return CM_CMD_ERR_INTERNAL_ERROR;
+    }
     if (hasUriUserId) {
-        int32_t currentUserId = GetUserId();
-        if (currentUserId < 0) {
-            WriteError(CM_CMD_ERR_INTERNAL_ERROR, "Failed to get current user ID");
-            return CM_CMD_ERR_INTERNAL_ERROR;
-        }
         if (uriUserId == 0) {
             return AuthenticateAdmin();
         } else if (uriUserId == currentUserId) {
@@ -1142,8 +1142,12 @@ int32_t UninstallUserCACommand::AuthenticateForUninstall(
             return CM_CMD_ERR_PERMISSION_DENIED;
         }
     }
-
-    return AuthenticateForCertFile(hasG_, authUserId);
+    if (hasG_) {
+        authUserId = 0;
+        return AuthenticateAdmin();
+    }
+    authUserId = static_cast<int32_t>(INIT_INVALID_VALUE);
+    return AuthenticateCurrentUser(currentUserId);
 }
 
 static bool MatchCertByHash(const struct CertList &certList,
