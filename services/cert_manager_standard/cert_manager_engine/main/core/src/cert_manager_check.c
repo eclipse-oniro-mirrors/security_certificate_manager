@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "cert_manager.h"
+#include "cert_manager_auth_mgr.h"
 #include "cert_manager_permission_check.h"
 #include "cert_manager_uri.h"
 #include "cm_config_rdb.h"
@@ -417,6 +418,18 @@ int32_t CmServiceUninstallAppCertCheck(struct CmContext *cmContext,
 
     if (store == CM_SYS_CREDENTIAL_STORE) {
         return CheckAndUpdateCallerAndUri(cmContext, keyUri, CM_URI_TYPE_SYS_KEY, true);
+    }
+
+    if (store == CM_PRI_CREDENTIAL_STORE) {
+        int32_t ret = CmCheckCallerIsProducer(cmContext, keyUri);
+        if (ret != CM_SUCCESS) {
+            /* not producer has no permission to remove; malformed uri keeps its param error */
+            if (ret == CMR_ERROR_NOT_PERMITTED) {
+                ret = CMR_ERROR_PERMISSION_DENIED;
+            }
+            CM_LOG_E("uninstall private app cert: producer check failed, ret = %d", ret);
+            return ret;
+        }
     }
 
     return CM_SUCCESS;
