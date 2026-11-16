@@ -292,8 +292,7 @@ static int32_t CheckRdbCertOwner(const struct CmContext *context, const struct C
     if (((uint32_t)certProp->userId == context->userId) && ((uint32_t)certProp->uid == context->uid)) {
         return CM_SUCCESS;
     }
-    CM_LOG_E("private credential does not belong to caller, rdb userId %u uid %u",
-        (uint32_t)certProp->userId, (uint32_t)certProp->uid);
+    CM_LOG_E("private credential does not belong to caller");
     return CMR_ERROR_PERMISSION_DENIED;
 }
 
