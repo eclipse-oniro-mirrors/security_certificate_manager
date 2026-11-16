@@ -24,6 +24,7 @@
 /* cert_manager_uri.h includes cert_manager_mem.h whose guard CM_MEM_H collides with
  * cm_mem.h; keep cm_mem.h first so the CmMalloc/CmFree declarations are not shadowed */
 #include "cert_manager_uri.h"
+#include "cert_manager_auth_mgr.h"
 #include "cm_test_common.h"
 #include "cm_cert_property_rdb.h"
 
@@ -985,16 +986,30 @@ HWTEST_F(CmAppCertTest, AppCertUnInstallAbnormalTest009, TestSize.Level0)
     uint8_t badOwnerUriBuf[] = "oh:t=ak;o=victim009;u=abc;a=xyz";
     struct CmBlob badOwnerUri = { sizeof(badOwnerUriBuf), badOwnerUriBuf };
 
-    int32_t ret = CmUninstallAppCert(&badOwnerUri, CM_PRI_CREDENTIAL_STORE);
+    /* the producer check itself must keep the fine-grained param error */
+    struct CmContext context = { 0, 0, {0} };
+    int32_t ret = CmCheckCallerIsProducer(&context, &badOwnerUri);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_URI)
+        << "AppCertUnInstallAbnormalTest009 check bad owner fields failed, retcode:" << ret;
+
+    /* over IPC, ConvertErrorCode in cm_response.cpp folds the -10000~-19999
+     * invalid-argument segment to the coarse CMR_ERROR_INVALID_ARGUMENT for
+     * ABI compatibility, so the client-visible param error is -7; the check
+     * layer must not fold it further into a permission error (-2/-23) */
+    ret = CmUninstallAppCert(&badOwnerUri, CM_PRI_CREDENTIAL_STORE);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT)
         << "AppCertUnInstallAbnormalTest009 bad owner fields failed, retcode:" << ret;
 
     /* mismatched uri type: format check fails with param error, must not fold to permission denied */
     uint8_t badTypeUriBuf[] = "oh:t=c;o=victim009;u=0;a=0";
     struct CmBlob badTypeUri = { sizeof(badTypeUriBuf), badTypeUriBuf };
 
-    ret = CmUninstallAppCert(&badTypeUri, CM_PRI_CREDENTIAL_STORE);
+    ret = CmCheckCallerIsProducer(&context, &badTypeUri);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_URI)
+        << "AppCertUnInstallAbnormalTest009 check bad uri type failed, retcode:" << ret;
+
+    ret = CmUninstallAppCert(&badTypeUri, CM_PRI_CREDENTIAL_STORE);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT)
         << "AppCertUnInstallAbnormalTest009 bad uri type failed, retcode:" << ret;
 }
 
