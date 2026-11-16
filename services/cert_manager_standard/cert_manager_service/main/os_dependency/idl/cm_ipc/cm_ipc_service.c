@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+#include "cm_cert_status_event.h"
 #include "cm_ipc_service.h"
 
 #include "cm_log.h"
@@ -24,6 +25,7 @@
 #include "cm_pfx.h"
 #include "cm_report_wrapper.h"
 #include "cm_response.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cm_security_guard_info.h"
 #include "cm_type.h"
 #include "cm_ipc_service_serialization.h"
@@ -193,6 +195,9 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
     uint32_t status = INIT_INVALID_VALUE;
     struct CmContext cmContext = {0};
     struct CmBlob certUri = { 0, NULL };
+    /* pk hash of the committed certificate, fetched after the commit and
+     * handed to the status event */
+    char certPkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = { 0 };
     struct CmParamSet *paramSet = NULL;
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_BUFFER, .blob = &certUri},
@@ -211,6 +216,22 @@ void CmIpcServiceSetCertStatus(const struct CmBlob *paramSetBlob, struct CmBlob 
         if (ret != CM_SUCCESS) {
             CM_LOG_E("CmServiceSetCertStatusCheck check failed, ret = %d", ret);
             break;
+        }
+
+        ret = CmSetSystemCertStatus(&cmContext, &certUri, status);
+        if (ret != CM_SUCCESS) {
+            CM_LOG_E("CmSetSystemCertStatus failed, ret = %d", ret);
+            break;
+        }
+
+        /* the status change is committed; notify subscribers best-effort:
+         * the pk hash is fetched from the committed certificate and a
+         * failed fetch or broadcast must not fail the already committed
+         * status update (the event is skipped instead) */
+        if (CmGetSystemCertPkHash(&cmContext, &certUri, certPkHash, sizeof(certPkHash)) != CM_SUCCESS) {
+            CM_LOG_E("get committed cert pk hash failed, skip the status event");
+        } else {
+            (void)CmPublishSystemCaStatusEvent(certPkHash, status);
         }
     } while (0);
     CmReport(__func__, &cmContext, &certUri, ret);

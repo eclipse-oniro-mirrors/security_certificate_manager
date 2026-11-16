@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -17,6 +17,7 @@
 
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
+#include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -34,6 +35,8 @@ typedef X509_NAME *(FUNC)(const X509 *);
 typedef ASN1_TIME *(TIME_FUNC)(const X509 *);
 #define CONVERT(p) (((p)[0] - '0') * 10 + (p)[1] - '0')
 #define BASE_YEAR 1900
+#define CM_X509_HEX_CHARS_PER_BYTE 2
+#define CM_X509_HEX_BITS_PER_NIBBLE 4
 
 X509 *InitCertContext(const uint8_t *certBuf, uint32_t size)
 {
@@ -580,6 +583,80 @@ int32_t GetX509Fingerprint(const X509 *x509cert, char *outBuf, uint32_t outBufMa
         return  CMR_ERROR_MEM_OPERATION_PRINT;
     }
     return (int32_t)length;
+}
+
+/* SHA256 over the whole SubjectPublicKeyInfo DER: the pkHash
+ * contract of root_ca_cert_store and the force-check policy
+ * file. X509_pubkey_digest is deliberately NOT used: it hashes
+ * only the public key BIT STRING payload, not the SPKI. The
+ * i2d_X509_PUBKEY re-encoding preserves the certificate's own
+ * SPKI bytes for any key type (no EVP_PKEY roundtrip, so
+ * curves unknown to the running OpenSSL still digest). */
+static int32_t GetCertSpkiSha256Digest(const X509 *cert, uint8_t *md, unsigned int *mdLen)
+{
+    X509_PUBKEY *pubkey = X509_get_X509_PUBKEY(cert);
+    if (pubkey == NULL) {
+        CM_LOG_E("X509_get_X509_PUBKEY failed");
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+    unsigned char *spkiDer = NULL;
+    int spkiLen = i2d_X509_PUBKEY(pubkey, &spkiDer);
+    if (spkiLen <= 0 || spkiDer == NULL) {
+        CM_LOG_E("i2d_X509_PUBKEY failed");
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+    int digested = EVP_Digest(spkiDer, (size_t)spkiLen, md, mdLen, EVP_sha256(), NULL);
+    OPENSSL_free(spkiDer);
+    if (digested != 1 || *mdLen == 0) {
+        CM_LOG_E("digest spki failed");
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+    return CM_SUCCESS;
+}
+
+/* two uppercase hex chars per byte, NUL terminated */
+static void EncodeDigestToUppercaseHex(const uint8_t *md, uint32_t mdLen, char *outPkHashHex)
+{
+    static const char hexTbl[] = "0123456789ABCDEF";
+    for (uint32_t i = 0; i < mdLen; i++) {
+        outPkHashHex[CM_X509_HEX_CHARS_PER_BYTE * i] =
+            hexTbl[md[i] >> CM_X509_HEX_BITS_PER_NIBBLE]; /* high nibble */
+        outPkHashHex[CM_X509_HEX_CHARS_PER_BYTE * i + 1] = hexTbl[md[i] & 0x0F]; /* low nibble */
+    }
+    outPkHashHex[CM_X509_HEX_CHARS_PER_BYTE * mdLen] = '\0';
+}
+
+int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex,
+    uint32_t outPkHashHexLen)
+{
+    if (certData == NULL || certData->data == NULL || outPkHashHex == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (outPkHashHexLen < CM_PK_HASH_HEX_LEN + 1) {
+        CM_LOG_E("outPkHashHex buffer too small: %u bytes", outPkHashHexLen);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    X509 *cert = InitCertContext(certData->data, certData->size);
+    if (cert == NULL) {
+        return CMR_ERROR_INVALID_CERT_FORMAT;
+    }
+
+    uint8_t md[EVP_MAX_MD_SIZE] = {0};
+    unsigned int mdLen = 0;
+    int32_t ret = GetCertSpkiSha256Digest(cert, md, &mdLen);
+    if (ret == CM_SUCCESS) {
+        /* the entry check already sized the buffer, this only guards a
+         * digest longer than SHA256 */
+        if ((CM_X509_HEX_CHARS_PER_BYTE * mdLen + 1) > CM_PK_HASH_HEX_LEN + 1) {
+            CM_LOG_E("unexpected pubkey digest length %u", mdLen);
+            ret = CMR_ERROR;
+        } else {
+            EncodeDigestToUppercaseHex(md, mdLen, outPkHashHex);
+        }
+    }
+    FreeCertContext(cert);
+    return ret;
 }
 
 void FreeCertContext(X509 *x509cert)

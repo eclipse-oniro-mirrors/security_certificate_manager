@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Huawei Device Co., Ltd.
+ * Copyright (c) 2024-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -46,6 +46,12 @@ const std::string COLUMN_FILE_PATH = "FILE_PATH";
 const std::string COLUMN_DATA_SIZE = "DATA_SIZE";
 const std::string COLUMN_IS_DELETED = "IS_DELETED";
 const std::string REVOCATION_CACHE_LAST_CLEANUP_KEY = "last_cleanup_utc";
+
+/* enable/disable state of manually disabled system root CA certificates */
+const std::string ROOT_CA_STORE_TABLE_NAME = "root_ca_cert_store";
+const std::string COLUMN_ALG_TYPE = "ALG_TYPE";
+const std::string COLUMN_ENABLE = "ENABLE";
+const std::string COLUMN_CERT_PK_HASH = "CERT_PK_HASH";
 
 namespace OHOS {
 namespace Security {

@@ -140,16 +140,25 @@ public:
     void SetAbilityQuerier(AbilityQuerier querier);
     void SetPcChecker(PcChecker checker);
     void SetDriverAbilityChecker(DriverAbilityChecker checker);
+    /* *ForTest interfaces are compiled only when the build target defines
+     * CM_TEST_API_ENABLE (the dialog test twin library): production
+     * artifacts carry none of them */
+#ifdef CM_TEST_API_ENABLE
     void SetTimeoutRangeForTest(uint32_t minSec, uint32_t defaultSec, uint32_t maxSec, uint32_t graceMs);
+#endif
     /* SA idle-unload renewal hook (F1): called by the periodic keep-alive
      * task while a session is active; the SA side (cm_sa.cpp Init) injects
      * DelayUnload; the dialog static library must not depend on cm_sa.h. */
     void SetUnloadRenewal(std::function<void()> renewal);
+#ifdef CM_TEST_API_ENABLE
     void SetKeepAliveIntervalForTest(uint32_t intervalMs);
+#endif
+#ifdef CM_TEST_API_ENABLE
     /* PostTask fault injection (F8 tests): affects only the post result of
      * StartTimerLocked; does not abort an active session (must be toggleable
      * around a live session). */
     void SetTimerPostFailForTest(bool fail);
+#endif
     /* Production assembly entry (idempotent lazy init):
      * RealSystemDialogLauncher + HUKS ability query adapter; triggered on the
      * first call from SA OnStart / a handler (T4). */
@@ -176,7 +185,9 @@ public:
      * is a no-op. */
     void OnClientDied(const std::string &requestId);
 
+#ifdef CM_TEST_API_ENABLE
     std::string GetRequestIdForTest();
+#endif
 
 private:
     CmUkeyAuthDialogManager() = default;

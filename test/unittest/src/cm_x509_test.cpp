@@ -41,7 +41,7 @@ public:
 
 HWTEST_F(CmX509Test, InitCertContextInvalidArgs, TestSize.Level0)
 {
-    EXPECT_EQ(InitCertContext(NULL, 100), nullptr);
+    EXPECT_EQ(InitCertContext(nullptr, 100), nullptr);
     uint8_t buf[] = "x";
     EXPECT_EQ(InitCertContext(buf, 0), nullptr);
     EXPECT_EQ(InitCertContext(buf, MAX_LEN_CERTIFICATE + 1), nullptr);
@@ -71,7 +71,7 @@ HWTEST_F(CmX509Test, InitCertContextSuccess, TestSize.Level0)
 
 HWTEST_F(CmX509Test, InitCertStackContextInvalidArgs, TestSize.Level0)
 {
-    EXPECT_EQ(InitCertStackContext(NULL, 100), nullptr);
+    EXPECT_EQ(InitCertStackContext(nullptr, 100), nullptr);
     uint8_t buf[] = "x";
     EXPECT_EQ(InitCertStackContext(buf, 0), nullptr);
     EXPECT_EQ(InitCertStackContext(buf, MAX_LEN_CERTIFICATE_P7B + 1), nullptr);
@@ -785,5 +785,58 @@ HWTEST_F(CmX509Test, GetX509IssueNameLongFormatSnprintfFails, TestSize.Level0)
     int32_t ret = GetX509IssueNameLongFormat(cert, buf, sizeof(buf));
     EXPECT_TRUE(ret == CMR_ERROR_MEM_OPERATION_PRINT || ret == CMR_ERROR_BUFFER_TOO_SMALL || ret < 0);
     FreeCertContext(cert);
+}
+/* ---------- CmGetCertPubKeyHashHex ---------- */
+
+/* precomputed independently of the code under test:
+ *   openssl x509 -in cert.pem -pubkey -noout |
+ *   openssl pkey -pubin -outform DER | sha256sum   (uppercase)
+ * over the FIRST certificate of g_rsa2048PEMCertChain */
+const char *EXPECTED_PK_HASH =
+    "1721F31A570A0D4F7679EFA0B4E1F378CA215E107AD9ACFD67E1A7C96D0EA7DC";
+
+HWTEST_F(CmX509Test, CmGetCertPubKeyHashHexNullArgs, TestSize.Level0)
+{
+    char hash[65] = {0};
+    struct CmBlob certData = { strlen(g_rsa2048PEMCertChain), (uint8_t *)g_rsa2048PEMCertChain };
+    EXPECT_EQ(CmGetCertPubKeyHashHex(nullptr, hash, sizeof(hash)), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmGetCertPubKeyHashHex(&certData, nullptr, sizeof(hash)), CMR_ERROR_INVALID_ARGUMENT);
+}
+
+HWTEST_F(CmX509Test, CmGetCertPubKeyHashHexInvalidCert, TestSize.Level0)
+{
+    char hash[65] = {0};
+    uint8_t garbage[] = "not a certificate";
+    struct CmBlob certData = { sizeof(garbage) - 1, garbage };
+    EXPECT_EQ(CmGetCertPubKeyHashHex(&certData, hash, sizeof(hash)), CMR_ERROR_INVALID_CERT_FORMAT);
+}
+
+HWTEST_F(CmX509Test, CmGetCertPubKeyHashHexMatchesOpenssl, TestSize.Level0)
+{
+    struct CmBlob certData = { strlen(g_rsa2048PEMCertChain), (uint8_t *)g_rsa2048PEMCertChain };
+    char hash[65] = {0};
+    ASSERT_EQ(CmGetCertPubKeyHashHex(&certData, hash, sizeof(hash)), CM_SUCCESS);
+    EXPECT_STREQ(hash, EXPECTED_PK_HASH);
+}
+
+HWTEST_F(CmX509Test, CmGetCertPubKeyHashHexFormat, TestSize.Level0)
+{
+    struct CmBlob certData = { strlen(g_rsa2048PEMCertChain), (uint8_t *)g_rsa2048PEMCertChain };
+    char hash[65] = {0};
+    ASSERT_EQ(CmGetCertPubKeyHashHex(&certData, hash, sizeof(hash)), CM_SUCCESS);
+    EXPECT_EQ(strlen(hash), 64u);
+    for (uint32_t i = 0; i < strlen(hash); ++i) {
+        EXPECT_TRUE((hash[i] >= '0' && hash[i] <= '9') || (hash[i] >= 'A' && hash[i] <= 'F'))
+            << "hash[" << i << "] = " << hash[i];
+    }
+}
+
+HWTEST_F(CmX509Test, CmGetCertPubKeyHashHexBufferTooSmall, TestSize.Level0)
+{
+    struct CmBlob certData = { strlen(g_rsa2048PEMCertChain), (uint8_t *)g_rsa2048PEMCertChain };
+    char hash[65] = {0};
+    /* one byte short of the 64 chars + NUL: rejected before anything is written */
+    EXPECT_EQ(CmGetCertPubKeyHashHex(&certData, hash, CM_PK_HASH_HEX_LEN), CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(hash[0], '\0');
 }
 } // end of namespace
