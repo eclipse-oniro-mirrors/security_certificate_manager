@@ -21,6 +21,9 @@
 #include "cm_cert_data_part3_rsa.h"
 #include "cm_cert_data_chain_key.h"
 #include "cm_mem.h"
+/* cert_manager_uri.h includes cert_manager_mem.h whose guard CM_MEM_H collides with
+ * cm_mem.h; keep cm_mem.h first so the CmMalloc/CmFree declarations are not shadowed */
+#include "cert_manager_uri.h"
 #include "cm_test_common.h"
 #include "cm_cert_property_rdb.h"
 
@@ -894,6 +897,80 @@ HWTEST_F(CmAppCertTest, AppCertUnInstallAbnormalTest007, TestSize.Level0)
     /* cleanup: remove the simulated victim record */
     ret = DeleteCertProperty(victimUri);
     EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest007 cleanup failed, retcode:" << ret;
+}
+
+/**
+ * @tc.name: AppCertUnInstallAbnormalTest008
+ * @tc.desc: Test uninstall private credential whose rdb owner mismatches the caller, rdb data must not be deleted
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MI8 /SR000H09N9
+ */
+HWTEST_F(CmAppCertTest, AppCertUnInstallAbnormalTest008, TestSize.Level0)
+{
+    /* install a real private credential to learn the caller identity:
+       the engine writes u=<caller userId>;a=<caller uid> into the uri at install time */
+    uint8_t certAliasBuf[] = "keyA";
+    struct CmBlob certAlias = { sizeof(certAliasBuf), certAliasBuf };
+
+    uint8_t uriBuf[MAX_LEN_URI] = {0};
+    struct CmBlob retUri = { sizeof(uriBuf), uriBuf };
+
+    int32_t ret = CmInstallAppCert(&g_appCert, &g_appCertPwd, &certAlias, CM_PRI_CREDENTIAL_STORE, &retUri);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest008 install failed, retcode:" << ret;
+
+    struct CMUri uriObj;
+    (void)memset_s(&uriObj, sizeof(uriObj), 0, sizeof(uriObj));
+    ret = CertManagerUriDecode(&uriObj, (char *)uriBuf);
+    ASSERT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest008 decode uri failed, retcode:" << ret;
+    ASSERT_TRUE((uriObj.user != nullptr) && (uriObj.app != nullptr))
+        << "AppCertUnInstallAbnormalTest008 decoded uri has no owner fields";
+
+    /* forge a uri whose u/a fields claim the caller as producer, so the producer check passes */
+    char victimUriBuf[MAX_LEN_URI] = {0};
+    ret = sprintf_s(victimUriBuf, sizeof(victimUriBuf), "oh:t=ak;o=victim008;u=%s;a=%s", uriObj.user, uriObj.app);
+    ASSERT_TRUE(ret > 0) << "AppCertUnInstallAbnormalTest008 construct victim uri failed";
+    (void)CertManagerFreeUri(&uriObj);
+
+    /* simulate the victim app's rdb record: the uri claims the caller, but the owner columns are the victim's */
+    struct CertProperty victimProp;
+    (void)memset_s(&victimProp, sizeof(struct CertProperty), 0, sizeof(struct CertProperty));
+    (void)memcpy_s(victimProp.uri, MAX_LEN_URI, victimUriBuf, strlen(victimUriBuf));
+    (void)memcpy_s(victimProp.alias, MAX_LEN_CERT_ALIAS, "victim008", strlen("victim008"));
+    (void)memcpy_s(victimProp.subjectName, MAX_LEN_SUBJECT_NAME, "C=OH,O=UnitTest,CN=victim008",
+        strlen("C=OH,O=UnitTest,CN=victim008"));
+    (void)memcpy_s(victimProp.certType, MAX_LEN_CERT_TYPE, "ak", strlen("ak"));
+    victimProp.certStore = CM_PRI_CREDENTIAL_STORE;
+    victimProp.userId = 100; /* victim user */
+    victimProp.uid = 96101; /* victim app uid, differs from the caller */
+    victimProp.level = CM_AUTH_STORAGE_LEVEL_EL1;
+
+    (void)CreateCertPropertyRdb();
+    ret = InsertCertProperty(&victimProp);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest008 insert victim rdb failed, retcode:" << ret;
+
+    uint8_t keyUriBuf[MAX_LEN_URI] = {0};
+    (void)memcpy_s(keyUriBuf, MAX_LEN_URI, victimUriBuf, strlen(victimUriBuf) + 1);
+    struct CmBlob keyUri = { sizeof(keyUriBuf), keyUriBuf };
+
+    /* the uri claims the caller as producer so the producer check passes; only the rdb
+       owner mismatch can deny: the rdb record belongs to user 100 uid 96101 */
+    ret = CmUninstallAppCert(&keyUri, CM_PRI_CREDENTIAL_STORE);
+    EXPECT_EQ(ret, CMR_ERROR_PERMISSION_DENIED)
+        << "AppCertUnInstallAbnormalTest008 test failed, retcode:" << ret;
+
+    /* victim's rdb record must not be deleted by unauthorized uninstall */
+    struct CertProperty queryProp;
+    (void)memset_s(&queryProp, sizeof(struct CertProperty), 0, sizeof(struct CertProperty));
+    ret = QueryCertProperty(victimUriBuf, &queryProp);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest008 query rdb failed, retcode:" << ret;
+    EXPECT_TRUE(strlen(queryProp.uri) != 0)
+        << "AppCertUnInstallAbnormalTest008 rdb record was deleted by unauthorized uninstall";
+
+    /* cleanup: remove the simulated victim record and the real credential */
+    ret = DeleteCertProperty(victimUriBuf);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest008 cleanup rdb failed, retcode:" << ret;
+    ret = CmUninstallAppCert(&retUri, CM_PRI_CREDENTIAL_STORE);
+    EXPECT_EQ(ret, CM_SUCCESS) << "AppCertUnInstallAbnormalTest008 cleanup failed, retcode:" << ret;
 }
 
 /**
