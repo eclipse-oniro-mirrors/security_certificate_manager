@@ -423,8 +423,12 @@ int32_t CmServiceUninstallAppCertCheck(struct CmContext *cmContext,
     if (store == CM_PRI_CREDENTIAL_STORE) {
         int32_t ret = CmCheckCallerIsProducer(cmContext, keyUri);
         if (ret != CM_SUCCESS) {
-            CM_LOG_E("uninstall private app cert: caller is not producer, ret = %d", ret);
-            return CMR_ERROR_PERMISSION_DENIED;
+            /* not producer has no permission to remove; malformed uri keeps its param error */
+            if (ret == CMR_ERROR_NOT_PERMITTED) {
+                ret = CMR_ERROR_PERMISSION_DENIED;
+            }
+            CM_LOG_E("uninstall private app cert: producer check failed, ret = %d", ret);
+            return ret;
         }
     }
 

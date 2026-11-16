@@ -974,6 +974,31 @@ HWTEST_F(CmAppCertTest, AppCertUnInstallAbnormalTest008, TestSize.Level0)
 }
 
 /**
+ * @tc.name: AppCertUnInstallAbnormalTest009
+ * @tc.desc: Test uninstall private credential with malformed uri, param error must be kept instead of permission denied
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MI8 /SR000H09N9
+ */
+HWTEST_F(CmAppCertTest, AppCertUnInstallAbnormalTest009, TestSize.Level0)
+{
+    /* non-numeric owner fields: uri decodes fine but producer parse fails with param error */
+    uint8_t badOwnerUriBuf[] = "oh:t=ak;o=victim009;u=abc;a=xyz";
+    struct CmBlob badOwnerUri = { sizeof(badOwnerUriBuf), badOwnerUriBuf };
+
+    int32_t ret = CmUninstallAppCert(&badOwnerUri, CM_PRI_CREDENTIAL_STORE);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_URI)
+        << "AppCertUnInstallAbnormalTest009 bad owner fields failed, retcode:" << ret;
+
+    /* mismatched uri type: format check fails with param error, must not fold to permission denied */
+    uint8_t badTypeUriBuf[] = "oh:t=c;o=victim009;u=0;a=0";
+    struct CmBlob badTypeUri = { sizeof(badTypeUriBuf), badTypeUriBuf };
+
+    ret = CmUninstallAppCert(&badTypeUri, CM_PRI_CREDENTIAL_STORE);
+    EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT_URI)
+        << "AppCertUnInstallAbnormalTest009 bad uri type failed, retcode:" << ret;
+}
+
+/**
  * @tc.name: AppCertUnInstallAllAppCertBaseTest001
  * @tc.desc: Test CertManager unInstall all app cert interface base function
  * @tc.type: FUNC
