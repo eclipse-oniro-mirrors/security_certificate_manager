@@ -74,9 +74,11 @@ void CmSendResponse(const struct CmContext *context, int32_t result, const struc
     if (response == nullptr) {
         reply->WriteUint32(0);
     } else {
-        reply->SetMaxCapacity(MAX_SIZE_CAPACITY);
+        reply->SetMaxCapacity(CM_IPC_REPLY_MAX_CAPACITY);
         reply->WriteUint32(response->size);
-        reply->WriteBuffer(response->data, static_cast<size_t>(response->size));
+        if (!reply->WriteBuffer(response->data, static_cast<size_t>(response->size))) {
+            CM_LOG_E("SendResponse write buffer failed, size: %u", response->size);
+        }
     }
 }
 

@@ -15,9 +15,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <ftw.h>
+#include <set>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -184,6 +186,31 @@ int32_t InstallUserCertWithAlias(const std::string &alias, std::string &outUri)
         g_installedUris.emplace_back(outUri);
     }
     return ret;
+}
+
+/* assert a find result holds exactly expectedCount entries of the batch:
+ * every alias carries the R7Batch prefix, every uri belongs to the installed
+ * batch and no entry repeats, so a wrong/duplicate/uninitialized row fails */
+void ExpectBatchFindResult(const struct FindCertResult &result,
+    const std::vector<std::string> &batchUris, uint32_t expectedCount)
+{
+    EXPECT_EQ(result.count, expectedCount);
+    if (result.count > 0) {
+        ASSERT_NE(result.certInfos, nullptr);
+    }
+    std::set<std::string> seenUris;
+    std::set<std::string> seenAliases;
+    for (uint32_t i = 0; i < result.count; i++) {
+        std::string alias(result.certInfos[i].alias);
+        std::string uri(result.certInfos[i].uri);
+        EXPECT_EQ(alias.compare(0, 7, "R7Batch"), 0) << "index " << i << " alias " << alias;
+        EXPECT_NE(std::find(batchUris.begin(), batchUris.end(), uri), batchUris.end())
+            << "index " << i << " unexpected uri " << uri;
+        EXPECT_TRUE(seenUris.insert(uri).second) << "duplicate uri " << uri;
+        EXPECT_TRUE(seenAliases.insert(alias).second) << "duplicate alias " << alias;
+    }
+    EXPECT_EQ(seenUris.size(), expectedCount);
+    EXPECT_EQ(seenAliases.size(), expectedCount);
 }
 
 /* install one user CA cert for an explicit target user id (0 installs globally) */
@@ -1594,16 +1621,19 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateGlobal_001, TestSize.Level
 /**
  * @tc.name: CmServiceFindCertificateCountLimit_001
  * @tc.desc: a batch larger than the former 16-entry cap is returned in full without a limit,
- *           and truncated to countLimit when one is given.
+ *           truncated to countLimit when one is given, and unchanged at the equal boundary;
+ *           every returned entry is checked for its batch alias, uri and uniqueness.
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateCountLimit_001, TestSize.Level0)
 {
     /* larger than the removed 16-entry cap: the batch alias isolates the rows */
     const uint32_t batchCount = 20;
+    std::vector<std::string> batchUris;
     for (uint32_t i = 0; i < batchCount; i++) {
         std::string uri;
         ASSERT_EQ(InstallUserCertWithAlias("R7Batch" + std::to_string(i), uri), CM_SUCCESS) << "index " << i;
+        batchUris.push_back(uri);
     }
 
     MockHapToken mockHap;
@@ -1619,21 +1649,28 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateCountLimit_001, TestSize.L
     struct FindCertResult result;
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
-    EXPECT_EQ(result.count, batchCount);
+    ExpectBatchFindResult(result, batchUris, batchCount);
     FreeFindCertResult(&result);
 
     /* an explicit limit truncates the batch to that many results */
     request.countLimit = batchCount - 1;
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
-    EXPECT_EQ(result.count, batchCount - 1);
+    ExpectBatchFindResult(result, batchUris, batchCount - 1);
+    FreeFindCertResult(&result);
+
+    /* a limit equal to the batch does not truncate: every row is still returned */
+    request.countLimit = batchCount;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+    ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
+    ExpectBatchFindResult(result, batchUris, batchCount);
     FreeFindCertResult(&result);
 
     /* a limit larger than the batch does not change the result */
     request.countLimit = batchCount + 1;
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
-    EXPECT_EQ(result.count, batchCount);
+    ExpectBatchFindResult(result, batchUris, batchCount);
     FreeFindCertResult(&result);
 }
 
