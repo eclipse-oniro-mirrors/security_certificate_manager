@@ -45,6 +45,28 @@ CM_API_EXPORT int32_t CmGetCertList(uint32_t store, struct CertList *certificate
     return ret;
 }
 
+CM_API_EXPORT int32_t CmGetSystemTrustedCertList(enum CmCertAlgorithm certAlg,
+    struct CertList *certificateList, struct CmCertStoreInfo *certStoreInfo)
+{
+    CM_LOG_I("enter get system trusted cert list, certAlg = %d", certAlg);
+    if (certificateList == NULL || certStoreInfo == NULL) {
+        CM_LOG_E("invalid input arguments");
+        return CMR_ERROR_NULL_POINTER;
+    }
+    if (certificateList->certAbstract == NULL) {
+        CM_LOG_E("invalid certificateList");
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    if (certAlg >= CM_CERT_ALG_BUTT) {
+        CM_LOG_E("invalid certAlg:%u", certAlg);
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CmClientGetSystemTrustedCertList(certAlg, certificateList, certStoreInfo);
+    CM_LOG_I("leave get system trusted cert list, result = %d", ret);
+    return ret;
+}
+
 CM_API_EXPORT int32_t CmGetCertInfo(const struct CmBlob *certUri, uint32_t store,
     struct CertInfo *certificateInfo)
 {

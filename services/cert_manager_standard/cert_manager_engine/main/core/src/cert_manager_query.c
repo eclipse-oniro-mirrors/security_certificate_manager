@@ -15,6 +15,9 @@
 
 #include "cert_manager_query.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "securec.h"
 #include "cm_cert_property_rdb.h"
 #include "cm_root_ca_store_rdb.h"
@@ -681,6 +684,93 @@ int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
     }
     CM_FREE_PTR(disabledRecords);
     return ret;
+}
+
+#define CM_CERT_STORE_VERSION_FILE "/system/etc/security/certStore.cfg"
+
+/* Judge algorithm by the cert store directory path: GM certs reside under
+ * SYSTEM_CA_STORE_GM ("/system/etc/security/certificates_gm/"), international
+ * under SYSTEM_CA_STORE ("/system/etc/security/certificates/"). cFileList[i].path
+ * is filled by GetCertNameAndPath, so judge by path instead of scanning cert content. */
+static bool IsSystemCertGm(const struct CmBlob *path)
+{
+    if (path == NULL || path->data == NULL) {
+        return false;
+    }
+    return strncmp((const char *)path->data, SYSTEM_CA_STORE_GM, strlen(SYSTEM_CA_STORE_GM)) == 0;
+}
+
+static void ReadCertStoreVersion(struct CmCertStoreInfo *certStoreInfo)
+{
+    if (certStoreInfo == NULL) {
+        return;
+    }
+    (void)memset_s(certStoreInfo, sizeof(struct CmCertStoreInfo), 0, sizeof(struct CmCertStoreInfo));
+    FILE *fp = fopen(CM_CERT_STORE_VERSION_FILE, "r");
+    if (fp == NULL) {
+        CM_LOG_D("cert store version file not found");
+        return;
+    }
+    /* certStore.cfg format: key=value per line
+     *   certStoreVersion=20251230      (international algorithm CA store version)
+     *   smCertStoreVersion=20261030    (SM algorithm CA store version)
+     */
+    char line[256] = {0};
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t len = strnlen(line, sizeof(line));
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+        char *eq = strchr(line, '=');
+        if (eq == NULL) {
+            continue;
+        }
+        *eq = '\0';
+        const char *key = line;
+        const char *val = eq + 1;
+        size_t valLen = strnlen(val, MAX_LEN_CERT_STORE_VERSION);
+        if (valLen >= MAX_LEN_CERT_STORE_VERSION) {
+            valLen = MAX_LEN_CERT_STORE_VERSION - 1;
+        }
+        if (strcmp(key, "certStoreVersion") == 0) {
+            (void)memcpy_s(certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION, val, valLen);
+        } else if (strcmp(key, "smCertStoreVersion") == 0) {
+            (void)memcpy_s(certStoreInfo->smCertStoreVersion, MAX_LEN_CERT_STORE_VERSION, val, valLen);
+        }
+    }
+    (void)fclose(fp);
+}
+
+int32_t CmGetSystemTrustedCertListInfo(const struct CmContext *context, enum CmCertAlgorithm certAlg,
+    const struct CmMutableBlob *certFileList, struct CertBlob *certBlob, uint32_t *status,
+    struct CmCertStoreInfo *certStoreInfo)
+{
+    if (certFileList == NULL || certBlob == NULL || status == NULL || certStoreInfo == NULL) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+
+    int32_t ret = CmGetCertListInfo(context, CM_SYSTEM_TRUSTED_STORE, certFileList, certBlob, status);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmGetCertListInfo fail");
+        return ret;
+    }
+
+    if (certAlg != CM_CERT_ALG_ALL) {
+        struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList->data;
+        for (uint32_t i = 0; i < certFileList->size; i++) {
+            if (certBlob->uri[i].size == 0) {
+                continue; /* already skipped by CmGetCertListInfo */
+            }
+            enum CmCertAlgorithm alg = IsSystemCertGm(&cFileList[i].path) ?
+                CM_CERT_ALG_SM : CM_CERT_ALG_INTERNATIONAL;
+            if (alg != certAlg) {
+                certBlob->uri[i].size = 0; /* filter out: CmGetCertListPack will skip */
+            }
+        }
+    }
+
+    ReadCertStoreVersion(certStoreInfo);
+    return CM_SUCCESS;
 }
 
 void CmFreeCertBlob(struct CertBlob *certBlob)

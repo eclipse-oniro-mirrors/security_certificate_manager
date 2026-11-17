@@ -24,6 +24,9 @@ extern "C" {
 
 CM_API_EXPORT int32_t CmGetCertList(uint32_t store, struct CertList *certificateList);
 
+CM_API_EXPORT int32_t CmGetSystemTrustedCertList(enum CmCertAlgorithm certAlg,
+    struct CertList *certificateList, struct CmCertStoreInfo *certStoreInfo);
+
 CM_API_EXPORT int32_t CmGetCertInfo(const struct CmBlob *certUri, uint32_t store,
     struct CertInfo *certificateInfo);
 

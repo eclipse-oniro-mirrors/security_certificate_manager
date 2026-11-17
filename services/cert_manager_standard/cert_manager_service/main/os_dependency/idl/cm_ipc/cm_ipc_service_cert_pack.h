@@ -25,6 +25,10 @@ extern "C" {
 int32_t CmServiceGetCertListPack(const struct CmContext *context, uint32_t store,
     const struct CmMutableBlob *certFileList, struct CmBlob *certificateList);
 
+int32_t CmServiceGetSystemTrustedCertListPack(const struct CmContext *context, enum CmCertAlgorithm certAlg,
+    const struct CmMutableBlob *certFileList, struct CmCertStoreInfo *certStoreInfo,
+    struct CmBlob *certificateList);
+
 int32_t CmServiceGetCertInfoPack(const uint32_t store, const struct CmBlob *certificateData,
     uint32_t status, const struct CmBlob *certUri, struct CmBlob *certificateInfo);
 

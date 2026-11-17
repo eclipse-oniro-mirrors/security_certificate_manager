@@ -37,6 +37,10 @@ int32_t CmGetAliasFromSubjectName(const struct CmBlob *certData, struct CmBlob *
 int32_t CmGetCertListInfo(const struct CmContext *context, uint32_t store,
     const struct CmMutableBlob *certFileList, struct CertBlob *certBlob, uint32_t *status);
 
+int32_t CmGetSystemTrustedCertListInfo(const struct CmContext *context, enum CmCertAlgorithm certAlg,
+    const struct CmMutableBlob *certFileList, struct CertBlob *certBlob, uint32_t *status,
+    struct CmCertStoreInfo *certStoreInfo);
+
 void CmFreeCertBlob(struct CertBlob *certBlob);
 
 uint32_t CmGetMatchedCertIndex(const struct CmMutableBlob *certFileList, const struct CmBlob *certUri);

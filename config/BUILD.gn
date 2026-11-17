@@ -1365,3 +1365,14 @@ ohos_prebuilt_etc("trusted_system_certificate124") {
     "updater",
   ]
 }
+
+ohos_prebuilt_etc("cert_store_version_cfg") {
+  source = "certStore.cfg"
+  part_name = "certificate_manager"
+  subsystem_name = "security"
+  relative_install_dir = "security"
+  install_images = [
+    "system",
+    "updater",
+  ]
+}

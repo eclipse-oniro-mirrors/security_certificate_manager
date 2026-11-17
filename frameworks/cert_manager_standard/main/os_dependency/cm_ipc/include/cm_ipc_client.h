@@ -27,6 +27,9 @@ extern "C"
 
 int32_t CmClientGetCertList(const uint32_t store, struct CertList *certificateList);
 
+int32_t CmClientGetSystemTrustedCertList(enum CmCertAlgorithm certAlg,
+    struct CertList *certificateList, struct CmCertStoreInfo *certStoreInfo);
+
 int32_t CmClientGetCertInfo(const struct CmBlob *certUri, const uint32_t store,
     struct CertInfo *certificateInfo);
 

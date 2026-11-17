@@ -118,6 +118,68 @@ int32_t CmServiceGetCertListPack(const struct CmContext *context, uint32_t store
     return ret;
 }
 
+static int32_t CmCertStoreInfoPack(const struct CmCertStoreInfo *certStoreInfo, struct CmBlob *certificateList)
+{
+    if (certStoreInfo == NULL || CmCheckBlob(certificateList) != CM_SUCCESS) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    uint32_t trailer = CM_CERT_STORE_INFO_TRAILER_SIZE;
+    if (certificateList->size + trailer < certificateList->size) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    /* the client allocates cert list buffer + trailer; ensure we do not exceed */
+    if (memcpy_s(certificateList->data + certificateList->size, trailer,
+        certStoreInfo->certStoreVersion, MAX_LEN_CERT_STORE_VERSION) != EOK) {
+        CM_LOG_E("copy certStoreVersion failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    if (memcpy_s(certificateList->data + certificateList->size + MAX_LEN_CERT_STORE_VERSION,
+        MAX_LEN_CERT_STORE_VERSION, certStoreInfo->smCertStoreVersion, MAX_LEN_CERT_STORE_VERSION) != EOK) {
+        CM_LOG_E("copy smCertStoreVersion failed");
+        return CMR_ERROR_MEM_OPERATION_COPY;
+    }
+    certificateList->size += trailer;
+    return CM_SUCCESS;
+}
+
+int32_t CmServiceGetSystemTrustedCertListPack(const struct CmContext *context, enum CmCertAlgorithm certAlg,
+    const struct CmMutableBlob *certFileList, struct CmCertStoreInfo *certStoreInfo,
+    struct CmBlob *certificateList)
+{
+    if (context == NULL || certFileList == NULL || certStoreInfo == NULL ||
+        CmCheckBlob(certificateList) != CM_SUCCESS) {
+        return CMR_ERROR_INVALID_ARGUMENT;
+    }
+    uint32_t status[MAX_COUNT_CERTIFICATE_ALL] = {0};
+    struct CertBlob certBlob;
+    (void)memset_s(&certBlob, sizeof(struct CertBlob), 0, sizeof(struct CertBlob));
+    uint32_t origCapacity = certificateList->size;
+    int32_t ret = CmGetSystemTrustedCertListInfo(context, certAlg, certFileList, &certBlob, status,
+        certStoreInfo);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmGetSystemTrustedCertListInfo fail");
+        CmFreeCertBlob(&certBlob);
+        return ret;
+    }
+
+    ret = CmGetCertListPack(&certBlob, status, certFileList->size, certificateList);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmGetCertListPack fail");
+        CmFreeCertBlob(&certBlob);
+        return ret;
+    }
+
+    if (certificateList->size + CM_CERT_STORE_INFO_TRAILER_SIZE > origCapacity) {
+        CM_LOG_E("certificateList capacity too small for certStoreInfo trailer");
+        CmFreeCertBlob(&certBlob);
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+
+    ret = CmCertStoreInfoPack(certStoreInfo, certificateList);
+    CmFreeCertBlob(&certBlob);
+    return ret;
+}
+
 static void FreeX509FieldBlobs(struct CmBlob *fields)
 {
     for (uint32_t i = 0; i < CM_CERT_INFO_FIELD_NUM; ++i) {
