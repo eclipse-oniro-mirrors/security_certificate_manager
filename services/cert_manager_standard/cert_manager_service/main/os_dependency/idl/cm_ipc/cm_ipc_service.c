@@ -1986,6 +1986,36 @@ static int32_t UnpackFindCertRequest(const struct CmBlob *requestBlob, struct Fi
     return CM_SUCCESS;
 }
 
+/* max packed size of the FindCertResult response, limited by the IPC reply
+ * parcel capacity (MAX_SIZE_CAPACITY in cm_response.cpp) */
+#define MAX_FIND_CERT_RESPONSE_SIZE (1 * 1024 * 1024)
+
+/* compute the exact packed size PackFindCertResult will produce for result:
+ * count + per entry (uriBlob + type + aliasBlob + state + subjectBlob + scope + certDataBlob) */
+static int32_t CalcFindCertResultPackSize(const struct FindCertResult *result, uint32_t *packSize)
+{
+    if (result == NULL || packSize == NULL) {
+        return CMR_ERROR_NULL_POINTER;
+    }
+    uint64_t total = sizeof(uint32_t); /* count */
+    for (uint32_t i = 0; i < result->count; i++) {
+        const struct FindCertInfo *info = &result->certInfos[i];
+        total += sizeof(uint32_t) + (uint64_t)ALIGN_SIZE((uint32_t)strlen(info->uri) + 1);
+        total += sizeof(uint32_t);
+        total += sizeof(uint32_t) + (uint64_t)ALIGN_SIZE((uint32_t)strlen(info->alias) + 1);
+        total += sizeof(uint32_t);
+        total += sizeof(uint32_t) + (uint64_t)ALIGN_SIZE((uint32_t)strlen(info->subjectName) + 1);
+        total += sizeof(uint32_t);
+        total += sizeof(uint32_t) + (uint64_t)ALIGN_SIZE(info->certData.size);
+    }
+    if (total > MAX_FIND_CERT_RESPONSE_SIZE) {
+        CM_LOG_E("find cert result too large: %llu, count: %u", (unsigned long long)total, result->count);
+        return CMR_ERROR_BUFFER_TOO_SMALL;
+    }
+    *packSize = (uint32_t)total;
+    return CM_SUCCESS;
+}
+
 static int32_t PackFindCertResult(const struct FindCertResult *result, struct CmBlob *outData)
 {
     if (outData == NULL) {
@@ -2039,10 +2069,12 @@ static int32_t PackFindCertResult(const struct FindCertResult *result, struct Cm
 void CmIpcServiceFindCertificate(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
     const struct CmContext *context)
 {
+    (void)outData; /* result count is unbounded: reply is packed into a self-sized buffer */
     int32_t ret = CM_SUCCESS;
     struct CmBlob requestBlob = { 0, NULL };
     struct CmContext cmContext = {0};
     struct CmParamSet *paramSet = NULL;
+    struct CmBlob response = { 0, NULL };
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_BUFFER, .blob = &requestBlob },
     };
@@ -2072,16 +2104,35 @@ void CmIpcServiceFindCertificate(const struct CmBlob *paramSetBlob, struct CmBlo
             break;
         }
 
-        /* pack FindCertResult into outData */
-        ret = PackFindCertResult(&result, outData);
+        /* pack FindCertResult into a buffer sized to the actual result */
+        uint32_t packSize = 0;
+        ret = CalcFindCertResultPackSize(&result, &packSize);
+        if (ret != CM_SUCCESS) {
+            CmFreeFindCertResultInner(&result);
+            break;
+        }
+        response.data = (uint8_t *)CmMalloc(packSize);
+        if (response.data == NULL) {
+            CM_LOG_E("malloc response failed, size: %u", packSize);
+            ret = CMR_ERROR_MALLOC_FAIL;
+            CmFreeFindCertResultInner(&result);
+            break;
+        }
+        response.size = packSize;
+        ret = PackFindCertResult(&result, &response);
         CmFreeFindCertResultInner(&result);
+        if (ret != CM_SUCCESS) {
+            CM_FREE_BLOB(response);
+            break;
+        }
     } while (0);
 
     if (ret != CM_SUCCESS) {
         CmSendResponse(context, ret, NULL);
     } else {
-        CmSendResponse(context, ret, outData);
+        CmSendResponse(context, ret, &response);
     }
+    CM_FREE_BLOB(response);
     CmFreeParamSet(&paramSet);
     CM_LOG_I("leave CmIpcServiceFindCertificate: ret = %d", ret);
 }

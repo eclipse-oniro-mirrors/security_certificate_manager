@@ -1632,22 +1632,6 @@ int32_t CmClientSaveRevocationCache(const struct CmBlob *key, uint32_t type, con
     return ret;
 }
 
-static int32_t FindCertInitOutData(struct CmBlob *outBlob)
-{
-    /* count + MAX items * (uriBlob + type + aliasBlob + state + subjectBlob + scope + certDataBlob) */
-    uint32_t buffSize = sizeof(uint32_t) +
-        MAX_COUNT_FIND_CERT_RESULT * (sizeof(uint32_t) + MAX_LEN_URI +
-        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_CERT_ALIAS +
-        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_SUBJECT_NAME +
-        sizeof(uint32_t) + sizeof(uint32_t) + MAX_LEN_CERTIFICATE);
-    outBlob->data = (uint8_t *)CmMalloc(buffSize);
-    if (outBlob->data == NULL) {
-        return CMR_ERROR_MALLOC_FAIL;
-    }
-    outBlob->size = buffSize;
-    return CM_SUCCESS;
-}
-
 /* serialize all FindCertRequest fields into requestBuf (already zero'd).
    writes certTypesCount, certTypes[], scope, nameLen+name, countLimit,
    certIdLen+certId. Returns the number of bytes written via *outOffset. */
@@ -1834,9 +1818,14 @@ static int32_t UnpackFindCertResult(const struct CmBlob *outBlob, struct FindCer
         result->certInfos = NULL;
         return CM_SUCCESS;
     }
-    if (count > MAX_COUNT_FIND_CERT_RESULT) {
-        CM_LOG_E("result count %u exceeds max", count);
-        return CMR_ERROR_INVALID_OPERATION;
+
+    /* each entry consumes at least 3 uint32 fields (type + state + scope),
+     * so a count beyond this bound can never be unpacked; reject it before
+     * allocating the certInfos array */
+    uint32_t remain = outBlob->size - outOffset;
+    if (count > remain / (sizeof(uint32_t) * 3)) {
+        CM_LOG_E("result count %u exceeds buffer capacity %u", count, remain);
+        return CMR_ERROR_BUFFER_TOO_SMALL;
     }
 
     uint32_t allocSize = sizeof(struct FindCertInfo) * count;
@@ -1891,14 +1880,8 @@ int32_t CmClientFindCertificate(const struct FindCertRequest *request, struct Fi
         return ret;
     }
 
-    ret = FindCertInitOutData(&outBlob);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("malloc out data failed");
-        CmFreeParamSet(&sendParamSet);
-        CM_FREE_PTR(requestBuf);
-        return ret;
-    }
-
+    /* outBlob left empty: the reply is received into a dynamically allocated
+     * buffer whose size is taken from the response (see CmReadRequestReply) */
     ret = SendRequest(CM_MSG_FIND_CERTIFICATE, &parcelBlob, &outBlob);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("CmClientFindCertificate request fail");

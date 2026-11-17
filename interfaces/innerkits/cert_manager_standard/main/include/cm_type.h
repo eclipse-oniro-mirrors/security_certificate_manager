@@ -516,7 +516,6 @@ static inline int32_t CmCheckInstallCertInfo(const struct CmInstallCertInfo *ins
 #define MAX_COUNT_FIND_CERT_TYPE    8
 #define MAX_LEN_FIND_CERT_NAME     257   /* include 1 byte: the terminator('\0') */
 #define MAX_LEN_FIND_CERT_ID       256
-#define MAX_COUNT_FIND_CERT_RESULT 16
 
 enum CmFindCertScope {
     CM_FIND_CERT_SCOPE_CURRENT_USER = 0,
