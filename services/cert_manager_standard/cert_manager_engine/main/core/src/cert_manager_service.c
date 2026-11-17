@@ -1001,14 +1001,30 @@ static int32_t UpdateUserCert(const struct UpdateUserCertProperty *updateProp,
         updateProp->certFileInfo->path.size,
         updateProp->certFileInfo->path.data,
     };
+    struct CmContext certFileContext = { 0 };
+    const struct CmContext *rdbContext = propertyOri->context;
+    int32_t ret = CmConstructContextFromUri((const char *)updateProp->certUri->data, &certFileContext);
+    if (ret == CM_SUCCESS) {
+        rdbContext = &certFileContext;
+    } else {
+        CM_LOG_W("ConstructContextFromUri failed, ret: %d, fall back to caller context", ret);
+    }
+    struct CertPropertyOri updatePropertyOri = {
+        .context = rdbContext,
+        .uri = propertyOri->uri,
+        .alias = propertyOri->alias,
+        .subjectName = propertyOri->subjectName,
+        .store = propertyOri->store,
+        .level = propertyOri->level,
+    };
     struct AfterInstallCertProperty afterPersistProp = {
-        .propertyOri = propertyOri,
+        .propertyOri = &updatePropertyOri,
         .context = updateProp->context,
         .userCert = updateProp->userCert,
         .certUri = updateProp->certUri,
         .pathBlob = &pathBlob
     };
-    int32_t ret = AfterInstallUserCert(&afterPersistProp);
+    ret = AfterInstallUserCert(&afterPersistProp);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("Update rdb table and backup user cert config fail");
         return ret;
