@@ -2066,73 +2066,73 @@ static int32_t PackFindCertResult(const struct FindCertResult *result, struct Cm
     return CM_SUCCESS;
 }
 
-void CmIpcServiceFindCertificate(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
-    const struct CmContext *context)
+/* call the engine and pack the result into a buffer sized to the actual result */
+static int32_t BuildFindCertResponse(const struct CmContext *cmContext, const struct FindCertRequest *request,
+    struct CmBlob *response)
 {
-    (void)outData; /* result count is unbounded: reply is packed into a self-sized buffer */
-    int32_t ret = CM_SUCCESS;
+    struct FindCertResult result;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+
+    int32_t ret = CmServiceFindCertificate(cmContext, request, &result);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("CmServiceFindCertificate fail, ret = %d", ret);
+        return ret;
+    }
+
+    uint32_t packSize = 0;
+    ret = CalcFindCertResultPackSize(&result, &packSize);
+    if (ret != CM_SUCCESS) {
+        CmFreeFindCertResultInner(&result);
+        return ret;
+    }
+    response->data = (uint8_t *)CmMalloc(packSize);
+    if (response->data == NULL) {
+        CM_LOG_E("malloc response failed, size: %u", packSize);
+        CmFreeFindCertResultInner(&result);
+        return CMR_ERROR_MALLOC_FAIL;
+    }
+    response->size = packSize;
+    ret = PackFindCertResult(&result, response);
+    CmFreeFindCertResultInner(&result);
+    return ret;
+}
+
+static int32_t HandleFindCertificate(const struct CmBlob *paramSetBlob, struct CmBlob *response)
+{
     struct CmBlob requestBlob = { 0, NULL };
     struct CmContext cmContext = {0};
     struct CmParamSet *paramSet = NULL;
-    struct CmBlob response = { 0, NULL };
     struct CmParamOut params[] = {
         { .tag = CM_TAG_PARAM0_BUFFER, .blob = &requestBlob },
     };
 
-    do {
-        ret = GetInputParams(paramSetBlob, &paramSet, &cmContext, params, CM_ARRAY_SIZE(params));
-        if (ret != CM_SUCCESS) {
-            CM_LOG_E("FindCertificate get input params failed, ret = %d", ret);
-            break;
-        }
-
-        /* unpack FindCertRequest from requestBlob */
-        struct FindCertRequest request;
-        ret = UnpackFindCertRequest(&requestBlob, &request);
-        if (ret != CM_SUCCESS) {
-            break;
-        }
-
-        /* call service */
-        struct FindCertResult result;
-        (void)memset_s(&result, sizeof(result), 0, sizeof(result));
-
-        ret = CmServiceFindCertificate(&cmContext, &request, &result);
-        CM_FREE_PTR(request.certTypes);
-        if (ret != CM_SUCCESS) {
-            CM_LOG_E("CmServiceFindCertificate fail, ret = %d", ret);
-            break;
-        }
-
-        /* pack FindCertResult into a buffer sized to the actual result */
-        uint32_t packSize = 0;
-        ret = CalcFindCertResultPackSize(&result, &packSize);
-        if (ret != CM_SUCCESS) {
-            CmFreeFindCertResultInner(&result);
-            break;
-        }
-        response.data = (uint8_t *)CmMalloc(packSize);
-        if (response.data == NULL) {
-            CM_LOG_E("malloc response failed, size: %u", packSize);
-            ret = CMR_ERROR_MALLOC_FAIL;
-            CmFreeFindCertResultInner(&result);
-            break;
-        }
-        response.size = packSize;
-        ret = PackFindCertResult(&result, &response);
-        CmFreeFindCertResultInner(&result);
-        if (ret != CM_SUCCESS) {
-            CM_FREE_BLOB(response);
-            break;
-        }
-    } while (0);
-
+    int32_t ret = GetInputParams(paramSetBlob, &paramSet, &cmContext, params, CM_ARRAY_SIZE(params));
     if (ret != CM_SUCCESS) {
-        CmSendResponse(context, ret, NULL);
-    } else {
-        CmSendResponse(context, ret, &response);
+        CM_LOG_E("FindCertificate get input params failed, ret = %d", ret);
+        CmFreeParamSet(&paramSet);
+        return ret;
     }
-    CM_FREE_BLOB(response);
+
+    struct FindCertRequest request;
+    ret = UnpackFindCertRequest(&requestBlob, &request);
+    if (ret == CM_SUCCESS) {
+        ret = BuildFindCertResponse(&cmContext, &request, response);
+        CM_FREE_PTR(request.certTypes);
+    }
     CmFreeParamSet(&paramSet);
+    return ret;
+}
+
+void CmIpcServiceFindCertificate(const struct CmBlob *paramSetBlob, struct CmBlob *outData,
+    const struct CmContext *context)
+{
+    (void)outData; /* result count is unbounded: reply is packed into a self-sized buffer */
+    struct CmBlob response = { 0, NULL };
+    int32_t ret = HandleFindCertificate(paramSetBlob, &response);
+    if (ret != CM_SUCCESS) {
+        CM_FREE_BLOB(response);
+    }
+    CmSendResponse(context, ret, (ret == CM_SUCCESS) ? &response : NULL);
+    CM_FREE_BLOB(response);
     CM_LOG_I("leave CmIpcServiceFindCertificate: ret = %d", ret);
 }
