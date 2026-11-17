@@ -1593,13 +1593,15 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateGlobal_001, TestSize.Level
 
 /**
  * @tc.name: CmServiceFindCertificateCountLimit_001
- * @tc.desc: an oversized batch is rejected without a limit and truncated with one.
+ * @tc.desc: a batch larger than the former 16-entry cap is returned in full without a limit,
+ *           and truncated to countLimit when one is given.
  * @tc.type: FUNC
  */
 HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateCountLimit_001, TestSize.Level0)
 {
-    /* one cert more than the finder result cap: the batch alias isolates the rows */
-    for (uint32_t i = 0; i < MAX_COUNT_FIND_CERT_RESULT + 1; i++) {
+    /* larger than the removed 16-entry cap: the batch alias isolates the rows */
+    const uint32_t batchCount = 20;
+    for (uint32_t i = 0; i < batchCount; i++) {
         std::string uri;
         ASSERT_EQ(InstallUserCertWithAlias("R7Batch" + std::to_string(i), uri), CM_SUCCESS) << "index " << i;
     }
@@ -1612,17 +1614,26 @@ HWTEST_F(CmEngineServiceTest, CmServiceFindCertificateCountLimit_001, TestSize.L
     request.scope = CM_FIND_CERT_SCOPE_CURRENT_USER;
     ASSERT_EQ(strcpy_s(request.name, sizeof(request.name), "R7Batch"), EOK);
 
-    /* without an explicit limit the internal cap rejects the oversized batch */
+    /* without an explicit limit the whole batch is returned: there is no internal count cap */
     request.countLimit = 0;
     struct FindCertResult result;
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
-    EXPECT_EQ(CmServiceFindCertificate(&context, &request, &result), CMR_ERROR_INVALID_OPERATION);
+    ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
+    EXPECT_EQ(result.count, batchCount);
+    FreeFindCertResult(&result);
 
     /* an explicit limit truncates the batch to that many results */
-    request.countLimit = MAX_COUNT_FIND_CERT_RESULT;
+    request.countLimit = batchCount - 1;
     (void)memset_s(&result, sizeof(result), 0, sizeof(result));
     ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
-    EXPECT_EQ(result.count, MAX_COUNT_FIND_CERT_RESULT);
+    EXPECT_EQ(result.count, batchCount - 1);
+    FreeFindCertResult(&result);
+
+    /* a limit larger than the batch does not change the result */
+    request.countLimit = batchCount + 1;
+    (void)memset_s(&result, sizeof(result), 0, sizeof(result));
+    ASSERT_EQ(CmServiceFindCertificate(&context, &request, &result), CM_SUCCESS);
+    EXPECT_EQ(result.count, batchCount);
     FreeFindCertResult(&result);
 }
 
