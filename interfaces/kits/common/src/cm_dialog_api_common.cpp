@@ -96,7 +96,6 @@ bool IsEnableCACertDialog()
 int32_t GetDefaultUkeyAuthCertWant(const CmBlob *keyUri, OHOS::AAFwk::Want &want)
 {
     want.SetElementName(CERT_MANAGER_BUNDLENAME, CERT_MANAGER_ABILITYNAME);
-    want.SetParam(CERT_MANAGER_CALLER_UID, static_cast<int32_t>(getuid()));
     want.SetParam(PARAM_UI_EXTENSION_TYPE, SYS_COMMON_UI);
     want.SetParam(CERT_MANAGER_PAGE_TYPE, static_cast<int32_t>(CmDialogPageType::PAGE_UKEY_PIN_AUTHORIZE));
     std::string uriStr(reinterpret_cast<char *>(keyUri->data), keyUri->size);
@@ -182,7 +181,7 @@ int32_t GetCustomerAuthCertWant(const CmBlob *keyUri, const CmBlob *customData,
 
     want.SetElementName(bundleName, abilityName);
     want.SetAction(ACTION_UKEY_PIN_AUTH);
-    want.SetParam(CERT_MANAGER_CALLER_UID, static_cast<int32_t>(getuid()));
+    want.SetParam(CERT_MANAGER_CALLER_UID, static_cast<int32_t>(getappuid()));
     std::string uriStr(reinterpret_cast<char *>(keyUri->data), keyUri->size);
     want.SetParam(CERT_MANAGER_CERT_KEY_URI, uriStr);
     if (customData != nullptr && customData->size > 0) {

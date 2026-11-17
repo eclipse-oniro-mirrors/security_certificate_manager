@@ -124,7 +124,6 @@ int32_t CmOpenAuthDialogWithReq::InvokeAsyncWork()
     OHOS::AAFwk::Want want;
     want.SetElementName(CERT_MANAGER_BUNDLENAME, CERT_MANAGER_ABILITYNAME);
     want.SetParam(CERT_MANAGER_CALLER_BUNDLENAME, labelName);
-    want.SetParam(CERT_MANAGER_CALLER_UID, static_cast<int32_t>(getuid()));
     want.SetParam(PARAM_UI_EXTENSION_TYPE, SYS_COMMON_UI);
     want.SetParam(CERT_MANAGER_PAGE_TYPE, static_cast<int32_t>(PAGE_REQUEST_AUTHORIZE));
     want.SetParam(CERT_MANAGER_CERT_TYPES, this->certTypes);
