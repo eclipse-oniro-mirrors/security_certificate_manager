@@ -17,6 +17,43 @@ import("//build/ohos.gni")
 config("cert_manager_engine_core_config") {
   include_dirs = [ "include" ]
 }
+
+# compiles the *ForTest interfaces; attached only by the test twin
+# library below, so the macro also reaches the unit test sources that
+# call them while production artifacts carry no such symbols
+config("cert_manager_engine_core_test_api_config") {
+  defines = [ "CM_TEST_API_ENABLE" ]
+}
+
+# engine core sources shared by the production library and its test twin;
+# keep both targets on this list
+cert_manager_engine_core_sources = [
+  "src/cert_manager.c",
+  "src/cert_manager_app_cert_process.c",
+  "src/cert_manager_auth_list_mgr.c",
+  "src/cert_manager_auth_mgr.c",
+  "src/cert_manager_check.c",
+  "src/cert_manager_crypto_operation.c",
+  "src/cert_manager_double_list.c",
+  "src/cert_manager_file.c",
+  "src/cert_manager_file_operator.c",
+  "src/cert_manager_key_operation.c",
+  "src/cert_manager_mem.c",
+  "src/cert_manager_permission_check.cpp",
+  "src/cert_manager_query.c",
+  "src/cert_manager_revocation_cache.c",
+  "src/cert_manager_revocation_cache_async.cpp",
+  "src/cert_manager_service.c",
+  "src/cert_manager_session_mgr.c",
+  "src/cert_manager_status.c",
+  "src/cert_manager_storage.c",
+  "src/cert_manager_thread_pool.cpp",
+  "src/cert_manager_ukey_operation.c",
+  "src/cert_manager_updateflag.c",
+  "src/cert_manager_uri.c",
+  "src/cm_event_process.c",
+]
+
 ohos_static_library("cert_manager_engine_core_standard") {
   subsystem_name = "security"
   part_name = "certificate_manager"
@@ -38,31 +75,7 @@ ohos_static_library("cert_manager_engine_core_standard") {
     "-Wall",
     "-Werror",
   ]
-  sources = [
-    "src/cert_manager.c",
-    "src/cert_manager_app_cert_process.c",
-    "src/cert_manager_auth_list_mgr.c",
-    "src/cert_manager_auth_mgr.c",
-    "src/cert_manager_check.c",
-    "src/cert_manager_crypto_operation.c",
-    "src/cert_manager_double_list.c",
-    "src/cert_manager_file.c",
-    "src/cert_manager_file_operator.c",
-    "src/cert_manager_key_operation.c",
-    "src/cert_manager_mem.c",
-    "src/cert_manager_permission_check.cpp",
-    "src/cert_manager_query.c",
-    "src/cert_manager_service.c",
-    "src/cert_manager_session_mgr.c",
-    "src/cert_manager_status.c",
-    "src/cert_manager_storage.c",
-    "src/cert_manager_ukey_operation.c",
-    "src/cert_manager_updateflag.c",
-    "src/cert_manager_uri.c",
-    "src/cm_event_process.c",
-    "src/cert_manager_revocation_cache.c",
-    "src/cert_manager_revocation_cache_async.cpp",
-  ]
+  sources = cert_manager_engine_core_sources
 
   deps = [
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
@@ -73,11 +86,63 @@ ohos_static_library("cert_manager_engine_core_standard") {
   external_deps = [
     "access_token:libaccesstoken_sdk",
     "access_token:libtokenid_sdk",
+    "bundle_framework:appexecfwk_core",
     "c_utils:utils",
     "huks:libhukssdk",
     "ipc:ipc_core",
     "openssl:libcrypto_shared",
+    "samgr:samgr_proxy",
+  ]
+
+  complete_static_lib = true
+}
+
+# test twin of the engine core: the same sources built with
+# CM_TEST_API_ENABLE, so the *ForTest pool interfaces exist only in test
+# binaries; testonly blocks production dependencies and the public macro
+# reaches the unit test sources that call them. Production artifacts
+# compiled from the target above carry no such symbols
+ohos_static_library("cert_manager_engine_core_standard_test") {
+  testonly = true
+  subsystem_name = "security"
+  part_name = "certificate_manager"
+  public_configs = [
+    ":cert_manager_engine_core_config",
+    ":cert_manager_engine_core_test_api_config",
+  ]
+  branch_protector_ret = "pac_ret"
+  stack_protector_ret = true
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    boundary_sanitize = true
+    debug = false
+    integer_overflow = true
+    ubsan = true
+  }
+
+  defines = [ "OPENSSL_SUPPRESS_DEPRECATED" ]
+  include_dirs = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include" ]
+  cflags = [
+    "-Wall",
+    "-Werror",
+  ]
+  sources = cert_manager_engine_core_sources
+
+  deps = [
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_openssl_static",
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_ipc_client_static",
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/rdb:libcert_manager_rdb_static",
+  ]
+  external_deps = [
+    "access_token:libaccesstoken_sdk",
+    "access_token:libtokenid_sdk",
     "bundle_framework:appexecfwk_core",
+    "c_utils:utils",
+    "huks:libhukssdk",
+    "ipc:ipc_core",
+    "openssl:libcrypto_shared",
     "samgr:samgr_proxy",
   ]
 

@@ -35,6 +35,7 @@ constexpr int32_t CM_CMD_ERR_DEVICE_ENTER_ADVSECMODE = 5;
 constexpr int32_t CM_CMD_ERR_PERMISSION_DENIED = 6;
 constexpr int32_t CM_CMD_ERR_INTERNAL_ERROR = 7;
 constexpr int32_t CM_CMD_ERR_USER_CANCELLED = 8;
+constexpr int32_t CM_CMD_ERR_CERT_NOT_FOUND = 9;
 
 int32_t MapSdkErrToCmdErr(int32_t sdkErr);
 
@@ -58,12 +59,16 @@ int32_t AuthenticateUser(int32_t userId);
 
 int32_t AuthenticateAdmin();
 
+int32_t AuthenticateCurrentUser(int32_t userId);
+
 int32_t GetCertSha256Hex(const struct CmBlob &certData, std::string &sha256Hex);
 
 int32_t GetCertPemString(const struct CmBlob &certData, std::string &pemStr);
 
 int32_t GetCertHashStrings(const struct CmBlob &certData,
     std::string &sha256Hex, std::string &sha1Hex);
+
+int32_t ParseUserIdFromUri(const std::string &uri, int32_t &userId);
 
 class CertMgrCommand {
 public:
@@ -127,6 +132,28 @@ private:
     int32_t certCount_ = 0;
     bool printPem_ = false;
     bool printHash_ = false;
+};
+
+class UninstallUserCACommand final : public CertMgrCommand {
+public:
+    UninstallUserCACommand() = default;
+
+protected:
+    int32_t ParseArgs(int argc, char *argv[]) override;
+    int32_t Validate() override;
+    int32_t Run() override;
+
+private:
+    int32_t UninstallByCertUri(const std::string &certUri);
+    int32_t UninstallByCertFile(const std::string &certFilePath);
+    int32_t AuthenticateForUninstall(int32_t uriUserId, bool hasUriUserId, int32_t &authUserId);
+    int32_t FindCertUriByHash(const struct CmBlob &certBlob, std::string &outCertUri);
+
+    bool hasG_ = false;
+    bool hasCertFile_ = false;
+    std::string certFilePath_;
+    bool hasCertUri_ = false;
+    std::string certUriStr_;
 };
 
 } // namespace CertMgr

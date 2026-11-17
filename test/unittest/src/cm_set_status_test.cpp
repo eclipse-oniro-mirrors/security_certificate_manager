@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -13,10 +13,23 @@
  * limitations under the License.
  */
 
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <unistd.h>
+#include <vector>
+
 #include <gtest/gtest.h>
 #include "cm_test_log.h"
 #include "cm_test_common.h"
 #include "cert_manager_api.h"
+#include "cert_manager_status.h"
+#include "cert_manager_storage.h"
+#include "cm_rdb_config.h"
+#include "cm_rdb_data_manager.h"
+#include "cm_root_ca_store_rdb.h"
 
 using namespace testing::ext;
 using namespace CertmanagerTest;
@@ -29,12 +42,79 @@ struct CertStatusExpectResult {
     bool expectStatus;
 };
 
+/* preset system CA pubkey hashes, precomputed with (NOT derived from the
+ * code under test):
+ *   openssl x509 -in config/systemCertificates/<uri> -pubkey -noout |
+ *   openssl pkey -pubin -outform DER | sha256sum   (uppercase)
+ * index i pairs with g_expectList[i].uri */
+static const char *g_expectedSystemPkHashes[] = {
+    "7E0EAD76BB6819DC2F54511A84354F6E8B307B9DD82058EA6C004F01D9DDA5DF", /* 1d3472b9.0 */
+    "808D68B3FAB4884A5F971ACE7D10550D7A95A163774F3EC36AFFFB213FBE4C74", /* 4bfab552.0 */
+    "40FCFC28875DCCBFEBCBDF6CD7433312DA63C4EFCF3BD7B1B505C22020AE0274", /* 4f316efb.0 */
+};
+
+/* read the whole force-check policy file; false when it cannot be opened */
+static bool ReadPolicyFile(std::string &out)
+{
+    std::ifstream f(FORCE_CHECK_POLICY_FILE, std::ios::in | std::ios::binary);
+    if (!f.is_open()) {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+/* delete every row, then rewrite the policy file to match: the suite
+ * toggles REAL preset system CAs, so a failed run must not leave any of
+ * them disabled in the shared database (the SA reads the same file). The
+ * table itself stays. Same cleanup as CmRootCaStoreRdbTest. */
+static void CleanupRootCaStoreState()
+{
+    using namespace OHOS::Security::CertManager;
+    RdbConfig cleanCfg;
+    cleanCfg.dbName = CERT_MANAGER_RDB_NAME;
+    cleanCfg.tableName = ROOT_CA_STORE_TABLE_NAME;
+    /* make_shared is mandatory: the manager takes shared_from_this on open */
+    auto cleanMgr = std::make_shared<CmRdbDataManager>(cleanCfg);
+    (void)cleanMgr->ExecuteSql("DELETE FROM " + ROOT_CA_STORE_TABLE_NAME,
+        std::vector<OHOS::NativeRdb::ValueObject>());
+    (void)CmRegenerateRevocationPolicyFile();
+}
+
+/* whether FORCE_CHECK_POLICY_DIR existed before this suite started: the
+ * service cfg mkdirs it on images carrying this PR, so what existed before
+ * the suite is not the suite's to remove; when the suite created the
+ * directory itself (old image: the engine's self-healing mkdir fallback
+ * inside CmRegenerateRevocationPolicyFile), TearDownTestCase removes it
+ * again so no forceCheck residue stays on the device */
+static bool g_policyDirPreExisting = false;
+
+/* query the root_ca_cert_store disabled rows and assert that the row for
+ * uri classifies as international (the preset CAs live in SYSTEM_CA_STORE) */
+static void CheckDisabledRootCaAlgType(const char *uri)
+{
+    std::vector<struct RootCaStoreRecord> records(MAX_COUNT_CERTIFICATE_ALL);
+    uint32_t disabledCount = 0;
+    ASSERT_EQ(QueryDisabledRootCa(records.data(), MAX_COUNT_CERTIFICATE_ALL, &disabledCount), CM_SUCCESS)
+        << "query disabled root ca failed";
+    bool rowFound = false;
+    for (uint32_t r = 0; r < disabledCount; ++r) {
+        if (strcmp(records[r].uri, uri) == 0) {
+            EXPECT_EQ(records[r].algType, CM_ROOT_CA_ALG_TYPE_INTERNATIONAL)
+                << "alg type mismatch for uri: " << uri;
+            rowFound = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(rowFound) << "disabled row missing for uri: " << uri;
+}
+
 struct CertStatusExpectResult g_expectList[] = {
     {
-        {"1d3472b9.0"}, false, true
+        {"1d3472b9.0"}, false, false
     },
     {
-        {"4bfab552.0"}, false, true
+        {"4bfab552.0"}, false, false
     },
     {
         {"4f316efb.0"}, true, true
@@ -54,22 +134,44 @@ public:
 
 void CmSetCertStatusTest::SetUpTestCase(void)
 {
+    /* snapshot before anything in this suite can create the directory */
+    g_policyDirPreExisting = (access(FORCE_CHECK_POLICY_DIR, F_OK) == 0);
     g_selfTokenId = GetSelfTokenID();
     CmTestCommon::SetTestEnvironment(g_selfTokenId);
+    /* the engine reaches root_ca_cert_store only through the global rdb
+     * manager, which CertManagerInitialize creates in the SA process;
+     * a test process must create it itself or every status call fails
+     * with CMR_ERROR_NULL_POINTER (idempotent, same as the
+     * CmRootCaStoreRdbTest fixture) */
+    ASSERT_EQ(CreateRootCaStoreRdb(), CM_SUCCESS);
 }
 
 void CmSetCertStatusTest::TearDownTestCase(void)
 {
     CmTestCommon::ResetTestEnvironment();
+    /* the last per-test TearDown already cleared the rows and regenerated
+     * the empty policy file; when this suite created the directory itself
+     * (old image: the engine's self-healing mkdir fallback), remove it
+     * again so no forceCheck residue stays; a pre-existing (cfg-owned)
+     * directory keeps the empty file: an empty file is the no-disabled
+     * contract */
+    if (g_policyDirPreExisting) {
+        return;
+    }
+    (void)unlink(FORCE_CHECK_POLICY_FILE ".tmp");
+    (void)unlink(FORCE_CHECK_POLICY_FILE);
+    EXPECT_EQ(rmdir(FORCE_CHECK_POLICY_DIR), 0) << "removing suite-created forceCheck dir failed";
 }
 
 void CmSetCertStatusTest::SetUp()
 {
+    CleanupRootCaStoreState();
     g_MockHap = new (std::nothrow) MockHapToken();
 }
 
 void CmSetCertStatusTest::TearDown()
 {
+    CleanupRootCaStoreState();
     if (g_MockHap != nullptr) {
         delete g_MockHap;
         g_MockHap = nullptr;
@@ -120,6 +222,36 @@ HWTEST_F(CmSetCertStatusTest, SetCertStatusAndQueryStatus002, TestSize.Level0)
         EXPECT_EQ(status, 1) << "SetCertStatusAndQueryStatus faild, cert info: " << DumpCertInfo(&certDetailInfo);
         FreeCMBlobData(&(certDetailInfo.certInfo));
 
+        /* disabled in this iteration: the force-check policy file must list it */
+        if (!g_expectList[i].inparamStatus) {
+            std::string policy;
+            ASSERT_TRUE(ReadPolicyFile(policy));
+            EXPECT_NE(policy.find(std::string("1,") + g_expectedSystemPkHashes[i]), std::string::npos);
+
+            /* the persisted row must classify the root CA by its store
+             * directory: these preset CAs live in SYSTEM_CA_STORE */
+            CheckDisabledRootCaAlgType(g_expectList[i].uri);
+        }
+
+        /* list-level: the abstract row for this uri must carry the same state
+         * as the detail query (exercises the disabled-records query + uri match
+         * in CmGetCertListInfo, and both directions of the status mapping) */
+        struct CertList *certlist = nullptr;
+        ASSERT_TRUE(InitCertList(&certlist) == CM_SUCCESS);
+        ret = CmGetCertList(CM_SYSTEM_TRUSTED_STORE, certlist);
+        EXPECT_EQ(ret, CM_SUCCESS) << "SetCertStatusAndQueryStatus,CmGetCertList failed,retcode:" << ret;
+        bool rowFound = false;
+        for (uint32_t j = 0; j < certlist->certsCount; ++j) {
+            if (strcmp(certlist->certAbstract[j].uri, g_expectList[i].uri) == 0) {
+                EXPECT_EQ(certlist->certAbstract[j].status, g_expectList[i].expectStatus) <<
+                    "list status mismatch for uri: " << g_expectList[i].uri;
+                rowFound = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(rowFound) << "uri not found in system cert list: " << g_expectList[i].uri;
+        FreeCertList(certlist);
+
         ret = CmSetCertStatus(&uriBlob, CM_SYSTEM_TRUSTED_STORE, true);
         EXPECT_EQ(ret, CM_SUCCESS) << " SetCertStatusAndQueryStatus, CmSetCertStatus failed,retcode: " << ret;
     }
@@ -133,7 +265,7 @@ HWTEST_F(CmSetCertStatusTest, SetCertStatusAndQueryStatus002, TestSize.Level0)
  */
 HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 {
-    struct CertList *certlist = NULL;
+    struct CertList *certlist = nullptr;
 
     ASSERT_TRUE(InitCertList(&certlist) == CM_SUCCESS);
     // CA trusted list
@@ -143,7 +275,7 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 
     for (uint32_t i = 0; i < certlist->certsCount; ++i) {
         struct CertAbstract *ptr = &(certlist->certAbstract[i]);
-        ASSERT_TRUE(NULL != ptr);
+        ASSERT_TRUE(ptr != nullptr);
         struct CmBlob uriBlob = {strlen(ptr->uri) + 1, (uint8_t *)(ptr->uri)};
         ret = CmSetCertStatus(&uriBlob, CM_SYSTEM_TRUSTED_STORE, false);
         EXPECT_EQ(ret, CM_SUCCESS);
@@ -151,11 +283,16 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 
     for (uint32_t i = 0; i < certlist->certsCount; ++i) {
         struct CertAbstract *ptr2 = &(certlist->certAbstract[i]);
-        ASSERT_TRUE(NULL != ptr2);
+        ASSERT_TRUE(ptr2 != nullptr);
         struct CmBlob uriBlob2 = {strlen(ptr2->uri) + 1, (uint8_t *)(ptr2->uri)};
         ret = CmSetCertStatus(&uriBlob2, CM_SYSTEM_TRUSTED_STORE, true);
         EXPECT_EQ(ret, CM_SUCCESS);
     }
+
+    /* all re-enabled: the force-check policy file is empty again */
+    std::string policy;
+    ASSERT_TRUE(ReadPolicyFile(policy));
+    ASSERT_EQ(policy.size(), 0u);
     FreeCertList(certlist);
 }
 
@@ -168,7 +305,7 @@ HWTEST_F(CmSetCertStatusTest, SetAllCertStatus003, TestSize.Level0)
 HWTEST_F(CmSetCertStatusTest, ExceptionSetStatus004, TestSize.Level0)
 {
     struct CmBlob uriBlob = {strlen(g_expectList[1].uri) + 1, (uint8_t *)(g_expectList[1].uri)};
-    EXPECT_EQ(CmSetCertStatus(NULL, CM_SYSTEM_TRUSTED_STORE, true),
+    EXPECT_EQ(CmSetCertStatus(nullptr, CM_SYSTEM_TRUSTED_STORE, true),
         CMR_ERROR_NULL_POINTER);
 
     EXPECT_EQ(CmSetCertStatus(&uriBlob, 10, true), CMR_ERROR_INVALID_ARGUMENT);
@@ -176,6 +313,57 @@ HWTEST_F(CmSetCertStatusTest, ExceptionSetStatus004, TestSize.Level0)
     const char *invalidUri = "INVALIDXXXX";
     struct CmBlob invalidUriBlob = {strlen(invalidUri) + 1, (uint8_t *)invalidUri};
     EXPECT_EQ(CmSetCertStatus(&invalidUriBlob, CM_SYSTEM_TRUSTED_STORE, true),
-        CM_SUCCESS);
+        CMR_ERROR_NOT_EXIST);
+}
+
+/**
+ * @tc.name: SystemCaAlgTypeByDirectory005
+ * @tc.desc: the persisted alg type follows the store directory the system CA
+ *           file lives in, not the certificate encoding
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MJA /SR000H096P
+ */
+HWTEST_F(CmSetCertStatusTest, SystemCaAlgTypeByDirectory005, TestSize.Level0)
+{
+    EXPECT_EQ(CmGetSystemCaAlgType(SYSTEM_CA_STORE_GM), CM_ROOT_CA_ALG_TYPE_GM);
+    EXPECT_EQ(CmGetSystemCaAlgType(SYSTEM_CA_STORE), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
+    EXPECT_EQ(CmGetSystemCaAlgType(nullptr), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
+    EXPECT_EQ(CmGetSystemCaAlgType("/data/service/el1/public"), CM_ROOT_CA_ALG_TYPE_INTERNATIONAL);
+}
+
+/**
+ * @tc.name: GetSystemCertPkHash006
+ * @tc.desc: the pk hash getter returns the precomputed SPKI digest of the
+ *           preset system CA and validates its out buffer size
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MJA /SR000H096P
+ */
+HWTEST_F(CmSetCertStatusTest, GetSystemCertPkHash006, TestSize.Level0)
+{
+    struct CmContext context;
+    (void)memset_s(&context, sizeof(context), 0, sizeof(context));
+    struct CmBlob uriBlob = {strlen(g_expectList[0].uri) + 1, (uint8_t *)(g_expectList[0].uri)};
+
+    char pkHash[CM_ROOT_CA_PK_HASH_HEX_LEN + 1] = {0};
+    /* argument and buffer-size validation, nothing written */
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, nullptr, pkHash, sizeof(pkHash)),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, &uriBlob, nullptr, sizeof(pkHash)),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, &uriBlob, pkHash, CM_ROOT_CA_PK_HASH_HEX_LEN),
+        CMR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(pkHash[0], '\0');
+
+    /* the real hash: the same SPKI SHA256 the store row and the policy
+     * file line carry */
+    ASSERT_EQ(CmGetSystemCertPkHash(&context, &uriBlob, pkHash, sizeof(pkHash)), CM_SUCCESS);
+    EXPECT_EQ(strlen(pkHash), CM_ROOT_CA_PK_HASH_HEX_LEN);
+    EXPECT_STREQ(pkHash, g_expectedSystemPkHashes[0]);
+
+    /* uri not in the system store */
+    const char *invalidUri = "INVALIDXXXX";
+    struct CmBlob invalidUriBlob = {strlen(invalidUri) + 1, (uint8_t *)invalidUri};
+    EXPECT_EQ(CmGetSystemCertPkHash(&context, &invalidUriBlob, pkHash, sizeof(pkHash)),
+        CMR_ERROR_NOT_EXIST);
 }
 }

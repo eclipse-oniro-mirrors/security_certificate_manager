@@ -18,6 +18,20 @@ config("cm_ukey_auth_dialog_config") {
   include_dirs = [ "include" ]
 }
 
+# compiles the *ForTest interfaces; attached only by the test twin
+# library below, so the macro also reaches the unit test sources that
+# call them while production artifacts carry no such symbols
+config("cm_ukey_auth_dialog_test_api_config") {
+  defines = [ "CM_TEST_API_ENABLE" ]
+}
+
+# dialog library sources shared by the production library and its test
+# twin; keep both targets on this list
+cm_ukey_auth_dialog_sources = [
+  "cm_system_dialog_connection.cpp",
+  "cm_ukey_auth_dialog_manager.cpp",
+]
+
 ohos_static_library("libcm_ukey_auth_dialog_static") {
   subsystem_name = "security"
   part_name = "certificate_manager"
@@ -37,10 +51,66 @@ ohos_static_library("libcm_ukey_auth_dialog_static") {
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common/include",
   ]
   defines = []
-  sources = [
-    "cm_system_dialog_connection.cpp",
-    "cm_ukey_auth_dialog_manager.cpp",
+  sources = cm_ukey_auth_dialog_sources
+  deps = [
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_log_mem_static",
   ]
+
+  external_deps = [
+    "ability_base:want",
+    "ability_runtime:ability_connect_callback_stub",
+    "ability_runtime:extension_manager",
+    "access_token:libaccesstoken_sdk",
+    "bundle_framework:appexecfwk_base",
+    "bundle_framework:appexecfwk_core",
+    "cJSON:cjson_static",
+    "c_utils:utils",
+    "eventhandler:libeventhandler",
+    "hilog:libhilog",
+    "huks:libhukssdk",
+    "init:libbegetutil",
+    "ipc:ipc_core",
+    "samgr:samgr_proxy",
+  ]
+
+  cflags_cc = [
+    "-Wall",
+    "-Werror",
+  ]
+  cflags = cflags_cc
+  complete_static_lib = true
+}
+
+# test twin of the dialog library: the same sources built with
+# CM_TEST_API_ENABLE, so the manager's *ForTest interfaces exist only in
+# test binaries; testonly blocks production dependencies and the public
+# macro reaches the unit test sources that call them. Production artifacts
+# compiled from the target above carry no such symbols
+ohos_static_library("libcm_ukey_auth_dialog_static_test") {
+  testonly = true
+  subsystem_name = "security"
+  part_name = "certificate_manager"
+  public_configs = [
+    ":cm_ukey_auth_dialog_config",
+    ":cm_ukey_auth_dialog_test_api_config",
+  ]
+  branch_protector_ret = "pac_ret"
+  stack_protector_ret = true
+  sanitize = {
+    cfi = true
+    cfi_cross_dso = true
+    boundary_sanitize = true
+    debug = false
+    integer_overflow = true
+    ubsan = true
+  }
+  include_dirs = [
+    "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include",
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common/include",
+  ]
+  defines = []
+  sources = cm_ukey_auth_dialog_sources
   deps = [
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_log_mem_static",

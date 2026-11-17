@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -110,6 +110,10 @@ extern "C" {
  * sandbox-view path */
 #define REVOCATION_CACHE_BASE  \
     "/data/service/el1/public/for-all-app/cert_manager_service/certificates/revocation/"
+/* no parentheses: these must stay plain adjacent string literals so callers
+ * can append further suffixes (e.g. FORCE_CHECK_POLICY_FILE ".tmp") */
+#define FORCE_CHECK_POLICY_DIR  REVOCATION_CACHE_BASE "forceCheck"
+#define FORCE_CHECK_POLICY_FILE FORCE_CHECK_POLICY_DIR "/certRevocationPolicy_user.cfg"
 #define CM_REVOCATION_CACHE_KEY_MAX_LEN    64
 /* hex-encoded key length: two chars per key byte, used for file names and RDB rows */
 #define CM_REVOCATION_CACHE_KEY_HEX_MAX_LEN (CM_REVOCATION_CACHE_KEY_MAX_LEN * 2)

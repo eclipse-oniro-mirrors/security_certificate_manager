@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -40,6 +40,7 @@
 #include "cm_event_process.h"
 #include "cm_cert_property_rdb.h"
 #include "cm_config_rdb.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cm_log.h"
 #include "cm_type.h"
 #include "cm_x509.h"
@@ -635,9 +636,22 @@ static int32_t CmServiceGetSysCertInfo(const struct CmContext *context, const st
             ret = CMR_ERROR_NOT_EXIST;
             break;
         }
-        *status = CERT_STATUS_ENABLED;
 
         struct CertFileInfo *cFileList = (struct CertFileInfo *)certFileList.data;
+        /* report the manual state from root_ca_cert_store; a uri without a
+         * row there counts as enabled */
+        uint32_t enable = 1;
+        ret = QueryRootCaEnable((char *)cFileList[matchIndex].fileName.data,
+            cFileList[matchIndex].fileName.size, &enable);
+        if (ret != CM_SUCCESS) {
+            /* fail open on the read path: detail queries keep working when
+             * root_ca_cert_store is broken — the cert reports as enabled
+             * (the set path stays hard-fail so state never silently changes) */
+            CM_LOG_E("Failed to get root ca enable, ret = %d", ret);
+            ret = CM_SUCCESS;
+        }
+        *status = (enable == 1) ? CERT_STATUS_ENABLED : CERT_STATUS_DISABLED;
+
         ret = CmStorageGetBuf((char *)cFileList[matchIndex].path.data,
         (char *)cFileList[matchIndex].fileName.data, certificateData); /* cert data */
         if (ret != CM_SUCCESS) {

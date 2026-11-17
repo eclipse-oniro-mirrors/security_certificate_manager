@@ -157,8 +157,23 @@ public:
  */
 HWTEST_F(CmRdbApiTest, RdbApiGuardBeforeInit_001, TestSize.Level0)
 {
-    /* this suite is linked first, so the file-scope managers are still null
-     * here: every API must fail fast with CMR_ERROR_NULL_POINTER */
+    /* the data managers are file-scope globals shared by the whole test
+     * binary: when an earlier suite has already created one, its guard is no
+     * longer reachable and the guarded calls would touch live shared data.
+     * Probe all three managers read-only and keep the guard walk for the
+     * pristine link order this case was written for */
+    struct CertProperty probe;
+    (void)memset_s(&probe, sizeof(probe), 0, sizeof(probe));
+    char probeValue[MAX_LEN_CONFIG_VALUE] = { 0 };
+    uint64_t probeTotalSize = 0;
+    if (QueryCertProperty("oh:t=rd;o=rdprobe;u=1;a=1", &probe) != CMR_ERROR_NULL_POINTER ||
+        QueryConfigByKey("rdc_probe", probeValue, sizeof(probeValue)) != CMR_ERROR_NULL_POINTER ||
+        QueryRevocationCacheDeletedSumSize(&probeTotalSize) != CMR_ERROR_NULL_POINTER) {
+        GTEST_SKIP() << "rdb data managers already created by an earlier suite in this binary";
+    }
+
+    /* the probes above saw the file-scope managers still null: every API
+     * must fail fast with CMR_ERROR_NULL_POINTER */
     struct CertProperty prop = MakeCertProperty("oh:t=rd;o=rdinit;u=1;a=1", "a", "s", "z", 1);
     EXPECT_EQ(InsertCertProperty(&prop), CMR_ERROR_NULL_POINTER);
     EXPECT_EQ(UpdateCertProperty(&prop), CMR_ERROR_NULL_POINTER);

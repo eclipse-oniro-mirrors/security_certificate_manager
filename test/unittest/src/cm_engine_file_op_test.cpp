@@ -558,10 +558,12 @@ HWTEST_F(CmEngineFileOpTest, CmUserBakupMakeDirEdge_001, TestSize.Level0)
 {
     MakeDirOrExists(TEST_FILE_OP_ROOT);
 
-    /* paths containing a dot-dot segment are rejected before mkdir */
+    /* paths containing a dot-dot substring are rejected up front: the dir
+     * maker reports its own mkdir failure code, the existence probe reports
+     * the path validation failure */
     std::string hostile = JoinPath(TEST_FILE_OP_ROOT, "a..b");
     EXPECT_EQ(CmUserBakupMakeDir(hostile.c_str(), nullptr), CMR_ERROR_MAKE_DIR_FAIL);
-    EXPECT_EQ(CmIsDirExist(hostile.c_str()), CMR_ERROR_NOT_EXIST);
+    EXPECT_EQ(CmIsDirExist(hostile.c_str()), CMR_ERROR_INVALID_ARGUMENT);
 
     /* without an explicit mode the default 0705 is applied */
     std::string dir = JoinPath(TEST_FILE_OP_ROOT, "default_mode_dir");

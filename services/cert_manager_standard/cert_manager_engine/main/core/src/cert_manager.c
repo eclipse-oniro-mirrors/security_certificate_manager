@@ -32,6 +32,7 @@
 #include "cm_cert_property_rdb.h"
 #include "cm_config_rdb.h"
 #include "cm_revocation_cache_rdb.h"
+#include "cm_root_ca_store_rdb.h"
 #include "cert_manager_crypto_operation.h"
 #include "cm_log.h"
 #include "cm_type.h"
@@ -78,9 +79,20 @@ int32_t CertManagerInitialize(void)
         return ret;
     }
 
-    mode_t mode0701 = S_IRWXU | S_IXOTH;
-    (void)CmUserBakupMakeDir(REVOCATION_CACHE_DIR, &mode0701);
+    /* the revocation/forceCheck directories come from cert_manager_service.cfg;
+     * the root ca table + a policy-file regeneration self-heal the state on
+     * every SA start (config rdb created above) */
     (void)CreateRevocationCacheRdb();
+    /* best-effort init: a failure here must not block the SA from starting —
+     * status reads fail open (all system CA enabled); the table creation is
+     * retried on the next SA start, while every successful status set
+     * regenerates the policy file */
+    if (CreateRootCaStoreRdb() != CM_SUCCESS) {
+        CM_LOG_E("create root ca store rdb failed, keep fail-open");
+    }
+    if (CmRegenerateRevocationPolicyFile() != CM_SUCCESS) {
+        CM_LOG_E("regenerate revocation policy file failed on boot");
+    }
 
     return CM_SUCCESS;
 }
@@ -253,31 +265,47 @@ int32_t CertManagerFindCertFileNameByUri(const struct CmContext *context, const 
 }
 
 static int32_t GetRdbCertLevelAndCheckStore(const struct CmBlob *keyUri, const uint32_t store,
-    enum CmAuthStorageLevel *level)
+    struct CertProperty *certProp, enum CmAuthStorageLevel *level)
 {
-    struct CertProperty certProp;
-    (void)memset_s(&certProp, sizeof(struct CertProperty), 0, sizeof(struct CertProperty));
-    certProp.level = ERROR_LEVEL;
-    int32_t ret = QueryCertProperty((char *)keyUri->data, &certProp);
+    (void)memset_s(certProp, sizeof(struct CertProperty), 0, sizeof(struct CertProperty));
+    certProp->level = ERROR_LEVEL;
+    int32_t ret = QueryCertProperty((char *)keyUri->data, certProp);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("query cert property failed, ret = %d", ret);
         return ret;
     }
 
-    if (certProp.level == ERROR_LEVEL) {
+    if (certProp->level == ERROR_LEVEL) {
         *level = CM_AUTH_STORAGE_LEVEL_EL1;
         CM_LOG_I("Remove cred level is ERROR_LEVEL, change to default level el1");
     } else {
-        *level = certProp.level;
+        *level = certProp->level;
     }
 
-    if (strnlen(certProp.uri, MAX_LEN_URI) != 0) { /* rdb record exists */
-        if ((uint32_t)certProp.certStore != store) {
-            CM_LOG_E("cert store %u mismatch input store %u", (uint32_t)certProp.certStore, store);
+    if (strnlen(certProp->uri, MAX_LEN_URI) != 0) { /* rdb record exists */
+        if ((uint32_t)certProp->certStore != store) {
+            CM_LOG_E("cert store %u mismatch input store %u", (uint32_t)certProp->certStore, store);
             return CMR_ERROR_NOT_EXIST;
         }
     }
     return CM_SUCCESS;
+}
+
+/* private credential rdb record must belong to the caller, forbid cross-app removal */
+static int32_t CheckRdbCertOwner(const struct CmContext *context, const struct CertProperty *certProp,
+    const uint32_t store)
+{
+    if (strnlen(certProp->uri, MAX_LEN_URI) == 0) { /* no rdb record, nothing to check */
+        return CM_SUCCESS;
+    }
+    if (store != CM_PRI_CREDENTIAL_STORE) {
+        return CM_SUCCESS;
+    }
+    if (((uint32_t)certProp->userId == context->userId) && ((uint32_t)certProp->uid == context->uid)) {
+        return CM_SUCCESS;
+    }
+    CM_LOG_E("private credential does not belong to caller");
+    return CMR_ERROR_PERMISSION_DENIED;
 }
 
 int32_t CmRemoveAppCert(const struct CmContext *context, const struct CmBlob *keyUri,
@@ -285,8 +313,14 @@ int32_t CmRemoveAppCert(const struct CmContext *context, const struct CmBlob *ke
 {
     ASSERT_ARGS(context && keyUri && keyUri->data && keyUri->size);
 
+    struct CertProperty certProp;
     enum CmAuthStorageLevel level;
-    int32_t ret = GetRdbCertLevelAndCheckStore(keyUri, store, &level);
+    int32_t ret = GetRdbCertLevelAndCheckStore(keyUri, store, &certProp, &level);
+    if (ret != CM_SUCCESS) {
+        return ret;
+    }
+
+    ret = CheckRdbCertOwner(context, &certProp, store);
     if (ret != CM_SUCCESS) {
         return ret;
     }

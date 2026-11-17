@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -88,6 +88,20 @@ int32_t GetX509NotBefore(const X509 *x509cert, char* outBuf, uint32_t outBufMaxS
 int32_t GetX509NotAfter(const X509 *x509cert, char* outBuf, uint32_t outBufMaxSize);
 
 int32_t GetX509Fingerprint(const X509 *x509cert, char *outBuf, uint32_t outBufMaxSize);
+
+/* length in hex chars of the SHA256 SubjectPublicKeyInfo digest:
+ * 64 uppercase chars, without the NUL terminator */
+#define CM_PK_HASH_HEX_LEN 64
+
+/* hash of the certificate SubjectPublicKeyInfo DER (the whole SPKI, not
+ * just the public key BIT STRING), SHA256 as CM_PK_HASH_HEX_LEN uppercase
+ * hex chars
+ * @param outPkHashHex buffer receiving the NUL-terminated hash; nothing is
+ *        written when outPkHashHexLen is too small
+ * @param outPkHashHexLen size of outPkHashHex in bytes; must be at least
+ *        CM_PK_HASH_HEX_LEN + 1 */
+int32_t CmGetCertPubKeyHashHex(const struct CmBlob *certData, char *outPkHashHex,
+    uint32_t outPkHashHexLen);
 
 void FreeCertContext(X509 *x509cert);
 #ifdef __cplusplus

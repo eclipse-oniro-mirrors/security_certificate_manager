@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -16,6 +16,7 @@
 #ifndef CERT_MANAGER_QUERY_H
 #define CERT_MANAGER_QUERY_H
 
+#include "cm_root_ca_store_rdb.h"
 #include "cm_type.h"
 
 #ifdef __cplusplus
@@ -45,6 +46,12 @@ void CmFreeCertFiles(struct CertFileInfo *cFileList, uint32_t certCount);
 void CmFreePathList(struct CmMutableBlob *pList, uint32_t pathCount);
 
 int32_t GetRdbAuthStorageLevel(const struct CmBlob *keyUri, enum CmAuthStorageLevel *level);
+
+/* allocate and fill the array of disabled root_ca_cert_store rows in one
+ * shot, ordered by uri; *records is CMMalloc'd, the caller frees it with
+ * CmFree; shared by the query chain and the policy file regeneration
+ * @param count receives the number of filled records */
+int32_t GetDisabledRootCaRecords(struct RootCaStoreRecord **records, uint32_t *count);
 #ifdef __cplusplus
 }
 #endif
