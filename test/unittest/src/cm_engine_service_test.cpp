@@ -194,6 +194,7 @@ int32_t InstallUserCertWithAlias(const std::string &alias, std::string &outUri)
 void ExpectBatchFindResult(const struct FindCertResult &result,
     const std::vector<std::string> &batchUris, uint32_t expectedCount)
 {
+    const std::string batchAliasPrefix = "R7Batch";
     EXPECT_EQ(result.count, expectedCount);
     if (result.count > 0) {
         ASSERT_NE(result.certInfos, nullptr);
@@ -203,9 +204,8 @@ void ExpectBatchFindResult(const struct FindCertResult &result,
     for (uint32_t i = 0; i < result.count; i++) {
         std::string alias(result.certInfos[i].alias);
         std::string uri(result.certInfos[i].uri);
-        EXPECT_EQ(alias.compare(0, 7, "R7Batch"), 0) << "index " << i << " alias " << alias;
-        EXPECT_NE(std::find(batchUris.begin(), batchUris.end(), uri), batchUris.end())
-            << "index " << i << " unexpected uri " << uri;
+        EXPECT_EQ(alias.rfind(batchAliasPrefix, 0), 0) << "index " << i << " alias " << alias;
+        EXPECT_NE(std::find(batchUris.begin(), batchUris.end(), uri), batchUris.end()) << i << " uri " << uri;
         EXPECT_TRUE(seenUris.insert(uri).second) << "duplicate uri " << uri;
         EXPECT_TRUE(seenAliases.insert(alias).second) << "duplicate alias " << alias;
     }

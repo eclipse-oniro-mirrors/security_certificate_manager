@@ -39,9 +39,9 @@ namespace {
     /* seed at most one row past the boundary so the truncation path is reachable */
     const uint32_t SEED_ROW_MAX = FIND_CERT_ROW_BOUNDARY + 1;
     const uint32_t FIND_SCOPE_COUNT = 4; /* three legal scopes plus one illegal */
-    const uint32_t FIND_TYPE_COUNT = 3;  /* 0, 1, 2 type slots */
+    const uint32_t FIND_TYPE_COUNT = 3; /* 0, 1, 2 type slots */
     /* the count-limit fold spans the truncation and the over-boundary cases */
-    const uint32_t COUNT_LIMIT_FOLD_EXTRA = 4; 
+    const uint32_t COUNT_LIMIT_FOLD_EXTRA = 4;
 
     void CopyStringToBuffer(char *dst, uint32_t dstSize, const char *src)
     {
