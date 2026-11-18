@@ -200,6 +200,13 @@ public:
 
     void TearDown() override
     {
+        /* TaskRenewsUnloadAtStartAndEnd stores a stack-capturing lambda
+         * into the global renewal hook; after this test returns that
+         * reference dangles, so both hooks are dropped here and no
+         * global holds a stale pointer between tests (SetUp reinstalls
+         * the event recorder before the next test runs) */
+        CmCloudPolicySyncSetUnloadRenewal(nullptr);
+        CmCloudPolicySyncSetEventPublisherForTest(nullptr);
     }
 };
 

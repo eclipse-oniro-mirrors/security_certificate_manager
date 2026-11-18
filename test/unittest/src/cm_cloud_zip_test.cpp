@@ -292,13 +292,21 @@ HWTEST_F(CmCloudZipTest, OversizedMemberRejected, testing::ext::TestSize.Level0)
  */
 HWTEST_F(CmCloudZipTest, OversizedArchiveRejected, testing::ext::TestSize.Level0)
 {
-    /* incompressible-ish payload so the resulting zip file itself exceeds the
-     * 1 MiB archive cap; plain position-mixed bytes, no arithmetic that can
-     * overflow the integer sanitizer */
+    /* genuinely incompressible payload so the resulting zip file itself
+     * exceeds the 1 MiB archive cap: xorshift64 over a fixed seed yields
+     * deterministic, reproducible pseudo-random bytes DEFLATE cannot
+     * shrink (stored blocks), and the shift/xor-only state arithmetic
+     * cannot trip the unsigned-overflow sanitizer this binary is built
+     * with; the production archive cap check fires before staging, so
+     * this case exercises exactly the pre-stage rejection */
+    uint64_t prngState = 0x9E3779B97F4A7C15ULL; /* fixed seed: reproducible */
     std::string big;
     big.reserve(CM_CLOUD_ZIP_MAX_ARCHIVE_SIZE + 4096);
     for (size_t i = 0; i < static_cast<size_t>(CM_CLOUD_ZIP_MAX_ARCHIVE_SIZE) + 4096; i++) {
-        big.push_back(static_cast<char>((i * 37 + (i >> 8)) & 0xFF));
+        prngState ^= prngState << 13;
+        prngState ^= prngState >> 7;
+        prngState ^= prngState << 17;
+        big.push_back(static_cast<char>(prngState & 0xFF));
     }
     std::vector<uint8_t> blob = MakeZipBlob({ { POLICY_MEMBER, big } });
     ASSERT_GT(blob.size(), static_cast<size_t>(CM_CLOUD_ZIP_MAX_ARCHIVE_SIZE));
