@@ -27,6 +27,7 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_app_cert_by_uid_test.cpp",
     "unittest/src/cm_app_cert_test.cpp",
     "unittest/src/cm_cert_manager_config_test.cpp",
+    "unittest/src/cm_cloud_policy_store_test.cpp",
     "unittest/src/cm_cloud_zip_test.cpp",
     "unittest/src/cm_engine_appcert_sign_test.cpp",
     "unittest/src/cm_engine_certmgr_test.cpp",
@@ -74,6 +75,9 @@ ohos_unittest("cm_sdk_test") {
     # suite exercises the module in isolation, without pulling the whole
     # SA os_dependency static lib (with its IPC/dialog deps) in
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_zip.cpp",
+
+    # same isolation pattern for the cloud policy store module
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_policy_store.cpp",
   ]
 
   include_dirs = [

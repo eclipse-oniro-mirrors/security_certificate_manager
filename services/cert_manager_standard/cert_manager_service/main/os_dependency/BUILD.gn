@@ -41,6 +41,10 @@ ohos_static_library("libcert_manager_service_os_dependency_standard_static") {
   defines = []
   sources = [
     "cloud/cm_cloud_zip.cpp",
+
+    # cloud policy store: forceCheck self-heal, version state, tmp dir and
+    # atomic publish for the cloud revocation policy sync
+    "cloud/cm_cloud_policy_store.cpp",
     "sa/cm_sa.cpp",
   ]
   deps = [
