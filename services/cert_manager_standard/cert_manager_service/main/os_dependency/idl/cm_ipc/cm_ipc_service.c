@@ -1986,9 +1986,10 @@ static int32_t UnpackFindCertRequest(const struct CmBlob *requestBlob, struct Fi
     return CM_SUCCESS;
 }
 
-/* max packed size of the FindCertResult response, limited by the IPC reply
- * parcel capacity (MAX_SIZE_CAPACITY in cm_response.cpp) */
-#define MAX_FIND_CERT_RESPONSE_SIZE (1 * 1024 * 1024)
+/* max packed size of the FindCertResult response: the reply parcel capacity
+ * minus the result code and length fields CmSendResponse writes first, so the
+ * header plus body always fits the parcel */
+#define MAX_FIND_CERT_RESPONSE_SIZE (CM_IPC_REPLY_MAX_CAPACITY - CM_IPC_REPLY_HEADER_SIZE)
 
 /* compute the exact packed size PackFindCertResult will produce for result:
  * count + per entry (uriBlob + type + aliasBlob + state + subjectBlob + scope + certDataBlob) */
