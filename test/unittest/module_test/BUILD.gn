@@ -25,8 +25,15 @@ ohos_unittest("cm_module_test") {
     # cm_cert_status_event.cpp pattern above; the client TU stays out:
     # CmHsdrFetchCloudZip needs a live ability connection, covered on device
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_hsdr_protocol.cpp",
+
+    # production sync orchestration TU compiled directly into this binary
+    # (the cm_hsdr_protocol.cpp pattern above); every TU it calls is
+    # replaced by the symbol stubs in cm_cloud_policy_sync_test.cpp, and
+    # its CmThreadPoolPost links the production pool dep below
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_policy_sync.cpp",
     "src/cm_cert_parse_test.cpp",
     "src/cm_cert_status_event_test.cpp",
+    "src/cm_cloud_policy_sync_test.cpp",
     "src/cm_data_parcel_processor_test.cpp",
     "src/cm_hsdr_protocol_test.cpp",
     "src/cm_ipc_response_type_test.cpp",
@@ -68,9 +75,22 @@ ohos_unittest("cm_module_test") {
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_openssl_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_ipc_client_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_log_mem_static",
+
+      # the sync TU posts its round through the production pool (the
+      # brief's wiring, not the test twin); in this binary the cert
+      # status suite's CmThreadPoolAddTask stub satisfies that symbol
+      # first, the archive member is the guarantee behind it
+      "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_thread_pool_static",
       "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/rdb:libcert_manager_rdb_static",
     ]
   }
+
+  # the *ForTest seam macro of this component (thread pool / dialog
+  # precedent): the module test needs the sync TU's event publish seam,
+  # because this binary already links cm_cert_status_event.cpp, which
+  # defines the exported CmPublishForceCheckPolicyUpdatedEvent a symbol
+  # stub would collide with
+  defines = [ "CM_TEST_API_ENABLE" ]
 
   external_deps = [
     "ability_base:want",

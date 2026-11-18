@@ -57,6 +57,13 @@ ohos_static_library("libcert_manager_service_os_dependency_standard_static") {
     # scene-table-driven HSDR client: connect the service extension, fetch
     # the cloud config zip fd, parse it into a blob
     "cloud/cm_hsdr_client.cpp",
+
+    # cloud policy sync orchestration: the SA-startup round wiring the
+    # store self-heal and version state, the settings gate, the HSDR
+    # fetch, the whitelisted extraction, the atomic publish and the
+    # update event together, with the idle-unload renewal injected by
+    # the SA side
+    "cloud/cm_cloud_policy_sync.cpp",
     "sa/cm_sa.cpp",
   ]
   deps = [
