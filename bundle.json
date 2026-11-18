@@ -71,7 +71,8 @@
           "user_auth_framework",
           "window_manager",
           "libuv",
-          "hitrace"
+          "hitrace",
+          "zlib"
         ]
       },
       "build": {

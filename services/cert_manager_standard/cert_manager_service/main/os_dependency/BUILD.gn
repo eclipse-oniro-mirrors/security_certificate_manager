@@ -31,9 +31,18 @@ ohos_static_library("libcert_manager_service_os_dependency_standard_static") {
     integer_overflow = true
     ubsan = true
   }
-  include_dirs = [ "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include" ]
+  include_dirs = [
+    "${cert_manager_root_dir}/interfaces/innerkits/cert_manager_standard/main/include",
+
+    # cloud zip module's own header: the TU below includes "cm_cloud_zip.h"
+    # relative to this dir (the public config only exposes "sa")
+    "cloud/include",
+  ]
   defines = []
-  sources = [ "sa/cm_sa.cpp" ]
+  sources = [
+    "cloud/cm_cloud_zip.cpp",
+    "sa/cm_sa.cpp",
+  ]
   deps = [
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_common_standard_static",
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_thread_pool_static",
@@ -53,6 +62,7 @@ ohos_static_library("libcert_manager_service_os_dependency_standard_static") {
     "ipc:ipc_core",
     "safwk:system_ability_fwk",
     "samgr:samgr_proxy",
+    "zlib:libz", # cloud/cm_cloud_zip.cpp (minizip unzip side)
   ]
 
   if (support_jsapi) {

@@ -27,6 +27,7 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_app_cert_by_uid_test.cpp",
     "unittest/src/cm_app_cert_test.cpp",
     "unittest/src/cm_cert_manager_config_test.cpp",
+    "unittest/src/cm_cloud_zip_test.cpp",
     "unittest/src/cm_engine_appcert_sign_test.cpp",
     "unittest/src/cm_engine_certmgr_test.cpp",
     "unittest/src/cm_engine_check_test.cpp",
@@ -68,9 +69,20 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_update_test.cpp",
     "unittest/src/cm_user_cert_test.cpp",
     "unittest/src/cm_x509_test.cpp",
+
+    # production cloud zip module compiled directly into this binary: the
+    # suite exercises the module in isolation, without pulling the whole
+    # SA os_dependency static lib (with its IPC/dialog deps) in
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_zip.cpp",
   ]
 
-  include_dirs = [ "unittest/include" ]
+  include_dirs = [
+    "unittest/include",
+
+    # cloud zip module header for cm_cloud_zip_test.cpp (and the production
+    # source compiled below into this binary)
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/include",
+  ]
   cflags_cc = [
     "-Wall",
     "-Werror",
@@ -118,6 +130,7 @@ ohos_unittest("cm_sdk_test") {
     "openssl:libcrypto_shared",
     "relational_store:native_rdb",
     "selinux_adapter:librestorecon",
+    "zlib:libz",
   ]
   resource_config_file = "./resource/certificate_manager/ohos_test.xml"
 
