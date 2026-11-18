@@ -72,6 +72,10 @@
             <filefilter name="binaryFileTypePolicyFilter" desc="Filters for binary file policies">
                 <filteritem type="filepath" name="config/systemCertificates/.*" desc="system certificate files"/>
                 <filteritem type="filepath" name="figures/zh-cn_certificate_manager_architecture.png" desc="self developed image"/>
+                <filteritem type="filepath" name="test/fuzz_test/cmconfigcheck_fuzzer/corpus/.*" desc="fuzz corpus seed files"/>
+                <filteritem type="filepath" name="test/fuzz_test/cmfindcert_fuzzer/corpus/.*" desc="fuzz corpus seed files"/>
+                <filteritem type="filepath" name="test/fuzz_test/cmservicerevocationcache_fuzzer/corpus/.*" desc="fuzz corpus seed files"/>
+                <filteritem type="filepath" name="test/fuzz_test/cmipcclient_fuzzer/corpus/.*" desc="fuzz corpus seed files"/>
             </filefilter>
         </filefilterlist>
     </oatconfig>
