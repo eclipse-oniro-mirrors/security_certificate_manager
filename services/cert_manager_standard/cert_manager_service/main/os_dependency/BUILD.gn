@@ -49,6 +49,14 @@ ohos_static_library("libcert_manager_service_os_dependency_standard_static") {
     # cloud settings query: DataShare settingsdata lookup of the cloud
     # pushed version plus its strict parse and sync gate
     "cloud/cm_cloud_setting_helper.cpp",
+
+    # HSDR protocol: the cmdId=4 request pack / reply parse pair over a
+    # raw MessageParcel channel plus the scene table that drives the client
+    "cloud/cm_hsdr_protocol.cpp",
+
+    # scene-table-driven HSDR client: connect the service extension, fetch
+    # the cloud config zip fd, parse it into a blob
+    "cloud/cm_hsdr_client.cpp",
     "sa/cm_sa.cpp",
   ]
   deps = [
@@ -62,7 +70,9 @@ ohos_static_library("libcert_manager_service_os_dependency_standard_static") {
   ]
 
   external_deps = [
+    "ability_base:want", # cloud/cm_hsdr_client.cpp (connect Want construction)
     "ability_runtime:ability_connect_callback_stub", # cm_ukey_auth_dialog_manager.h (keep-alive injection)
+    "ability_runtime:extension_manager", # cloud/cm_hsdr_client.cpp (service extension connect/disconnect)
     "c_utils:utils",
     "data_share:datashare_consumer", # cloud/cm_cloud_setting_helper.cpp (settingsdata query)
     "eventhandler:libeventhandler",

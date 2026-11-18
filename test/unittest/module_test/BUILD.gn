@@ -20,9 +20,15 @@ ohos_unittest("cm_module_test") {
   module_out_path = module_output_path
   sources = [
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/idl/cm_ipc/cm_cert_status_event.cpp",
+
+    # production HSDR protocol TU compiled directly into this binary, the
+    # cm_cert_status_event.cpp pattern above; the client TU stays out:
+    # CmHsdrFetchCloudZip needs a live ability connection, covered on device
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_hsdr_protocol.cpp",
     "src/cm_cert_parse_test.cpp",
     "src/cm_cert_status_event_test.cpp",
     "src/cm_data_parcel_processor_test.cpp",
+    "src/cm_hsdr_protocol_test.cpp",
     "src/cm_ipc_response_type_test.cpp",
     "src/cm_log_test.cpp",
     "src/cm_param_test.cpp",
@@ -34,6 +40,10 @@ ohos_unittest("cm_module_test") {
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/core/include",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/idl/cm_ipc",
     "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency/thread_pool/include",
+
+    # HSDR protocol header (and the cloud store header it includes) for
+    # cm_hsdr_protocol_test.cpp and the protocol TU compiled below
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/include",
   ]
   cflags_cc = [
     "-Wall",

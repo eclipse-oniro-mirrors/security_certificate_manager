@@ -19,6 +19,12 @@ module_output_path = "certificate_manager/certificate_manager"
 ohos_unittest("cm_sdk_test") {
   module_out_path = module_output_path
   sources = [
+    # HSDR protocol suite, resident in module_test per the plan, also
+    # compiled here so the no-device evidence path (build + qemu run of
+    # cm_sdk_test) covers it; the protocol TU is appended in the
+    # production cloud block below
+    "unittest/module_test/src/cm_hsdr_protocol_test.cpp",
+
     # cm_rdb_api_test.cpp must stay the first source of this binary: gtest
     # registers cases in link order, and its first case must observe the
     # engine rdb data managers before any other suite initializes them
@@ -79,6 +85,11 @@ ohos_unittest("cm_sdk_test") {
 
     # same isolation pattern for the cloud policy store module
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_policy_store.cpp",
+
+    # HSDR protocol TU for the cm_hsdr_protocol_test.cpp suite compiled
+    # above; the client TU stays out of test binaries: CmHsdrFetchCloudZip
+    # needs a live ability connection, which is covered on device
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_hsdr_protocol.cpp",
   ]
 
   include_dirs = [
