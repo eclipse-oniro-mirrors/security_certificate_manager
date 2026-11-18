@@ -28,6 +28,7 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_app_cert_test.cpp",
     "unittest/src/cm_cert_manager_config_test.cpp",
     "unittest/src/cm_cloud_policy_store_test.cpp",
+    "unittest/src/cm_cloud_setting_value_test.cpp",
     "unittest/src/cm_cloud_zip_test.cpp",
     "unittest/src/cm_engine_appcert_sign_test.cpp",
     "unittest/src/cm_engine_certmgr_test.cpp",
