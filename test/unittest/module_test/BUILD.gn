@@ -33,6 +33,7 @@ ohos_unittest("cm_module_test") {
     "../include",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/core/include",
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/idl/cm_ipc",
+    "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency/thread_pool/include",
   ]
   cflags_cc = [
     "-Wall",
