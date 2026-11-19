@@ -33,6 +33,21 @@ const char CLOUD_POLICY_FILE_PATH[] = FORCE_CHECK_POLICY_DIR "/" CM_CLOUD_POLICY
 const char CLOUD_VERSION_FILE_PATH[] = FORCE_CHECK_POLICY_DIR "/" CM_CLOUD_VERSION_FILE_NAME;
 const char CLOUD_TMP_DIR_PATH[] = REVOCATION_CACHE_BASE CM_CLOUD_TMP_DIR_NAME;
 
+/* the forceCheck ancestor chain, outermost first: printed one line per
+ * level when the self-heal mkdir fails, so one failing run names the
+ * exact directory that denied the service */
+const char *const FORCE_CHECK_ANCESTORS[] = {
+    "/data",
+    "/data/service",
+    "/data/service/el1",
+    "/data/service/el1/public",
+    "/data/service/el1/public/for-all-app",
+    "/data/service/el1/public/for-all-app/cert_manager_service",
+    "/data/service/el1/public/for-all-app/cert_manager_service/certificates",
+    REVOCATION_CACHE_BASE,
+    FORCE_CHECK_POLICY_DIR,
+};
+
 /* stream-copy chunk for publishing a staged file into forceCheck */
 constexpr uint32_t PUBLISH_COPY_CHUNK = 4096;
 /* a valid version is at most 20 decimal digits; anything at or above this
@@ -185,6 +200,20 @@ int32_t CmCloudStoreSelfHealPreset(void)
         } else if (!PathIsDir(FORCE_CHECK_POLICY_DIR)) {
             /* a racing creator may have made it between the two checks */
             CM_LOG_E("mkdir forceCheck dir failed, errno = 0x%x", errno);
+            /* name the denying level: every ancestor is stat'ed and logged,
+             * so one failing run shows which directory (still) blocks the
+             * service -- missing, wrong owner, wrong mode or an error of
+             * its own */
+            for (const char *const ancestor : FORCE_CHECK_ANCESTORS) {
+                struct stat st = {};
+                if (stat(ancestor, &st) != 0) {
+                    CM_LOG_E("self-heal stat %s failed, errno = 0x%x", ancestor, errno);
+                } else {
+                    CM_LOG_E("self-heal stat %s: type = 0x%x, uid = %d, gid = %d, mode = 0%o",
+                        ancestor, st.st_mode, static_cast<int>(st.st_uid),
+                        static_cast<int>(st.st_gid), static_cast<unsigned int>(st.st_mode & 0777));
+                }
+            }
             return CMR_ERROR;
         }
     }
