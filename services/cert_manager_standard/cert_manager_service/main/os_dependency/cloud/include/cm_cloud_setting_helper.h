@@ -16,11 +16,11 @@
 #ifndef CM_CLOUD_SETTING_HELPER_H
 #define CM_CLOUD_SETTING_HELPER_H
 
-#include <cerrno>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <string>
+#include <system_error>
 
 #include "cm_type.h"
 
@@ -36,13 +36,17 @@ inline constexpr char CM_CLOUD_SETTINGS_KEYWORD[] =
  * The VALUE arrives from an external cloud channel and must be treated as
  * hostile: it must contain a comma, and the version field before the comma
  * must be non-empty ASCII digits only. The explicit digit walk rejects a
- * leading '-' (and any other sign, space or junk) BEFORE strtoull runs,
- * because strtoull("-1") silently wraps to ULLONG_MAX and would gate a
- * needless sync round as a phantom new version. After the walk, strtoull
- * must not report ERANGE (a value above UINT64_MAX is malformed, not a
- * version) and must stop exactly on the comma, never past it. On any rule
- * violation the function returns CMR_ERROR_INVALID_ARGUMENT and leaves
- * versionOut untouched.
+ * leading '-' (and any other sign, space or junk) BEFORE the numeric
+ * parse runs, because a silently wrapped "-1" would gate a needless sync
+ * round as a phantom new version. The parse must stay in range (a value
+ * above UINT64_MAX is malformed, not a version) and must consume exactly
+ * the digit field, never past the comma. On any rule violation the
+ * function returns CMR_ERROR_INVALID_ARGUMENT and leaves versionOut
+ * untouched.
+ *
+ * Inline here rather than in cm_cloud_setting_helper.cpp because the
+ * unit test binary compiles the parse suite against this header alone,
+ * without linking the DataShare-dependent query TU.
  *
  * @param value the raw settings VALUE string, never trusted
  * @param versionOut receives the parsed version on success only
@@ -62,16 +66,16 @@ inline int32_t CmCloudParseSettingValue(const std::string &value, uint64_t &vers
         }
     }
 
-    errno = 0;
-    char *endPtr = nullptr;
-    /* safe only because the field was proven all-digits above: strtoull
-     * consumes exactly the digit field and stops on the comma */
-    const unsigned long long parsed = strtoull(value.c_str(), &endPtr, 10);
-    if (errno == ERANGE || endPtr != value.c_str() + commaPos) {
+    uint64_t parsed = 0;
+    /* safe only because the field was proven all-digits above: from_chars
+     * consumes exactly the digit field and stops on the comma; a digit
+     * count above UINT64_MAX reports result_out_of_range, not a version */
+    const auto [ptr, ec] = std::from_chars(value.data(), value.data() + commaPos, parsed);
+    if ((ec != std::errc()) || (ptr != value.data() + commaPos)) {
         return CMR_ERROR_INVALID_ARGUMENT;
     }
 
-    versionOut = static_cast<uint64_t>(parsed);
+    versionOut = parsed;
     return CM_SUCCESS;
 }
 

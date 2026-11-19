@@ -44,6 +44,59 @@ void RenewUnloadTimer(void)
         g_unloadRenewal();
     }
 }
+
+/*
+ * Stage the round's bundle: a fresh empty staging dir, then the HSDR
+ * fetch and the whitelisted extraction into it. The archive blob is
+ * freed on every path. CMR codes only.
+ */
+int32_t FetchAndExtractCloudPolicy(void)
+{
+    if (CmCloudStorePrepareTmpDir() != CM_SUCCESS) {
+        CM_LOG_E("prepare cloud staging directory failed");
+        return CMR_ERROR;
+    }
+    struct CmBlob zipBlob = { 0, nullptr };
+    int32_t ret = CmHsdrFetchCloudZip(CLOUD_POLICY_SCENE, zipBlob);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("fetch cloud policy zip failed, ret = %d", ret);
+        return ret;
+    }
+    ret = CmCloudZipExtractWhitelisted(&zipBlob, CLOUD_POLICY_SCENE.zipMember,
+        CmCloudStoreTmpDirPath());
+    /* the archive bytes are consumed by the extraction; released here on
+     * both outcomes so no step after the fetch leaks them */
+    CM_FREE_BLOB(zipBlob);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("extract cloud policy zip member failed, ret = %d", ret);
+        return ret;
+    }
+    return CM_SUCCESS;
+}
+
+/*
+ * Publish the staged member into the forceCheck directory under the
+ * scene's published file name and mode, then advance the version
+ * counter only after the file replacement: any failure above leaves the
+ * old version in place, so the next SA start re-runs the round against
+ * the same cloud version (idempotent convergence). CMR codes only.
+ */
+int32_t PublishCloudPolicy(uint64_t cloudVersion)
+{
+    const std::string stagedMember =
+        std::string(CmCloudStoreTmpDirPath()) + "/" + CLOUD_POLICY_SCENE.zipMember;
+    int32_t ret = CmCloudStorePublishFile(stagedMember, CLOUD_POLICY_SCENE.destFile,
+        CLOUD_POLICY_SCENE.destMode);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("publish cloud policy file failed, ret = %d", ret);
+        return ret;
+    }
+    ret = CmCloudStoreWriteVersion(cloudVersion);
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("write cloud policy version failed, ret = %d", ret);
+    }
+    return ret;
+}
 } // namespace
 
 #ifdef CM_TEST_API_ENABLE
@@ -127,54 +180,18 @@ void CmCloudPolicySyncTask(void)
     }
 
     /* clear whatever a previously interrupted round left staged, then
-     * recreate the staging directory empty for this download */
+     * FetchAndExtractCloudPolicy recreates the staging directory empty
+     * for this download; on any failure below the staged remains are
+     * cleared again so the next round starts clean */
     if (CmCloudStoreCleanupTmpDir() != CM_SUCCESS) {
         CM_LOG_E("clean cloud staging directory failed");
         return;
     }
-    if (CmCloudStorePrepareTmpDir() != CM_SUCCESS) {
-        CM_LOG_E("prepare cloud staging directory failed");
-        return;
-    }
-
-    struct CmBlob zipBlob = { 0, nullptr };
-    ret = CmHsdrFetchCloudZip(CLOUD_POLICY_SCENE, zipBlob);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("fetch cloud policy zip failed, ret = %d", ret);
+    if (FetchAndExtractCloudPolicy() != CM_SUCCESS) {
         (void)CmCloudStoreCleanupTmpDir();
         return;
     }
-
-    ret = CmCloudZipExtractWhitelisted(&zipBlob, CLOUD_POLICY_SCENE.zipMember,
-        CmCloudStoreTmpDirPath());
-    /* the archive bytes are consumed by the extraction; released here on
-     * both outcomes so no step after the fetch leaks them */
-    CM_FREE_BLOB(zipBlob);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("extract cloud policy zip member failed, ret = %d", ret);
-        (void)CmCloudStoreCleanupTmpDir();
-        return;
-    }
-
-    /* publish the staged member into the forceCheck directory under the
-     * scene's published file name and mode */
-    const std::string stagedMember =
-        std::string(CmCloudStoreTmpDirPath()) + "/" + CLOUD_POLICY_SCENE.zipMember;
-    ret = CmCloudStorePublishFile(stagedMember, CLOUD_POLICY_SCENE.destFile,
-        CLOUD_POLICY_SCENE.destMode);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("publish cloud policy file failed, ret = %d", ret);
-        (void)CmCloudStoreCleanupTmpDir();
-        return;
-    }
-
-    /* advance the version counter only after the file replacement: any
-     * failure above leaves the old version in place, so the next SA
-     * start re-runs the round against the same cloud version (idempotent
-     * convergence) */
-    ret = CmCloudStoreWriteVersion(cloudVersion);
-    if (ret != CM_SUCCESS) {
-        CM_LOG_E("write cloud policy version failed, ret = %d", ret);
+    if (PublishCloudPolicy(cloudVersion) != CM_SUCCESS) {
         (void)CmCloudStoreCleanupTmpDir();
         return;
     }

@@ -42,10 +42,36 @@ const char SETTINGS_VALUE_COLUMN[] = "VALUE";
 using OHOS::Security::CertManager::SA_ID_KEYSTORE_SERVICE;
 
 /*
- * The DataShare query, print_fwk's print_setting_data_helper.cpp pattern:
+ * The DataShare access, print_fwk's print_setting_data_helper.cpp pattern:
  * samgr -> the SA 3512 remote object -> a DataShareHelper on the global
- * settings table -> the KEYWORD row -> the VALUE column. A fresh helper
- * is created per call and released on every return path.
+ * settings table. A fresh helper is created per call and released by the
+ * caller on every return path. nullptr on any failure.
+ */
+std::shared_ptr<OHOS::DataShare::DataShareHelper> CreateSettingsHelper(void)
+{
+    OHOS::sptr<OHOS::ISystemAbilityManager> samgr =
+        OHOS::SystemAbilityManagerClient::GetInstance().GetSystemAbilityManager();
+    if (samgr == nullptr) {
+        CM_LOG_E("cloud setting query failed, no system ability manager");
+        return nullptr;
+    }
+    OHOS::sptr<OHOS::IRemoteObject> remoteObj = samgr->GetSystemAbility(SA_ID_KEYSTORE_SERVICE);
+    if (remoteObj == nullptr) {
+        CM_LOG_E("cloud setting query failed, no keystore service remote");
+        return nullptr;
+    }
+    auto [ret, helper] = OHOS::DataShare::DataShareHelper::Create(remoteObj, SETTINGS_DATA_URI,
+        SETTINGS_DATA_EXT_URI);
+    if (ret != 0 || helper == nullptr) {
+        CM_LOG_E("cloud setting query failed, data share helper create ret = %d", ret);
+        return nullptr;
+    }
+    return helper;
+}
+
+/*
+ * The DataShare query: the helper from CreateSettingsHelper -> the
+ * KEYWORD row -> the VALUE column.
  *
  * @param value receives the raw VALUE string on success
  * @return CM_SUCCESS, or CMR_ERROR when any step fails (no key row,
@@ -53,21 +79,8 @@ using OHOS::Security::CertManager::SA_ID_KEYSTORE_SERVICE;
  */
 int32_t QuerySettingValue(std::string &value)
 {
-    OHOS::sptr<OHOS::ISystemAbilityManager> samgr =
-        OHOS::SystemAbilityManagerClient::GetInstance().GetSystemAbilityManager();
-    if (samgr == nullptr) {
-        CM_LOG_E("cloud setting query failed, no system ability manager");
-        return CMR_ERROR;
-    }
-    OHOS::sptr<OHOS::IRemoteObject> remoteObj = samgr->GetSystemAbility(SA_ID_KEYSTORE_SERVICE);
-    if (remoteObj == nullptr) {
-        CM_LOG_E("cloud setting query failed, no keystore service remote");
-        return CMR_ERROR;
-    }
-    auto [ret, helper] = OHOS::DataShare::DataShareHelper::Create(remoteObj, SETTINGS_DATA_URI,
-        SETTINGS_DATA_EXT_URI);
-    if (ret != 0 || helper == nullptr) {
-        CM_LOG_E("cloud setting query failed, data share helper create ret = %d", ret);
+    std::shared_ptr<OHOS::DataShare::DataShareHelper> helper = CreateSettingsHelper();
+    if (helper == nullptr) {
         return CMR_ERROR;
     }
 

@@ -46,6 +46,9 @@ const char *SRC_PATH = "/data/local/tmp/cm_cloud_policy_store_test_src.tmp";
  * cloud_tmp), and the stash exists only between this fixture's SetUp and
  * TearDown */
 const char *STASH_DIR = REVOCATION_CACHE_BASE ".cm_cloud_store_test_stash";
+/* the st_mode permission bits compared by the ownership-preservation
+ * assertions */
+constexpr unsigned int MODE_PERM_MASK = 0777;
 
 /* the preset policy content, hardcoded here byte-for-byte so a wrong
  * constant in the header cannot make the exactness test vacuous */
@@ -186,13 +189,13 @@ public:
             ASSERT_EQ(stat(FORCE_CHECK_POLICY_DIR, &now), 0) << "forceCheck lost";
             EXPECT_EQ(now.st_uid, origDirSt_.st_uid) << "forceCheck owner changed";
             EXPECT_EQ(now.st_gid, origDirSt_.st_gid) << "forceCheck group changed";
-            EXPECT_EQ(now.st_mode & 0777, origDirSt_.st_mode & 0777) << "forceCheck mode changed";
+            EXPECT_EQ(now.st_mode & MODE_PERM_MASK, origDirSt_.st_mode & MODE_PERM_MASK) << "forceCheck mode changed";
             if (userPolicyExisted_) {
                 struct stat fileNow = {};
                 ASSERT_EQ(stat(USER_POLICY_PATH.c_str(), &fileNow), 0) << "user policy file lost";
                 EXPECT_EQ(fileNow.st_uid, origUserPolicySt_.st_uid) << "user policy owner changed";
                 EXPECT_EQ(fileNow.st_gid, origUserPolicySt_.st_gid) << "user policy group changed";
-                EXPECT_EQ(fileNow.st_mode & 0777, origUserPolicySt_.st_mode & 0777)
+                EXPECT_EQ(fileNow.st_mode & MODE_PERM_MASK, origUserPolicySt_.st_mode & MODE_PERM_MASK)
                     << "user policy mode changed";
             }
         } else {

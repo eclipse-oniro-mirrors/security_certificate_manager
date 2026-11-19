@@ -30,12 +30,15 @@ const char *FUZZ_DEST_DIR = "/data/local/tmp/cmcloudzip_fuzz";
 /* fixed whitelist member: the force-check policy file name used by the real
  * sync flow, so the fuzzer exercises the intended call shape */
 const char *FUZZ_MEMBER_NAME = "certRevocationPolicy_user.cfg";
+/* plain mode for the fuzz-owned scratch dir; the module under test owns
+ * the published file modes */
+constexpr mode_t FUZZ_DEST_DIR_MODE = 0755;
 } // namespace
 
 /* Fuzzer entry point */
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-    (void)mkdir(FUZZ_DEST_DIR, 0755); /* defensive: exists after the first run */
+    (void)mkdir(FUZZ_DEST_DIR, FUZZ_DEST_DIR_MODE); /* defensive: exists after the first run */
 
     /* hand the module a private copy of the input: the blob must be owned
      * CmMalloc memory and the fuzz buffer is const */

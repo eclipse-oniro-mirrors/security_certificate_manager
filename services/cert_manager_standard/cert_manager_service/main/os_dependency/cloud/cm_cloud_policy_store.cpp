@@ -16,12 +16,14 @@
 #include "cm_cloud_policy_store.h"
 
 #include <cerrno>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <string>
 #include <sys/stat.h>
+#include <system_error>
 #include <unistd.h>
 
 #include "cm_log.h"
@@ -53,6 +55,8 @@ constexpr uint32_t PUBLISH_COPY_CHUNK = 4096;
 /* a valid version is at most 20 decimal digits; anything at or above this
  * read length is malformed by definition and never parsed */
 constexpr uint32_t VERSION_READ_MAX_LEN = 64;
+/* the st_mode permission bits, for the ancestor diagnostics */
+constexpr unsigned int ST_MODE_PERM_BITS = 0777;
 
 bool PathIsDir(const char *path)
 {
@@ -163,28 +167,27 @@ void RemoveTreeNoFollow(const std::string &path)
 }
 
 /*
- * strtoull with endptr validation: only fully consumed decimal input is a
- * version. Everything else -- empty content, trailing garbage, a leading
- * sign (strtoull would silently wrap "-1" to a huge value that locks the
- * sync out), or an overflowing digit count -- reads as version 0, so a
- * malformed store keeps the sync gating on a fresh state instead of
- * trusting a broken file. version is assigned only on success.
+ * Strict decimal parse: only fully consumed input is a version. Everything
+ * else -- empty content, trailing garbage, a leading sign, or an
+ * overflowing digit count -- reads as false, so a malformed store keeps
+ * the sync gating on a fresh state instead of trusting a broken file.
+ * version is assigned only on success.
  */
 bool ParseVersionContent(const char *buf, uint64_t &version)
 {
-    /* skip the whitespace strtoull would skip, so the sign check sees the
-     * first real character */
+    /* skip the leading whitespace, so the sign check sees the first real
+     * character */
     size_t first = strspn(buf, " \t\n\v\f\r");
     if ((buf[first] == '-') || (buf[first] == '+')) {
         return false;
     }
-    errno = 0;
-    char *endPtr = nullptr;
-    unsigned long long parsed = strtoull(buf, &endPtr, 10);
-    if ((endPtr == buf) || (*endPtr != '\0') || (errno == ERANGE)) {
+    uint64_t parsed = 0;
+    const size_t len = strlen(buf);
+    const auto [ptr, ec] = std::from_chars(buf + first, buf + len, parsed);
+    if ((ec != std::errc()) || (ptr != buf + len)) {
         return false;
     }
-    version = static_cast<uint64_t>(parsed);
+    version = parsed;
     return true;
 }
 } // namespace
@@ -211,7 +214,7 @@ int32_t CmCloudStoreSelfHealPreset(void)
                 } else {
                     CM_LOG_E("self-heal stat %s: type = 0x%x, uid = %d, gid = %d, mode = 0%o",
                         ancestor, st.st_mode, static_cast<int>(st.st_uid),
-                        static_cast<int>(st.st_gid), static_cast<unsigned int>(st.st_mode & 0777));
+                        static_cast<int>(st.st_gid), static_cast<unsigned int>(st.st_mode & ST_MODE_PERM_BITS));
                 }
             }
             return CMR_ERROR;
@@ -353,21 +356,19 @@ int32_t CmCloudStorePublishFile(const std::string &srcPath, const char *destName
 
     int32_t ret = CM_SUCCESS;
     char chunk[PUBLISH_COPY_CHUNK] = {0};
-    while (true) {
-        size_t readLen = fread(chunk, 1, sizeof(chunk), src);
-        if ((readLen > 0) && (fwrite(chunk, 1, readLen, dst) != readLen)) {
+    size_t readLen = fread(chunk, 1, sizeof(chunk), src);
+    while ((readLen > 0) && (ret == CM_SUCCESS)) {
+        if (fwrite(chunk, 1, readLen, dst) != readLen) {
             CM_LOG_E("write %s failed, errno = 0x%x", tmpPath.c_str(), errno);
             ret = CMR_ERROR;
-            break;
+            continue;
         }
-        if (readLen < sizeof(chunk)) {
-            /* a short read is EOF only when the error flag is clear */
-            if (ferror(src) != 0) {
-                CM_LOG_E("read publish source %s failed, errno = 0x%x", srcPath.c_str(), errno);
-                ret = CMR_ERROR;
-            }
-            break;
-        }
+        readLen = fread(chunk, 1, sizeof(chunk), src);
+    }
+    if ((ret == CM_SUCCESS) && (ferror(src) != 0)) {
+        /* a short read is EOF only when the error flag is clear */
+        CM_LOG_E("read publish source %s failed, errno = 0x%x", srcPath.c_str(), errno);
+        ret = CMR_ERROR;
     }
     (void)fclose(src);
     if (ret != CM_SUCCESS) {

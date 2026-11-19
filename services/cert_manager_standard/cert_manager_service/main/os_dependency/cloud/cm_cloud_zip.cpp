@@ -39,6 +39,41 @@ constexpr uint32_t CLOUD_ZIP_READ_CHUNK = 4096;
 constexpr uint32_t CLOUD_ZIP_NAME_BUF_LEN = 512;
 
 /*
+ * Stream the opened member into out chunk by chunk, enforcing the member
+ * cap on the bytes actually streamed: a hostile header may lie about
+ * uncompressed_size. CMR codes only.
+ */
+int32_t StreamCurrentMember(unzFile archive, FILE *out)
+{
+    char chunk[CLOUD_ZIP_READ_CHUNK] = { 0 };
+    uint32_t totalLen = 0;
+    int32_t ret = CM_SUCCESS;
+    int32_t readLen = unzReadCurrentFile(archive, chunk, sizeof(chunk));
+    while ((readLen > 0) && (ret == CM_SUCCESS)) {
+        totalLen += static_cast<uint32_t>(readLen);
+        if (totalLen > CM_CLOUD_ZIP_MAX_MEMBER_SIZE) {
+            /* the declared size can lie: enforce the cap on real bytes too */
+            CM_LOG_E("cloud zip member exceeded the member cap while streaming");
+            ret = CMR_ERROR;
+            continue;
+        }
+        size_t writeLen = static_cast<size_t>(readLen);
+        if (fwrite(chunk, 1, writeLen, out) != writeLen) {
+            CM_LOG_E("write cloud zip member target file failed");
+            ret = CMR_ERROR;
+            continue;
+        }
+        readLen = unzReadCurrentFile(archive, chunk, sizeof(chunk));
+    }
+    if ((ret == CM_SUCCESS) && (readLen < 0)) {
+        /* decompression or CRC failure inside the member data */
+        CM_LOG_E("read cloud zip member failed, readLen = %d", readLen);
+        ret = CMR_ERROR;
+    }
+    return ret;
+}
+
+/*
  * Extract the currently positioned member (already whitelist-matched) into
  * destPath, enforcing the member cap on both the declared size and the
  * bytes actually streamed: a hostile header may lie about uncompressed_size.
@@ -62,33 +97,7 @@ int32_t CmExtractCurrentMember(unzFile archive, uLong memberSize, const std::str
         return CMR_ERROR;
     }
 
-    int32_t ret = CM_SUCCESS;
-    char chunk[CLOUD_ZIP_READ_CHUNK] = { 0 };
-    uint32_t totalLen = 0;
-    while (true) {
-        int readLen = unzReadCurrentFile(archive, chunk, sizeof(chunk));
-        if (readLen < 0) {
-            /* decompression or CRC failure inside the member data */
-            CM_LOG_E("read cloud zip member failed, readLen = %d", readLen);
-            ret = CMR_ERROR;
-            break;
-        }
-        if (readLen == 0) {
-            break; /* member fully consumed */
-        }
-        totalLen += static_cast<uint32_t>(readLen);
-        if (totalLen > CM_CLOUD_ZIP_MAX_MEMBER_SIZE) {
-            /* the declared size can lie: enforce the cap on real bytes too */
-            CM_LOG_E("cloud zip member exceeded the member cap while streaming");
-            ret = CMR_ERROR;
-            break;
-        }
-        if (fwrite(chunk, 1, static_cast<size_t>(readLen), out) != static_cast<size_t>(readLen)) {
-            CM_LOG_E("write cloud zip member target file failed");
-            ret = CMR_ERROR;
-            break;
-        }
-    }
+    int32_t ret = StreamCurrentMember(archive, out);
 
     /* minizip verifies the member CRC here; both handles close exactly once
      * whatever the outcome was */

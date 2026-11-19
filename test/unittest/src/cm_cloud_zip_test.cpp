@@ -49,6 +49,7 @@ const char *POLICY_LINE_1 = "1,A1B2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4E5F607182
 const char *POLICY_LINE_2 = "2,0F1E2D3C4B5A69788796A5B4C3D2E1F00F1E2D3C4B5A69788796A5B4C3D2E1F\n";
 constexpr uint32_t READ_CHUNK = 4096;
 constexpr mode_t EXPECTED_MEMBER_MODE = 0644; /* rw-r--r-- per the contract */
+constexpr mode_t ENSURE_DIR_MODE = 0755; /* plain mode for the suite's own scratch dirs */
 
 struct ZipEntry {
     std::string name;
@@ -65,7 +66,7 @@ bool EnsureDir(const std::string &path)
             next = path.size();
         }
         std::string partial = path.substr(0, next);
-        if (!partial.empty() && mkdir(partial.c_str(), 0755) != 0 && errno != EEXIST) {
+        if (!partial.empty() && mkdir(partial.c_str(), ENSURE_DIR_MODE) != 0 && errno != EEXIST) {
             return false;
         }
         pos = next;

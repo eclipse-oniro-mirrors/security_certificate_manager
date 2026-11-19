@@ -22,9 +22,9 @@
 
 namespace {
 /* preloaded into versionOut before every parse call: the fail cases
- * assert the parser leaves it untouched, so a strtoull("-1") wrap into
- * ULLONG_MAX (or any partial write) cannot slip through; it deliberately
- * differs from ULLONG_MAX so the assertion is not vacuous */
+ * assert the parser leaves it untouched, so a wrapped or partially
+ * written "-1" cannot slip through; it deliberately differs from
+ * ULLONG_MAX so the assertion is not vacuous */
 constexpr uint64_t VERSION_SENTINEL = 0x5A5A5A5A5A5A5A5A;
 } // namespace
 
@@ -68,7 +68,7 @@ TEST(CmCloudSettingValueTest, ParseSettingValueNegativeFails)
     int32_t ret = CmCloudParseSettingValue("-1,d", version);
     EXPECT_EQ(ret, CMR_ERROR_INVALID_ARGUMENT);
     /* the sentinel surviving proves the leading '-' was rejected before
-     * strtoull could wrap it: ULLONG_MAX would gate a needless sync */
+     * a wrapped parse could yield ULLONG_MAX and gate a needless sync */
     EXPECT_EQ(version, VERSION_SENTINEL);
     EXPECT_NE(version, ULLONG_MAX);
 }
