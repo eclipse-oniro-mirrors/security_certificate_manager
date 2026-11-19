@@ -38,6 +38,14 @@ const std::string VERSION_PATH = FORCE_CHECK_POLICY_DIR "/" CM_CLOUD_VERSION_FIL
 /* publish source staged outside forceCheck, as the real flow stages inside
  * cloud_tmp before publishing into forceCheck */
 const char *SRC_PATH = "/data/local/tmp/cm_cloud_policy_store_test_src.tmp";
+/* the suite's private stash: a dotfile sibling of forceCheck inside the
+ * revocation cache base -- same filesystem, so stashing forceCheck is a
+ * directory rename and the stashed directory keeps its inode: the service's
+ * ownership, mode and every file inside survive the suite unchanged. No
+ * production path looks at this name (the store only knows forceCheck and
+ * cloud_tmp), and the stash exists only between this fixture's SetUp and
+ * TearDown */
+const char *STASH_DIR = REVOCATION_CACHE_BASE ".cm_cloud_store_test_stash";
 
 /* the preset policy content, hardcoded here byte-for-byte so a wrong
  * constant in the header cannot make the exactness test vacuous */
@@ -48,7 +56,6 @@ constexpr uint32_t READ_CHUNK = 4096;
 constexpr mode_t MODE_0644 = 0644; /* published policy: readable by every consumer */
 constexpr mode_t MODE_0600 = 0600; /* version counter: the service only */
 constexpr mode_t MODE_0700 = 0700; /* staging dir: the service only */
-constexpr mode_t MODE_0701 = 0701; /* forceCheck: the service cfg mode */
 
 bool DirExists(const std::string &path)
 {
@@ -116,25 +123,34 @@ void RemoveTree(const std::string &path)
 }
 } // namespace
 
-/* real paths, self-clean: the suite runs against the SA-owned forceCheck
- * directory, so SetUp stashes (and removes) everything present and TearDown
- * removes whatever the case left, then restores the stash -- a failed run
- * cannot leave a half-synced state behind on the device */
+/* real paths, self-clean: the suite runs against the service-owned forceCheck
+ * directory, so SetUp stashes the whole directory away (an inode-keeping
+ * rename into STASH_DIR) and TearDown drops whatever the cases created and
+ * renames the original back -- the device keeps its directory with the
+ * service's ownership and its files byte-identical, and a failed run cannot
+ * leave a half-synced state behind */
 class CmCloudPolicyStoreTest : public testing::Test {
 public:
     void SetUp() override
     {
-        StashAndRemove(USER_POLICY_PATH, userPolicyStash_);
-        StashAndRemove(POLICY_PATH, policyStash_);
-        StashAndRemove(VERSION_PATH, versionStash_);
-        /* "<file>.tmp" siblings are transient garbage on every path: removed,
-         * never restored */
-        (void)unlink((USER_POLICY_PATH + ".tmp").c_str());
-        (void)unlink((POLICY_PATH + ".tmp").c_str());
-        dirExisted_ = DirExists(FORCE_CHECK_POLICY_DIR);
+        /* crash self-heal: a stash left behind by a crashed earlier run
+         * still holds the device's forceCheck; drop whatever residue
+         * recreated the directory meanwhile and put the original back
+         * before this run stashes it away again */
+        if (DirExists(STASH_DIR)) {
+            RemoveTree(FORCE_CHECK_POLICY_DIR);
+            (void)rename(STASH_DIR, FORCE_CHECK_POLICY_DIR);
+        }
+        dirExisted_ = ((stat(FORCE_CHECK_POLICY_DIR, &origDirSt_) == 0) &&
+            S_ISDIR(origDirSt_.st_mode));
+        userPolicyExisted_ = ((stat(USER_POLICY_PATH.c_str(), &origUserPolicySt_) == 0) &&
+            S_ISREG(origUserPolicySt_.st_mode));
         if (dirExisted_) {
-            /* empty now: drop it so every case starts from a missing dir */
-            (void)rmdir(FORCE_CHECK_POLICY_DIR);
+            /* the whole directory goes into the stash: every case then
+             * starts from a missing forceCheck; a failed stash aborts the
+             * test before anything can touch the device's state */
+            ASSERT_EQ(rename(FORCE_CHECK_POLICY_DIR, STASH_DIR), 0)
+                << "cannot stash forceCheck away; refusing to touch the device state";
         }
         /* no staging dir or src leftover from a crashed earlier run */
         RemoveTree(CmCloudStoreTmpDirPath());
@@ -143,60 +159,53 @@ public:
 
     void TearDown() override
     {
-        (void)unlink((USER_POLICY_PATH + ".tmp").c_str());
-        (void)unlink((POLICY_PATH + ".tmp").c_str());
-        (void)unlink(USER_POLICY_PATH.c_str());
-        (void)unlink(POLICY_PATH.c_str());
-        (void)unlink(VERSION_PATH.c_str());
+        /* drop whatever the case created: the directory with the files
+         * inside it and the staging area are all this suite's to remove */
+        RemoveTree(FORCE_CHECK_POLICY_DIR);
         RemoveTree(CmCloudStoreTmpDirPath());
         (void)unlink(SRC_PATH);
-        bool dirNow = DirExists(FORCE_CHECK_POLICY_DIR);
-        if (dirExisted_ && !dirNow) {
-            /* restore the cfg-owned directory the suite removed in SetUp */
-            (void)mkdir(FORCE_CHECK_POLICY_DIR, MODE_0701);
-        } else if (!dirExisted_ && dirNow) {
-            /* leave no suite-created residue on a fresh device */
-            (void)rmdir(FORCE_CHECK_POLICY_DIR);
+        if (dirExisted_) {
+            /* restore the stashed original: the rename keeps the inode, so
+             * the cfg-created directory comes back with its original owner,
+             * group, mode and content; a concurrent recreation of forceCheck
+             * (the service self-healing mid-run) loses to the stash */
+            if (DirExists(FORCE_CHECK_POLICY_DIR)) {
+                RemoveTree(FORCE_CHECK_POLICY_DIR);
+            }
+            if (rename(STASH_DIR, FORCE_CHECK_POLICY_DIR) != 0) {
+                /* one retry: a concurrent creator may have raced the rename */
+                RemoveTree(FORCE_CHECK_POLICY_DIR);
+                (void)rename(STASH_DIR, FORCE_CHECK_POLICY_DIR);
+            }
         }
-        RestoreStash(USER_POLICY_PATH, userPolicyStash_);
-        RestoreStash(POLICY_PATH, policyStash_);
-        RestoreStash(VERSION_PATH, versionStash_);
+        /* the suite's contract with the device: forceCheck ends exactly as
+         * it started -- present with its original owner, group, mode and
+         * user policy file (the service's, on a device), or absent */
+        if (dirExisted_) {
+            struct stat now = {};
+            ASSERT_EQ(stat(FORCE_CHECK_POLICY_DIR, &now), 0) << "forceCheck lost";
+            EXPECT_EQ(now.st_uid, origDirSt_.st_uid) << "forceCheck owner changed";
+            EXPECT_EQ(now.st_gid, origDirSt_.st_gid) << "forceCheck group changed";
+            EXPECT_EQ(now.st_mode & 0777, origDirSt_.st_mode & 0777) << "forceCheck mode changed";
+            if (userPolicyExisted_) {
+                struct stat fileNow = {};
+                ASSERT_EQ(stat(USER_POLICY_PATH.c_str(), &fileNow), 0) << "user policy file lost";
+                EXPECT_EQ(fileNow.st_uid, origUserPolicySt_.st_uid) << "user policy owner changed";
+                EXPECT_EQ(fileNow.st_gid, origUserPolicySt_.st_gid) << "user policy group changed";
+                EXPECT_EQ(fileNow.st_mode & 0777, origUserPolicySt_.st_mode & 0777)
+                    << "user policy mode changed";
+            }
+        } else {
+            EXPECT_FALSE(DirExists(FORCE_CHECK_POLICY_DIR))
+                << "suite left a forceCheck residue behind";
+        }
     }
 
 private:
-    struct Stash {
-        bool present = false;
-        std::string content;
-        mode_t mode = 0;
-    };
-
-    static void StashAndRemove(const std::string &path, Stash &stash)
-    {
-        stash.present = false;
-        struct stat st = {};
-        if ((stat(path.c_str(), &st) != 0) || !S_ISREG(st.st_mode)) {
-            return;
-        }
-        if (!ReadFileString(path, stash.content)) {
-            return;
-        }
-        stash.present = true;
-        stash.mode = st.st_mode & 0777;
-        (void)unlink(path.c_str());
-    }
-
-    static void RestoreStash(const std::string &path, const Stash &stash)
-    {
-        if (!stash.present || !WriteFileString(path, stash.content)) {
-            return;
-        }
-        (void)chmod(path.c_str(), stash.mode);
-    }
-
-    Stash userPolicyStash_;
-    Stash policyStash_;
-    Stash versionStash_;
     bool dirExisted_ = false;
+    struct stat origDirSt_ = {};
+    bool userPolicyExisted_ = false;
+    struct stat origUserPolicySt_ = {};
 };
 
 /**
@@ -362,10 +371,7 @@ HWTEST_F(CmCloudPolicyStoreTest, PublishFileReplacesAtomically, testing::ext::Te
  */
 HWTEST_F(CmCloudPolicyStoreTest, PublishFileFailsWhenDestDirMissing, testing::ext::TestSize.Level0)
 {
-    struct stat st = {};
-    if (stat(FORCE_CHECK_POLICY_DIR, &st) == 0) {
-        ASSERT_EQ(rmdir(FORCE_CHECK_POLICY_DIR), 0) << "forceCheck not empty, cannot stage missing-dir case";
-    }
+    /* the fixture stashed forceCheck away: the directory is missing here */
     ASSERT_TRUE(WriteFileString(SRC_PATH, "1,SOMEPOLICYCONTENT\n"));
 
     EXPECT_LT(CmCloudStorePublishFile(SRC_PATH, CM_CLOUD_POLICY_FILE_NAME, MODE_0644), 0);
