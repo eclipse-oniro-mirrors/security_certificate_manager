@@ -16,11 +16,17 @@
 #ifndef CM_HSDR_PROTOCOL_H
 #define CM_HSDR_PROTOCOL_H
 
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
 
+#include "iremote_broker.h"
+#include "iremote_object.h"
+#include "iremote_proxy.h"
+#include "iremote_stub.h"
 #include "message_parcel.h"
 
 #include "cm_cloud_policy_store.h"
@@ -28,8 +34,18 @@
 
 /* the HSDR requests and replies walk OHOS::MessageParcel; the
  * using-declaration keeps the pack/parse signatures below on the plain
- * MessageParcel name while this header stays a free-function module */
+ * MessageParcel name while this header stays a free-function module; the
+ * callback stub below needs the same treatment for its IPC base and
+ * parcel types */
+using OHOS::BrokerDelegator;
+using OHOS::IRemoteBroker;
+using OHOS::IRemoteObject;
+using OHOS::IRemoteProxy;
+using OHOS::IRemoteStub;
+using OHOS::MessageOption;
 using OHOS::MessageParcel;
+using OHOS::iface_cast;
+using OHOS::sptr;
 
 /*
  * One cloud-push scene: the external service to connect to, the command to
@@ -43,7 +59,7 @@ struct CloudResourceScene {
     const char *abilityName;            /* "HSDRService" */
     uint32_t cmdId;                      /* 4 */
     std::u16string_view callerParam;    /* u"com.huawei.certmanager" */
-    std::u16string_view resourceParam;  /* u"certManagerConfig" */
+    std::u16string_view resourceParam;  /* u"certRevocationPolicy" */
     const char *zipMember;               /* CM_CLOUD_POLICY_FILE_NAME (extraction whitelist) */
     const char *destDir;                 /* FORCE_CHECK_POLICY_DIR (publish target directory) */
     const char *destFile;                /* CM_CLOUD_POLICY_FILE_NAME (published file name) */
@@ -58,7 +74,7 @@ inline constexpr CloudResourceScene CLOUD_POLICY_SCENE {
     "HSDRService",
     4,
     u"com.huawei.certmanager",
-    u"certManagerConfig",
+    u"certRevocationPolicy",
     CM_CLOUD_POLICY_FILE_NAME,
     FORCE_CHECK_POLICY_DIR,
     CM_CLOUD_POLICY_FILE_NAME,
@@ -66,17 +82,57 @@ inline constexpr CloudResourceScene CLOUD_POLICY_SCENE {
 };
 
 /*
- * Pack one HSDR request: the interface token first, then the scene's two
- * u16 parameters. The field order is the requirement-spec protocol layout,
- * the sole authority for the byte stream.
- *
- * @param data the request parcel to fill
- * @param token the interface token written ahead of the parameters
- * @param scene the scene whose caller/resource parameters are packed
- * @return CM_SUCCESS; CMR_ERROR when any parcel write fails
+ * The HSDR service-side interface the proxy talks to: the descriptor is
+ * the fixed service identity, the value the service's permission check
+ * (ohos.permission.hsdr.REQUEST_HSDR) keys on.
  */
-int32_t CmHsdrPackRequest(MessageParcel &data, const std::u16string &token,
-    const CloudResourceScene &scene);
+class CmHsdrInterface : public IRemoteBroker {
+public:
+    DECLARE_INTERFACE_DESCRIPTOR(u"OHOS.Security.HSDR");
+
+    /*
+     * Forward one scene request with the reply callback; see the proxy
+     * for the parcel layout and the return contract.
+     */
+    virtual int32_t InvokeHsdrAsync(const CloudResourceScene &scene,
+        const sptr<IRemoteObject> &callback) = 0;
+};
+
+/*
+ * The asynchronous request proxy: one InvokeHsdrAsync call packs the
+ * request parcel -- the interface token is the proxy's own descriptor
+ * (OHOS.Security.HSDR), then the scene's two u16 parameters, then the
+ * callback remote object the service answers through -- and forwards it
+ * with the scene's cmdId over the connected remote. The token must be
+ * the proxy's own GetDescriptor(), never a runtime-queried value: the
+ * service's permission check keys on that fixed identity, which is what
+ * makes the SA cfg's requested permission effective.
+ *
+ * The return value is the transport status only; the authoritative
+ * result arrives asynchronously through the callback object carried in
+ * the parcel.
+ */
+class CmHsdrProxy : public IRemoteProxy<CmHsdrInterface> {
+public:
+    explicit CmHsdrProxy(const sptr<IRemoteObject> &impl);
+    ~CmHsdrProxy() override = default;
+
+    /*
+     * Forward one scene request with the reply callback.
+     *
+     * @param scene the cloud-push scene whose parameters and cmdId ride
+     *        the request
+     * @param callback the callback stub's remote object appended as the
+     *        reply channel; a null callback is refused, nothing is sent
+     * @return CM_SUCCESS when the request was forwarded; CMR_ERROR on
+     *         any parcel write failure or a failed send
+     */
+    int32_t InvokeHsdrAsync(const CloudResourceScene &scene,
+        const sptr<IRemoteObject> &callback) override;
+
+private:
+    static inline BrokerDelegator<CmHsdrProxy> delegator_;
+};
 
 /*
  * Parse one HSDR reply: interface token, execution result, then the zip
@@ -104,5 +160,69 @@ int32_t CmHsdrPackRequest(MessageParcel &data, const std::u16string &token,
  */
 int32_t CmHsdrParseReply(MessageParcel &reply, const std::u16string &token,
     const CloudResourceScene &scene, struct CmBlob &zipOut);
+
+/*
+ * The broker type behind the HSDR callback stub: the descriptor the
+ * service's callback parcel must carry, the HSDR client family's shared
+ * convention (the telephony HSDR helpers use the same descriptor).
+ */
+class CmHsdrCallback : public IRemoteBroker {
+public:
+    DECLARE_INTERFACE_DESCRIPTOR(u"OHOS.Security.CloudConnectCallback");
+};
+
+/*
+ * The asynchronous reply endpoint: one stub instance rides inside one
+ * request parcel, and the service's callback lands in OnRemoteRequest.
+ * The callback parcel layout is the synchronous reply layout unchanged
+ * (interface token, result code, zip fd), so CmHsdrParseReply does the
+ * parsing and this class only manages the result handover.
+ *
+ * Lifecycle contract with the fetch thread:
+ * - the fetch thread creates the stub, packs it, sends, then waits on
+ *   WaitForResult; TakeZipBlob moves the blob out once, on success
+ * - a fetch that gives up (timeout or send failure) calls Abandon first;
+ *   a callback that lands afterwards is parsed in full (the fd is still
+ *   consumed and closed) but its result and blob are discarded
+ * - the mutex + result-ready flag make every interleaving safe: the
+ *   callback thread and the fetch thread never touch the blob slots at
+ *   the same time, and a late callback can only fill already-abandoned
+ *   slots, never in-flight ones
+ */
+class CmHsdrCallbackStub : public IRemoteStub<CmHsdrCallback> {
+public:
+    explicit CmHsdrCallbackStub(const CloudResourceScene &scene);
+    ~CmHsdrCallbackStub() override;
+
+    int32_t OnRemoteRequest(uint32_t code, MessageParcel &data, MessageParcel &reply,
+        MessageOption &option) override;
+
+    /* the fetch thread gave up: mark the stub dead for results */
+    void Abandon(void);
+
+    /* block until the callback arrived or timeoutMs passed; false means
+     * no callback arrived in the window */
+    bool WaitForResult(uint32_t timeoutMs);
+
+    /* whether a (non-abandoned) result has arrived */
+    bool HasResult(void) const;
+
+    /* the callback's outcome: CM_SUCCESS only when the callback carried
+     * result 0 and the zip fd parsed into the blob slot */
+    int32_t GetResult(void) const;
+
+    /* move the parsed blob out; false when there is no blob to take */
+    bool TakeZipBlob(struct CmBlob &zipOut);
+
+private:
+    CloudResourceScene scene_;
+    /* mutable: the const observers (HasResult/GetResult) lock it too */
+    mutable std::mutex mutex_;
+    std::condition_variable cond_;
+    bool abandoned_ = false;
+    bool resultReady_ = false;
+    int32_t result_ = CMR_ERROR;
+    struct CmBlob zipBlob_ = { 0, nullptr };
+};
 
 #endif /* CM_HSDR_PROTOCOL_H */

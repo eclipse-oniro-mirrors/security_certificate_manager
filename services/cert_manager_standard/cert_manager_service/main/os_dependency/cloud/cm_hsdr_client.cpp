@@ -100,36 +100,71 @@ void DisconnectHsdr(const sptr<IRemoteObject> &connObject)
 }
 
 /*
- * One request over the connected remote: pack, SendRequest (synchronous
- * option), parse. The pack and parse failures have logged their own
- * CM_LOG_E lines, so this helper only adds the send failure of its own.
- * The token is the remote's own descriptor, queried through the
- * INTERFACE_TRANSACTION, never a hard-coded constant.
+ * Park until the service's asynchronous callback lands in the stub, then
+ * collect its outcome: the wait window, the callback's own verdict and
+ * the blob handover each have their failure branch; every one of them
+ * logs a CM_LOG_E line, because the stub itself stays silent.
+ */
+int32_t AwaitHsdrCallback(const CloudResourceScene &scene,
+    const sptr<CmHsdrCallbackStub> &callback, struct CmBlob &zipOut)
+{
+    /* the service answers asynchronously: park until its callback lands
+     * in the stub or the wait window closes */
+    if (!callback->WaitForResult(CM_HSDR_CALLBACK_TIMEOUT_MS)) {
+        /* nothing can hand the result out anymore, so the stub is
+         * abandoned first; a late callback is then parsed and discarded
+         * by the stub itself */
+        callback->Abandon();
+        CM_LOG_E("hsdr fetch failed: callback wait timed out after %u ms, scene %s cmd %u",
+            CM_HSDR_CALLBACK_TIMEOUT_MS, scene.bundleName, scene.cmdId);
+        return CMR_ERROR;
+    }
+    int32_t ret = callback->GetResult();
+    if (ret != CM_SUCCESS) {
+        CM_LOG_E("hsdr fetch failed: callback rejected the reply, ret = %d, scene %s cmd %u",
+            ret, scene.bundleName, scene.cmdId);
+        return ret;
+    }
+    if (!callback->TakeZipBlob(zipOut)) {
+        /* result was success but no blob moved: a defensive refusal, the
+         * stub contract guarantees a blob on a successful result */
+        CM_LOG_E("hsdr fetch failed: callback delivered no zip blob, scene %s cmd %u",
+            scene.bundleName, scene.cmdId);
+        return CMR_ERROR;
+    }
+    return CM_SUCCESS;
+}
+
+/*
+ * One request over the connected remote: build the proxy (its descriptor
+ * is the fixed OHOS.Security.HSDR identity the service's permission
+ * check keys on, and iface_cast refuses a remote that does not answer
+ * with that descriptor), forward the scene request with the callback
+ * stub riding inside the parcel, then wait for the service's callback
+ * to land in the stub. The proxy has logged its own CM_LOG_E lines, so
+ * this helper only adds the callback outcomes of its own.
  */
 int32_t SendHsdrRequest(const CloudResourceScene &scene, const sptr<IRemoteObject> &remote,
     struct CmBlob &zipOut)
 {
-    std::u16string token = remote->GetInterfaceDescriptor();
-    if (token.empty()) {
-        CM_LOG_E("hsdr fetch failed: empty remote descriptor, scene %s cmd %u",
+    sptr<CmHsdrCallbackStub> callback = new CmHsdrCallbackStub(scene);
+    if ((callback == nullptr) || (callback->AsObject() == nullptr)) {
+        CM_LOG_E("hsdr fetch failed: no callback object, scene %s cmd %u",
             scene.bundleName, scene.cmdId);
         return CMR_ERROR;
     }
 
-    MessageParcel data;
-    MessageParcel reply;
-    MessageOption option; /* default: synchronous */
-    int32_t ret = CmHsdrPackRequest(data, token, scene);
+    sptr<CmHsdrInterface> proxy = iface_cast<CmHsdrInterface>(remote);
+    if (proxy == nullptr) {
+        CM_LOG_E("hsdr fetch failed: remote is not the hsdr service, scene %s cmd %u",
+            scene.bundleName, scene.cmdId);
+        return CMR_ERROR;
+    }
+    int32_t ret = proxy->InvokeHsdrAsync(scene, callback->AsObject());
     if (ret != CM_SUCCESS) {
         return ret;
     }
-    ret = remote->SendRequest(scene.cmdId, data, reply, option);
-    if (ret != ERR_OK) {
-        CM_LOG_E("hsdr fetch failed: send request ret = %d, scene %s cmd %u",
-            ret, scene.bundleName, scene.cmdId);
-        return CMR_ERROR;
-    }
-    return CmHsdrParseReply(reply, token, scene, zipOut);
+    return AwaitHsdrCallback(scene, callback, zipOut);
 }
 } // namespace
 

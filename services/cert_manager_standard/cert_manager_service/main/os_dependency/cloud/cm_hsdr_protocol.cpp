@@ -16,11 +16,15 @@
 #include "cm_hsdr_protocol.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
+#include <mutex>
 #include <string>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "errors.h"
+#include "message_option.h"
 #include "securec.h"
 
 #include "cm_cloud_zip.h"
@@ -60,10 +64,20 @@ int32_t ReadZipBytes(int32_t fd, const CloudResourceScene &scene, std::string &b
 }
 } // namespace
 
-int32_t CmHsdrPackRequest(MessageParcel &data, const std::u16string &token,
-    const CloudResourceScene &scene)
+CmHsdrProxy::CmHsdrProxy(const sptr<IRemoteObject> &impl) : IRemoteProxy<CmHsdrInterface>(impl) {}
+
+int32_t CmHsdrProxy::InvokeHsdrAsync(const CloudResourceScene &scene, const sptr<IRemoteObject> &callback)
 {
-    if (!data.WriteInterfaceToken(token)) {
+    MessageParcel data;
+    MessageParcel reply;
+    MessageOption option; /* the transport ack stays synchronous; the
+                           * authoritative result arrives through the
+                           * callback, so the immediate reply carries
+                           * nothing this request reads */
+    /* the interface token is this proxy's own descriptor, never a
+     * runtime-queried value: the service's permission check keys on the
+     * fixed OHOS.Security.HSDR identity */
+    if (!data.WriteInterfaceToken(GetDescriptor())) {
         CM_LOG_E("hsdr request pack failed: interface token rejected, scene %s cmd %u",
             scene.bundleName, scene.cmdId);
         return CMR_ERROR;
@@ -76,6 +90,22 @@ int32_t CmHsdrPackRequest(MessageParcel &data, const std::u16string &token,
     if (!data.WriteString16(std::u16string(scene.resourceParam))) {
         CM_LOG_E("hsdr request pack failed: resource param rejected, scene %s cmd %u",
             scene.bundleName, scene.cmdId);
+        return CMR_ERROR;
+    }
+    if (callback == nullptr) {
+        CM_LOG_E("hsdr request pack failed: no callback object, scene %s cmd %u",
+            scene.bundleName, scene.cmdId);
+        return CMR_ERROR;
+    }
+    if (!data.WriteRemoteObject(callback)) {
+        CM_LOG_E("hsdr request pack failed: callback object rejected, scene %s cmd %u",
+            scene.bundleName, scene.cmdId);
+        return CMR_ERROR;
+    }
+    int32_t ret = Remote()->SendRequest(scene.cmdId, data, reply, option);
+    if (ret != OHOS::ERR_OK) {
+        CM_LOG_E("hsdr request send failed: ret = %d, scene %s cmd %u",
+            ret, scene.bundleName, scene.cmdId);
         return CMR_ERROR;
     }
     return CM_SUCCESS;
@@ -140,4 +170,82 @@ int32_t CmHsdrParseReply(MessageParcel &reply, const std::u16string &token,
     zipOut.data = blobData;
     zipOut.size = zipSize;
     return CM_SUCCESS;
+}
+
+CmHsdrCallbackStub::CmHsdrCallbackStub(const CloudResourceScene &scene) : scene_(scene) {}
+
+CmHsdrCallbackStub::~CmHsdrCallbackStub()
+{
+    /* the destructor is the last resort: whatever the fetch thread did,
+     * a blob still held here was never taken and must not leak */
+    CM_FREE_BLOB(zipBlob_);
+}
+
+void CmHsdrCallbackStub::Abandon(void)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    abandoned_ = true;
+    /* wake a WaitForResult still parked so it observes the abandonment */
+    cond_.notify_all();
+}
+
+bool CmHsdrCallbackStub::WaitForResult(uint32_t timeoutMs)
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    return cond_.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+        [this] { return resultReady_ || abandoned_; });
+}
+
+bool CmHsdrCallbackStub::HasResult(void) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return resultReady_;
+}
+
+int32_t CmHsdrCallbackStub::GetResult(void) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return result_;
+}
+
+bool CmHsdrCallbackStub::TakeZipBlob(struct CmBlob &zipOut)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!resultReady_ || (zipBlob_.data == nullptr)) {
+        return false;
+    }
+    zipOut.data = zipBlob_.data;
+    zipOut.size = zipBlob_.size;
+    zipBlob_.data = nullptr;
+    zipBlob_.size = 0;
+    return true;
+}
+
+int32_t CmHsdrCallbackStub::OnRemoteRequest(uint32_t code, MessageParcel &data, MessageParcel &reply,
+    MessageOption &option)
+{
+    (void)code;
+    (void)reply;
+    (void)option;
+    /* parse first, outside the lock: the layout is the synchronous reply
+     * layout, and every path through CmHsdrParseReply closes the fd, so
+     * the parcel is fully consumed whatever happens next */
+    struct CmBlob zipOut = { 0, nullptr };
+    int32_t ret = CmHsdrParseReply(data, GetDescriptor(), scene_, zipOut);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (abandoned_) {
+        /* the fetch thread gave up before this callback landed: the
+         * result and the blob (if any) are discarded, never handed out */
+        CM_LOG_I("hsdr callback dropped: fetch already abandoned, ret = %d, scene %s cmd %u",
+            ret, scene_.bundleName, scene_.cmdId);
+        CM_FREE_BLOB(zipOut);
+        return ret;
+    }
+    result_ = ret;
+    resultReady_ = true;
+    if (ret == CM_SUCCESS) {
+        zipBlob_ = zipOut;
+    }
+    cond_.notify_all();
+    return ret;
 }

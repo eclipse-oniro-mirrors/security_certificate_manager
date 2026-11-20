@@ -28,7 +28,7 @@
  * policy state; the VALUE column read for it is attacker-controllable
  * cloud input and is only ever consumed through CmCloudParseSettingValue */
 inline constexpr char CM_CLOUD_SETTINGS_KEYWORD[] =
-    "certManagerConfig_com.huawei.certmanager_certmanager_config";
+    "certManagerConfig_com.huawei.certmanager.certRevocationPolicy_config";
 
 /*
  * Strictly parse a settings VALUE of the shape "<version>,<download date>".
