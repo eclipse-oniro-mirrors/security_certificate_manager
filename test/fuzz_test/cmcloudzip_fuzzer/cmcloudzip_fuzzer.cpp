@@ -29,7 +29,7 @@ namespace {
 const char *FUZZ_DEST_DIR = "/data/local/tmp/cmcloudzip_fuzz";
 /* fixed whitelist member: the force-check policy file name used by the real
  * sync flow, so the fuzzer exercises the intended call shape */
-const char *FUZZ_MEMBER_NAME = "certRevocationPolicy_user.cfg";
+const char *FUZZ_MEMBER_NAME = "certRevocationPolicy_cloud.cfg";
 /* plain mode for the fuzz-owned scratch dir; the module under test owns
  * the published file modes */
 constexpr mode_t FUZZ_DEST_DIR_MODE = 0755;

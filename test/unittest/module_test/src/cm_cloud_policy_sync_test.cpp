@@ -37,6 +37,9 @@ std::vector<std::string> g_callOrder;
 bool g_selfHealResult = true;
 bool g_queryResult = true;
 bool g_fetchResult = true;
+bool g_extractResult = true;
+bool g_publishResult = true;
+bool g_writeVersionResult = true;
 uint64_t g_localVersion = 0;
 uint64_t g_cloudVersion = 0;
 
@@ -65,6 +68,9 @@ void ResetStubs(void)
     g_selfHealResult = true;
     g_queryResult = true;
     g_fetchResult = true;
+    g_extractResult = true;
+    g_publishResult = true;
+    g_writeVersionResult = true;
     g_localVersion = 0;
     g_cloudVersion = 0;
     g_fetchSceneCmdId = 0;
@@ -93,9 +99,10 @@ int32_t RecordEventPublish(void)
 
 /* link seams: the test target compiles the sync TU but none of the TUs
  * behind these symbols, so these definitions replace the cloud store,
- * the settings query, the zip extraction and the HSDR fetch and only
- * record what the orchestration asked for, in order; taking no service
- * identity and touching no file system is itself part of the contract */
+ * the settings query, the zip extraction and the HSDR fetch: they
+ * record what the orchestration asked for, in order, and the g_*Result
+ * flags let a suite fail any single step; taking no service identity
+ * and touching no file system is itself part of the contract */
 
 int32_t CmCloudStoreSelfHealPreset(void)
 {
@@ -115,7 +122,7 @@ int32_t CmCloudStoreWriteVersion(uint64_t version)
     g_callOrder.push_back("writeversion:" + std::to_string(version));
     g_writtenVersion = version;
     ++g_writeVersionCallCount;
-    return CM_SUCCESS;
+    return g_writeVersionResult ? CM_SUCCESS : CMR_ERROR;
 }
 
 int32_t CmCloudStorePrepareTmpDir(void)
@@ -143,7 +150,7 @@ int32_t CmCloudStorePublishFile(const std::string &srcPath, const char *destName
     g_publishSrcPath = srcPath;
     g_publishDestName = (destName != nullptr) ? destName : "";
     g_publishMode = mode;
-    return CM_SUCCESS;
+    return g_publishResult ? CM_SUCCESS : CMR_ERROR;
 }
 
 int32_t CmCloudQuerySettingVersion(uint64_t &versionOut)
@@ -181,7 +188,7 @@ extern "C" int32_t CmCloudZipExtractWhitelisted(const struct CmBlob *zipData,
     g_extractZipSize = (zipData != nullptr) ? zipData->size : 0;
     g_extractMemberName = (memberName != nullptr) ? memberName : "";
     g_extractDestDir = (destDir != nullptr) ? destDir : "";
-    return CM_SUCCESS;
+    return g_extractResult ? CM_SUCCESS : CMR_ERROR;
 }
 
 using namespace testing::ext;
@@ -286,6 +293,95 @@ HWTEST_F(CmCloudPolicySyncTest, TaskQuietEndsWhenFetchFails, TestSize.Level0)
 }
 
 /**
+* @tc.name: TaskQuietEndsWhenExtractFails
+* @tc.desc: a failed whitelisted extraction ends the round quietly after
+*           the fetched archive is released, with no publish, version
+*           write or event (the last entry is the cleanup of the staged
+*           tmp dir)
+*/
+HWTEST_F(CmCloudPolicySyncTest, TaskQuietEndsWhenExtractFails, TestSize.Level0)
+{
+    g_extractResult = false;
+    g_localVersion = 0;
+    g_cloudVersion = 9;
+
+    CmCloudPolicySyncTask();
+
+    const std::vector<std::string> expectedOrder = {
+        "selfheal",
+        "read",
+        "query",
+        "cleanup",
+        "prepare",
+        "fetch",
+        "extract",
+        "cleanup",
+    };
+    EXPECT_EQ(g_callOrder, expectedOrder);
+    EXPECT_EQ(g_writeVersionCallCount, 0);
+}
+
+/**
+* @tc.name: TaskQuietEndsWhenPublishFails
+* @tc.desc: a failed publish leaves the old version in place and ends the
+*           round quietly: no version write and no update event reach
+*           the readers, staging cleaned
+*/
+HWTEST_F(CmCloudPolicySyncTest, TaskQuietEndsWhenPublishFails, TestSize.Level0)
+{
+    g_publishResult = false;
+    g_localVersion = 0;
+    g_cloudVersion = 9;
+
+    CmCloudPolicySyncTask();
+
+    const std::vector<std::string> expectedOrder = {
+        "selfheal",
+        "read",
+        "query",
+        "cleanup",
+        "prepare",
+        "fetch",
+        "extract",
+        "publish",
+        "cleanup",
+    };
+    EXPECT_EQ(g_callOrder, expectedOrder);
+    EXPECT_EQ(g_writeVersionCallCount, 0);
+}
+
+/**
+* @tc.name: TaskQuietEndsWhenWriteVersionFails
+* @tc.desc: a failed version write after a successful publish ends the
+*           round quietly without the update event: no reader is told
+*           about a policy whose version did not advance
+*/
+HWTEST_F(CmCloudPolicySyncTest, TaskQuietEndsWhenWriteVersionFails, TestSize.Level0)
+{
+    g_writeVersionResult = false;
+    g_localVersion = 0;
+    g_cloudVersion = 9;
+
+    CmCloudPolicySyncTask();
+
+    const std::vector<std::string> expectedOrder = {
+        "selfheal",
+        "read",
+        "query",
+        "cleanup",
+        "prepare",
+        "fetch",
+        "extract",
+        "publish",
+        "writeversion:9",
+        "cleanup",
+    };
+    EXPECT_EQ(g_callOrder, expectedOrder);
+    EXPECT_EQ(g_writeVersionCallCount, 1);
+    EXPECT_EQ(g_writtenVersion, g_cloudVersion);
+}
+
+/**
 * @tc.name: TaskSucceedsEndToEndWithStubs
 * @tc.desc: the full round runs exactly once in flow order, publishes
 *           tmp/<member> with the scene's name and mode and advances the
@@ -364,7 +460,7 @@ HWTEST_F(CmCloudPolicySyncTest, TaskRenewsUnloadAtStartAndEnd, TestSize.Level0)
     CmCloudPolicySyncTask();
 
     /* one renewal at the task entry plus one at the task exit */
-    EXPECT_GE(renewalCount, static_cast<uint32_t>(2));
+    EXPECT_EQ(renewalCount, static_cast<uint32_t>(2));
 }
 
 /**

@@ -41,7 +41,7 @@ const char *DEST_DIR = REVOCATION_CACHE_BASE "zip_test_tmp";
 const char *ESCAPED_SIBLING = REVOCATION_CACHE_BASE "evil";
 /* the bundle carries exactly one whitelisted member: the force-check
  * policy file name used by the real sync flow */
-const char *POLICY_MEMBER = "certRevocationPolicy_user.cfg";
+const char *POLICY_MEMBER = "certRevocationPolicy_cloud.cfg";
 /* MakeZipBlob stages the built archive here before reading it back */
 const char *ZIP_SRC_TMP = "/data/local/tmp/cm_cloud_zip_test_src.tmp";
 /* two-line policy payload: <seq>,<64 uppercase hex pk hash> per line */

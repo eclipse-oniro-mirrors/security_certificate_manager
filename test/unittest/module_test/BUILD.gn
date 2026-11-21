@@ -78,8 +78,8 @@ ohos_unittest("cm_module_test") {
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_log_mem_static",
 
       # the sync TU posts its round through the production pool (the
-      # brief's wiring, not the test twin); in this binary the cert
-      # status suite's CmThreadPoolAddTask stub satisfies that symbol
+      # brief's wiring, not the test twin); in this binary the shared
+      # pool seam stub (cm_test_pool_seam.cpp) satisfies that symbol
       # first, the archive member is the guarantee behind it
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_thread_pool_static",
       "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_engine/main/rdb:libcert_manager_rdb_static",
