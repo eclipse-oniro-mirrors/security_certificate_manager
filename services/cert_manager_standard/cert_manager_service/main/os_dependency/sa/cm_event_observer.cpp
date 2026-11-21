@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Huawei Device Co., Ltd.
+ * Copyright (c) 2022-2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -18,6 +18,7 @@
 #include "bundle_constants.h"
 #include "common_event_support.h"
 #include "os_account_manager.h"
+#include "cm_cloud_policy_sync.h"
 #include "cm_event_process.h"
 #include "cm_log.h"
 #include "cm_mem.h"
@@ -28,6 +29,14 @@
 namespace OHOS {
 namespace Security {
 namespace CertManager {
+/* HSDR cloud config push notification: no CommonEventSupport constant
+ * exists for this vendor event, so the literal is the contract with the
+ * HSDR publisher; receiving it means the cloud revocation policy may
+ * have advanced, so one sync round is triggered (the round itself
+ * re-reads the cloud version, so a spurious event costs one quiet
+ * gated pass) */
+const std::string HSDR_CLOUD_POLICY_EVENT = "usual.event.HSDR_EVENT";
+
 std::shared_ptr<SystemEventSubscriber> SystemEventObserver::systemEventSubscriber_ = nullptr;
 
 SystemEventSubscriber::SystemEventSubscriber(const OHOS::EventFwk::CommonEventSubscribeInfo &subscriberInfo)
@@ -64,6 +73,13 @@ void SystemEventSubscriber::OnReceiveEvent(const OHOS::EventFwk::CommonEventData
 
         std::string reportMsg = "User " + std::to_string(context.userId) + " removed.";
         (void)ReportFaultEvent(__func__, &context, reportMsg.c_str(), ret);
+    } else if (action == HSDR_CLOUD_POLICY_EVENT) {
+        /* HSDR pushed a cloud config change: one sync round, absorbed
+         * quietly when one is already in flight (the single-flight gate
+         * in CmCloudPolicySyncStart); never blocks this event thread on
+         * the network, the round runs on the pool */
+        CM_LOG_I("HSDR cloud policy event received, trigger sync round");
+        CmCloudPolicySyncStart();
     }
 }
 
@@ -80,6 +96,10 @@ bool SystemEventObserver::SubscribeSystemEvent()
     matchingSkills.AddEvent(EventFwk::CommonEventSupport::COMMON_EVENT_PACKAGE_REMOVED);
     matchingSkills.AddEvent(EventFwk::CommonEventSupport::COMMON_EVENT_SANDBOX_PACKAGE_REMOVED);
     matchingSkills.AddEvent(EventFwk::CommonEventSupport::COMMON_EVENT_USER_REMOVED);
+    /* the HSDR cloud config push notification triggers one policy sync
+     * round; subscribing needs the hsdr.HSDR_ACCESS permission held by
+     * the SA (see cert_manager_service.cfg) */
+    matchingSkills.AddEvent(HSDR_CLOUD_POLICY_EVENT);
     OHOS::EventFwk::CommonEventSubscribeInfo subscriberInfo(matchingSkills);
     systemEventSubscriber_ = std::make_shared<SystemEventSubscriber>(subscriberInfo);
 

@@ -25,6 +25,7 @@
 #include "cm_cloud_zip.h"
 #include "cm_hsdr_client.h"
 #include "cm_mem.h"
+#include "cm_test_pool_seam.h"
 #include "cm_type.h"
 
 namespace {
@@ -191,6 +192,11 @@ public:
     void SetUp() override
     {
         ResetStubs();
+        /* the shared pool seam starts every test empty and accepting:
+         * only the Start tests below post through it */
+        g_pooledTasks.clear();
+        g_addTaskCallCount = 0;
+        g_acceptPoolTask = true;
         /* start every test with no renewal injected (the null-renewal
          * path of the entry/exit renewals is exercised by every test)
          * and with the event seam recording into the call order */
@@ -359,5 +365,92 @@ HWTEST_F(CmCloudPolicySyncTest, TaskRenewsUnloadAtStartAndEnd, TestSize.Level0)
 
     /* one renewal at the task entry plus one at the task exit */
     EXPECT_GE(renewalCount, static_cast<uint32_t>(2));
+}
+
+/**
+* @tc.name: StartDedupsWhileRoundInFlight
+* @tc.desc: a trigger arriving while a posted round is still queued or
+*           running is absorbed: no second task is posted, the single
+*           queued round runs exactly once end to end, and the next
+*           trigger after its completion posts a fresh round
+*/
+HWTEST_F(CmCloudPolicySyncTest, StartDedupsWhileRoundInFlight, TestSize.Level0)
+{
+    /* the round must pass the version gate so it runs to its end */
+    g_localVersion = 0;
+    g_cloudVersion = 9;
+
+    CmCloudPolicySyncStart();
+    EXPECT_EQ(g_addTaskCallCount, 1);
+    ASSERT_EQ(g_pooledTasks.size(), 1);
+
+    /* the round above is queued but not running: two more triggers
+     * arrive while it is in flight and must not post another round */
+    CmCloudPolicySyncStart();
+    CmCloudPolicySyncStart();
+    EXPECT_EQ(g_addTaskCallCount, 1);
+    EXPECT_EQ(g_pooledTasks.size(), 1);
+
+    /* the pool worker picks the single queued round up and completes it */
+    RunAllPooledTasksOnce();
+    EXPECT_EQ(g_writeVersionCallCount, 1);
+
+    const std::vector<std::string> expectedOrder = {
+        "selfheal",
+        "read",
+        "query",
+        "cleanup",
+        "prepare",
+        "fetch",
+        "extract",
+        "publish",
+        "writeversion:9",
+        "cleanup",
+        "event",
+    };
+    EXPECT_EQ(g_callOrder, expectedOrder);
+
+    /* the completed round released the gate: a fresh trigger posts and
+     * runs a new round through the same path */
+    CmCloudPolicySyncStart();
+    EXPECT_EQ(g_addTaskCallCount, 2);
+    ASSERT_EQ(g_pooledTasks.size(), 1);
+    RunAllPooledTasksOnce();
+    EXPECT_EQ(g_writeVersionCallCount, 2);
+}
+
+/**
+* @tc.name: StartReleasesGateWhenPostRejected
+* @tc.desc: a rejected post (pool full or no worker) releases the
+*           in-flight gate, so the next trigger is posted instead of
+*           being absorbed until the SA restarts; the accepted post
+*           afterwards runs the real sync round
+*/
+HWTEST_F(CmCloudPolicySyncTest, StartReleasesGateWhenPostRejected, TestSize.Level0)
+{
+    /* every post is rejected: each trigger still hands its task to the
+     * pool entry (and is refused), and none may leave the gate held */
+    g_acceptPoolTask = false;
+    CmCloudPolicySyncStart();
+    CmCloudPolicySyncStart();
+    EXPECT_EQ(g_addTaskCallCount, 2);
+    EXPECT_TRUE(g_pooledTasks.empty());
+
+    /* the next trigger finds the gate free and its post is accepted */
+    g_acceptPoolTask = true;
+    CmCloudPolicySyncStart();
+    EXPECT_EQ(g_addTaskCallCount, 3);
+    ASSERT_EQ(g_pooledTasks.size(), 1);
+
+    /* the posted task is the sync round itself: with the reset stubs
+     * (both versions 0) it ends quietly right after the version gate */
+    RunAllPooledTasksOnce();
+    const std::vector<std::string> expectedOrder = {
+        "selfheal",
+        "read",
+        "query",
+    };
+    EXPECT_EQ(g_callOrder, expectedOrder);
+    EXPECT_EQ(g_writeVersionCallCount, 0);
 }
 } // namespace OHOS

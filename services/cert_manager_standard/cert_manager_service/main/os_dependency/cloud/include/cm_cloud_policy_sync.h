@@ -33,11 +33,18 @@ void CmCloudPolicySyncSetUnloadRenewal(std::function<void()> renewal);
 /*
  * Kick off one cloud revocation policy sync round: renew the unload
  * timer once, then hand the round to the process pool fire-and-forget
- * (delay 0), so the SA startup path never waits on the network. A post
- * failure only logs and never affects the SA startup; the SA calls this
- * exactly once per OnStart, so at most one round is in flight (the store
- * and zip modules serialize their writers through fixed tmp names and
- * rely on that).
+ * (delay 0), so neither the SA startup path nor a common event
+ * handler ever waits on the network; a post failure only logs and
+ * never affects the caller.
+ *
+ * Triggers: the SA OnStart and the HSDR_EVENT common event (a cloud
+ * push notification). A single-flight gate holds at most one round
+ * queued or running at any time (the store and zip modules serialize
+ * their writers through the fixed tmp names and rely on that): a
+ * trigger arriving while a round is in flight is absorbed, and a
+ * rejected post releases the gate so the next trigger retries. The
+ * running round re-reads the cloud version after the trigger, so the
+ * absorbed trigger's data is still picked up.
  */
 void CmCloudPolicySyncStart(void);
 
@@ -61,8 +68,8 @@ void CmCloudPolicySyncStart(void);
  *     scene.destMode) - only now does the published policy change
  * 10. CmCloudStoreWriteVersion(cloudVersion) - the version advances
  *     strictly after the file replacement, so a failure before this
- *     point makes the next SA start re-run the whole round (idempotent
- *     convergence)
+ *     point makes the next trigger (SA start or HSDR_EVENT) re-run
+ *     the whole round (idempotent convergence)
  * 11. CmCloudStoreCleanupTmpDir
  * 12. CmPublishForceCheckPolicyUpdatedEvent, best-effort: a dropped
  *     event must not roll the published round back

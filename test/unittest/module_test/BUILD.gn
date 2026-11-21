@@ -39,6 +39,7 @@ ohos_unittest("cm_module_test") {
     "src/cm_ipc_response_type_test.cpp",
     "src/cm_log_test.cpp",
     "src/cm_param_test.cpp",
+    "src/cm_test_pool_seam.cpp",
   ]
 
   include_dirs = [

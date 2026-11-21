@@ -15,6 +15,7 @@
 
 #include "cm_cloud_policy_sync.h"
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -33,6 +34,15 @@ namespace {
  * null hook turns the renewals into no-ops, which is the module test
  * shape or a SA that has not injected one */
 std::function<void()> g_unloadRenewal;
+
+/* single-flight gate over the posted round: the round is triggered
+ * from several places now (the SA OnStart and the HSDR_EVENT common
+ * event), and the store and zip writers serialize their staging
+ * through the fixed tmp dir name, so at most one round may be queued
+ * or running at any time; an exchange(true) that observes the gate
+ * already held absorbs the trigger, and the holder clears the gate
+ * when its round ends or its post is rejected */
+std::atomic_bool g_syncRoundInFlight{false};
 
 /* the posted round needs no delay: the pool only takes it off the SA
  * startup path */
@@ -124,15 +134,26 @@ void CmCloudPolicySyncSetUnloadRenewal(std::function<void()> renewal)
 void CmCloudPolicySyncStart(void)
 {
     /* renew once up front so the idle-unload timer cannot fire between
-     * the SA startup and the pool worker picking the round up, then
-     * hand the round to the pool: fire-and-forget, a post failure only
-     * logs and never affects the SA startup; the SA calls this exactly
-     * once per OnStart, so at most one round is ever in flight (the
-     * store and zip writers serialize behind that) */
+     * the trigger and the pool worker picking the round up */
     RenewUnloadTimer();
-    int32_t ret = CmThreadPoolPost(CmCloudPolicySyncTask, SYNC_TASK_POST_DELAY_MS);
+    /* single-flight: a trigger arriving while a round is queued or
+     * running is absorbed (the running round already reflects the
+     * newest cloud state the gate will re-read), then the round goes
+     * to the pool fire-and-forget; a post failure only logs, releases
+     * the gate and never affects the caller */
+    if (g_syncRoundInFlight.exchange(true)) {
+        CM_LOG_I("cloud policy sync round already in flight, trigger absorbed");
+        return;
+    }
+    int32_t ret = CmThreadPoolPost(
+        []() {
+            CmCloudPolicySyncTask();
+            g_syncRoundInFlight.store(false);
+        },
+        SYNC_TASK_POST_DELAY_MS);
     if (ret != CM_SUCCESS) {
         CM_LOG_E("post cloud policy sync task failed, ret = %d", ret);
+        g_syncRoundInFlight.store(false);
     }
 }
 
