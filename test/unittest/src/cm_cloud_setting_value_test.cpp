@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "cm_cloud_setting_helper.h"
+#include "cm_cloud_setting_value.h"
 
 namespace {
 /* preloaded into versionOut before every parse call: the fail cases

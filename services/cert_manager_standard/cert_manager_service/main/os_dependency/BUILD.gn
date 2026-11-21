@@ -50,6 +50,10 @@ ohos_static_library("libcert_manager_service_os_dependency_standard_static") {
     # pushed version plus its strict parse and sync gate
     "cloud/cm_cloud_setting_helper.cpp",
 
+    # cloud settings VALUE parse: the strict "<version>,<date>" parser in
+    # its own TU so the unit-test parse suite links no DataShare deps
+    "cloud/cm_cloud_setting_value.cpp",
+
     # HSDR protocol: the cmdId=4 request pack / reply parse pair over a
     # raw MessageParcel channel plus the scene table that drives the client
     "cloud/cm_hsdr_protocol.cpp",

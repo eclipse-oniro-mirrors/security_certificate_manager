@@ -87,6 +87,11 @@ ohos_unittest("cm_sdk_test") {
     # same isolation pattern for the cloud policy store module
     "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_policy_store.cpp",
 
+    # the strict settings VALUE parser TU for the
+    # cm_cloud_setting_value_test.cpp suite (query TU stays out: it needs
+    # a live DataShare settings service)
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_setting_value.cpp",
+
     # HSDR protocol TU for the cm_hsdr_protocol_test.cpp suite compiled
     # above; the client TU stays out of test binaries: CmHsdrFetchCloudZip
     # needs a live ability connection, which is covered on device

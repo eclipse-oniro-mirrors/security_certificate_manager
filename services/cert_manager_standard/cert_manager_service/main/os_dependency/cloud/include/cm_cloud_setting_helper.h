@@ -16,68 +16,18 @@
 #ifndef CM_CLOUD_SETTING_HELPER_H
 #define CM_CLOUD_SETTING_HELPER_H
 
-#include <charconv>
-#include <cstddef>
 #include <cstdint>
 #include <string>
-#include <system_error>
 
+#include "cm_cloud_setting_value.h"
 #include "cm_type.h"
 
 /* the settingsdata table keyword holding the cloud-pushed cert revocation
  * policy state; the VALUE column read for it is attacker-controllable
- * cloud input and is only ever consumed through CmCloudParseSettingValue */
+ * cloud input and is only ever consumed through CmCloudParseSettingValue
+ * (declared in cm_cloud_setting_value.h) */
 inline constexpr char CM_CLOUD_SETTINGS_KEYWORD[] =
     "certManagerConfig_com.huawei.certmanager.certRevocationPolicy_config";
-
-/*
- * Strictly parse a settings VALUE of the shape "<version>,<download date>".
- *
- * The VALUE arrives from an external cloud channel and must be treated as
- * hostile: it must contain a comma, and the version field before the comma
- * must be non-empty ASCII digits only. The explicit digit walk rejects a
- * leading '-' (and any other sign, space or junk) BEFORE the numeric
- * parse runs, because a silently wrapped "-1" would gate a needless sync
- * round as a phantom new version. The parse must stay in range (a value
- * above UINT64_MAX is malformed, not a version) and must consume exactly
- * the digit field, never past the comma. On any rule violation the
- * function returns CMR_ERROR_INVALID_ARGUMENT and leaves versionOut
- * untouched.
- *
- * Inline here rather than in cm_cloud_setting_helper.cpp because the
- * unit test binary compiles the parse suite against this header alone,
- * without linking the DataShare-dependent query TU.
- *
- * @param value the raw settings VALUE string, never trusted
- * @param versionOut receives the parsed version on success only
- * @return CM_SUCCESS with versionOut set, or CMR_ERROR_INVALID_ARGUMENT
- *         for an empty string, a missing comma, a non-numeric version
- *         field, a leading '-' or any overflow of uint64
- */
-inline int32_t CmCloudParseSettingValue(const std::string &value, uint64_t &versionOut)
-{
-    const std::size_t commaPos = value.find(',');
-    if (commaPos == std::string::npos || commaPos == 0) {
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-    for (std::size_t i = 0; i < commaPos; ++i) {
-        if (value[i] < '0' || value[i] > '9') {
-            return CMR_ERROR_INVALID_ARGUMENT;
-        }
-    }
-
-    uint64_t parsed = 0;
-    /* safe only because the field was proven all-digits above: from_chars
-     * consumes exactly the digit field and stops on the comma; a digit
-     * count above UINT64_MAX reports result_out_of_range, not a version */
-    const auto [ptr, ec] = std::from_chars(value.data(), value.data() + commaPos, parsed);
-    if ((ec != std::errc()) || (ptr != value.data() + commaPos)) {
-        return CMR_ERROR_INVALID_ARGUMENT;
-    }
-
-    versionOut = parsed;
-    return CM_SUCCESS;
-}
 
 /*
  * The sync gate: a download round is needed only when the cloud advertises

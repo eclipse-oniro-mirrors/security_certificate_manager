@@ -192,6 +192,23 @@ bool ParseVersionContent(const char *buf, uint64_t &version)
 }
 } // namespace
 
+/* every forceCheck ancestor stat'ed and logged: one failing self-heal run
+ * shows which directory (still) blocks the service -- missing, wrong
+ * owner, wrong mode or an error of its own */
+static void LogForceCheckAncestors(void)
+{
+    for (const char *const ancestor : FORCE_CHECK_ANCESTORS) {
+        struct stat st = {};
+        if (stat(ancestor, &st) != 0) {
+            CM_LOG_E("self-heal stat %s failed, errno = 0x%x", ancestor, errno);
+        } else {
+            CM_LOG_E("self-heal stat %s: type = 0x%x, uid = %d, gid = %d, mode = 0%o",
+                ancestor, st.st_mode, static_cast<int>(st.st_uid),
+                static_cast<int>(st.st_gid), static_cast<unsigned int>(st.st_mode & ST_MODE_PERM_BITS));
+        }
+    }
+}
+
 int32_t CmCloudStoreSelfHealPreset(void)
 {
     /* item 1 of 3: the forceCheck directory at 0701, the mode the service
@@ -203,20 +220,7 @@ int32_t CmCloudStoreSelfHealPreset(void)
         } else if (!PathIsDir(FORCE_CHECK_POLICY_DIR)) {
             /* a racing creator may have made it between the two checks */
             CM_LOG_E("mkdir forceCheck dir failed, errno = 0x%x", errno);
-            /* name the denying level: every ancestor is stat'ed and logged,
-             * so one failing run shows which directory (still) blocks the
-             * service -- missing, wrong owner, wrong mode or an error of
-             * its own */
-            for (const char *const ancestor : FORCE_CHECK_ANCESTORS) {
-                struct stat st = {};
-                if (stat(ancestor, &st) != 0) {
-                    CM_LOG_E("self-heal stat %s failed, errno = 0x%x", ancestor, errno);
-                } else {
-                    CM_LOG_E("self-heal stat %s: type = 0x%x, uid = %d, gid = %d, mode = 0%o",
-                        ancestor, st.st_mode, static_cast<int>(st.st_uid),
-                        static_cast<int>(st.st_gid), static_cast<unsigned int>(st.st_mode & ST_MODE_PERM_BITS));
-                }
-            }
+            LogForceCheckAncestors();
             return CMR_ERROR;
         }
     }

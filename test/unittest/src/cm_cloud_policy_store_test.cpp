@@ -195,12 +195,12 @@ public:
                 ASSERT_EQ(stat(USER_POLICY_PATH.c_str(), &fileNow), 0) << "user policy file lost";
                 EXPECT_EQ(fileNow.st_uid, origUserPolicySt_.st_uid) << "user policy owner changed";
                 EXPECT_EQ(fileNow.st_gid, origUserPolicySt_.st_gid) << "user policy group changed";
-                EXPECT_EQ(fileNow.st_mode & MODE_PERM_MASK, origUserPolicySt_.st_mode & MODE_PERM_MASK)
-                    << "user policy mode changed";
+                EXPECT_EQ(fileNow.st_mode & MODE_PERM_MASK, origUserPolicySt_.st_mode & MODE_PERM_MASK) <<
+                    "user policy mode changed";
             }
         } else {
-            EXPECT_FALSE(DirExists(FORCE_CHECK_POLICY_DIR))
-                << "suite left a forceCheck residue behind";
+            EXPECT_FALSE(DirExists(FORCE_CHECK_POLICY_DIR)) <<
+                "suite left a forceCheck residue behind";
         }
     }
 
