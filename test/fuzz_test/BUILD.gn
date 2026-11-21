@@ -69,6 +69,7 @@ group("fuzztest") {
       "./cmipcservicegetcertificatelist_fuzzer:fuzztest",
       "./cmipcservicegetusercertinfo_fuzzer:fuzztest",
       "./cmipcservicegetusercertlist_fuzzer:fuzztest",
+      "./cmipcservicefindcertificate_fuzzer:fuzztest",
       "./cmipcservicegrantappcertificate_fuzzer:fuzztest",
       "./cmipcserviceinit_fuzzer:fuzztest",
       "./cmipcserviceinstallappcert_fuzzer:fuzztest",
@@ -152,6 +153,10 @@ group("fuzztest") {
       "./cmrdbdatamanager_fuzzer:fuzztest",
       "./cmrdbopencallback_fuzzer:fuzztest",
       "./serviceparallelize_fuzzer:fuzztest",
+      "./cmconfigcheck_fuzzer:fuzztest",
+      "./cmfindcert_fuzzer:fuzztest",
+      "./cmservicerevocationcache_fuzzer:fuzztest",
+      "./cmipcclient_fuzzer:fuzztest",
     ]
   }
 }

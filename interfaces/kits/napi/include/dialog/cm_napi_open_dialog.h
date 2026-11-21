@@ -75,7 +75,6 @@ struct CmUIExtensionRequestContext : public CommonAsyncContext {
     std::shared_ptr<OHOS::AbilityRuntime::AbilityContext> context = nullptr;
     uint32_t pageType = 0;
     uint32_t certificateScope = 0;
-    int32_t appUid = -1;
     uint32_t authTimeoutSec = 0; /* optional openUkeyAuthDialog timeout (seconds); 0 = server default */
     CmBlob *authCustomData = nullptr; /* optional custom data, raw bytes <= 2048 (D19) */
     std::string certStr = "";

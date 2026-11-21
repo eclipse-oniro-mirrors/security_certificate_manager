@@ -283,6 +283,12 @@ constexpr struct CmFuzzerCodeParams g_codeParams[] = {
         {
         }
     },
+    {   CM_MSG_FIND_CERTIFICATE,
+        PARAM_COUNT_ONE,
+        {
+            { .tag = CM_TAG_PARAM0_BUFFER, .blob = { 0, nullptr } },
+        }
+    },
 };
 
 bool ConstructParamSet(uint8_t *srcData, uint32_t *remainSize,
