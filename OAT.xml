@@ -59,6 +59,8 @@
                 <filteritem type="filepath" name="config/systemCertificates/.*" desc="system certificate files"/>
                 <filteritem type="filepath" name="test/fuzz_test/cmrevocationcache_fuzzer/project.xml"
                     desc="fuzz project config, copyright holder name in the license header is flagged by brand check"/>
+                <filteritem type="filepath" name="test/fuzz_test/cmcloudzip_fuzzer/project.xml"
+                    desc="fuzz project config, copyright holder name in the license header is flagged by brand check"/>
             </filefilter>
             <filefilter name="copyrightPolicyFilter" desc="Filters for copyright header policies">
                 <filteritem type="filepath" name="config/systemCertificates/.*" desc="system certificate files"/>
@@ -72,6 +74,7 @@
             <filefilter name="binaryFileTypePolicyFilter" desc="Filters for binary file policies">
                 <filteritem type="filepath" name="config/systemCertificates/.*" desc="system certificate files"/>
                 <filteritem type="filepath" name="figures/zh-cn_certificate_manager_architecture.png" desc="self developed image"/>
+                <filteritem type="filepath" name="test/fuzz_test/cmcloudzip_fuzzer/corpus/.*" desc="fuzz test corpus seed files"/>
             </filefilter>
         </filefilterlist>
     </oatconfig>
