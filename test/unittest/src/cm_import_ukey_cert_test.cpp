@@ -222,4 +222,62 @@ HWTEST_F(CmImportUkeyCertTest, CmImportUkeyCertAbnormalTest003, TestSize.Level0)
         EXPECT_EQ(ret, CMR_ERROR_UKEY_DEVICE_SUPPORT) << "CmImportUkeyCert test failed, retcode:" << ret;
     }
 }
+
+/**
+ * @tc.name: CmImportUkeyCertNDKBaseTest001
+ * @tc.desc: Test CertManager import ukey cert c-api interface base function
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmImportUkeyCertTest, CmImportUkeyCertNDKBaseTest001, TestSize.Level0)
+{
+    uint8_t keyUriData[] = "testKeyUri";
+    struct CmBlob keyUri = { sizeof(keyUriData), keyUriData };
+    uint8_t certData[] = "testCertData";
+    struct CmBlob cert = { sizeof(certData), certData };
+    struct UkeyInfo ukeyInfo = { CM_CERT_PURPOSE_DEFAULT };
+
+    int32_t ret = OH_CertManager_ImportUkeyCert(reinterpret_cast<OH_CM_Blob*>(&keyUri),
+        reinterpret_cast<OH_CM_Blob*>(&cert), reinterpret_cast<OH_CM_UkeyInfo*>(&ukeyInfo));
+    if (g_isSupport) {
+        EXPECT_EQ(ret, OH_CM_ACCESS_UKEY_SERVICE_FAILED) <<
+            "OH_CertManager_ImportUkeyCert test failed, retcode:" << ret;
+    } else {
+        EXPECT_EQ(ret, OH_CM_CAPABILITY_NOT_SUPPORTED) <<
+            "OH_CertManager_ImportUkeyCert test failed, retcode:" << ret;
+    }
+}
+
+/**
+ * @tc.name: CmImportUkeyCertNDKAbnormalTest002
+ * @tc.desc: Test CertManager import ukey cert c-api interface abnormal function
+ * @tc.type: FUNC
+ */
+HWTEST_F(CmImportUkeyCertTest, CmImportUkeyCertNDKAbnormalTest002, TestSize.Level0)
+{
+    uint8_t keyUriData[] = "testKeyUri";
+    struct CmBlob keyUri = { sizeof(keyUriData), keyUriData };
+    uint8_t certData[] = "testCertData";
+    struct CmBlob cert = { sizeof(certData), certData };
+    struct UkeyInfo ukeyInfo;
+    ukeyInfo.certPurpose = CM_CERT_PURPOSE_DEFAULT;
+
+    int32_t ret = OH_CertManager_ImportUkeyCert(nullptr,
+        reinterpret_cast<OH_CM_Blob*>(&cert), reinterpret_cast<OH_CM_UkeyInfo*>(&ukeyInfo));
+    EXPECT_EQ(ret, OH_CM_INNER_FAILURE) << "OH_CertManager_ImportUkeyCert test failed, retcode:" << ret;
+
+    ret = OH_CertManager_ImportUkeyCert(reinterpret_cast<OH_CM_Blob*>(&keyUri),
+        nullptr, reinterpret_cast<OH_CM_UkeyInfo*>(&ukeyInfo));
+    EXPECT_EQ(ret, OH_CM_INNER_FAILURE) << "OH_CertManager_ImportUkeyCert test failed, retcode:" << ret;
+
+    ret = OH_CertManager_ImportUkeyCert(reinterpret_cast<OH_CM_Blob*>(&keyUri),
+        reinterpret_cast<OH_CM_Blob*>(&cert), nullptr);
+    EXPECT_EQ(ret, OH_CM_PARAMETER_VALIDATION_FAILED) <<
+        "OH_CertManager_ImportUkeyCert test failed, retcode:" << ret;
+
+    ukeyInfo.certPurpose = static_cast<enum CmCertificatePurpose>(INVALID_PURPOSE);
+    ret = OH_CertManager_ImportUkeyCert(reinterpret_cast<OH_CM_Blob*>(&keyUri),
+        reinterpret_cast<OH_CM_Blob*>(&cert), reinterpret_cast<OH_CM_UkeyInfo*>(&ukeyInfo));
+    EXPECT_EQ(ret, OH_CM_PARAMETER_VALIDATION_FAILED) <<
+        "OH_CertManager_ImportUkeyCert test failed, retcode:" << ret;
+}
 }

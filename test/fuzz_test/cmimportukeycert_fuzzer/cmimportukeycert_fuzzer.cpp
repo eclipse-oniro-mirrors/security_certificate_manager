@@ -17,6 +17,7 @@
 
 #include "cert_manager_api.h"
 #include "cm_fuzz_test_common.h"
+#include "cm_native_api.h"
 #include "cm_test_common.h"
 
 namespace {
@@ -60,6 +61,9 @@ bool DoSomethingInterestingWithMyAPI(const uint8_t* data, size_t size)
 
     CertmanagerTest::MockHapToken mockHap;
     (void)CmImportUkeyCert(&keyUri, &cert, &ukeyInfo);
+
+    (void)OH_CertManager_ImportUkeyCert(reinterpret_cast<OH_CM_Blob*>(&keyUri),
+        reinterpret_cast<OH_CM_Blob*>(&cert), reinterpret_cast<OH_CM_UkeyInfo*>(&ukeyInfo));
 
     CmFree(myData);
     return true;

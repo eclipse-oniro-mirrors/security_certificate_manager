@@ -520,6 +520,70 @@ HWTEST_F(CmGetUkeyCertTest, CmGetUkeyCertNDKAbnormalTest002, TestSize.Level0)
 }
 
 /**
+ * @tc.name: CmGetUkeyCertListNDKBaseTest001
+ * @tc.desc: Test CertManager get ukey cert list c-api interface base function
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MI8 /SR000H09N9
+ */
+HWTEST_F(CmGetUkeyCertTest, CmGetUkeyCertListNDKBaseTest001, TestSize.Level0)
+{
+    string providerName = "testHap";
+    CmBlob providerNameBlob = { 0, nullptr };
+    buildCertReference(providerName, providerNameBlob);
+    struct UkeyInfo ukeyInfo1;
+    ukeyInfo1.certPurpose = CM_CERT_PURPOSE_SIGN;
+    struct CredentialDetailList ukeyList = { 0, nullptr };
+    InitUkeyCertList(&ukeyList);
+    ASSERT_TRUE(ukeyList.credential[0].credData.data != nullptr);
+    providerNameBlob.size -= 1;
+    int32_t ret = OH_CertManager_GetUkeyCertificateList(reinterpret_cast<OH_CM_Blob*>(&providerNameBlob),
+        reinterpret_cast<OH_CM_UkeyInfo*>(&ukeyInfo1),
+        reinterpret_cast<OH_CM_CredentialDetailList*>(&ukeyList));
+    if (g_isSupport) {
+        EXPECT_EQ(ret, OH_CM_INNER_FAILURE) <<
+            "OH_CertManager_GetUkeyCertificateList test failed, retcode:" << ret;
+    } else {
+        EXPECT_EQ(ret, OH_CM_CAPABILITY_NOT_SUPPORTED) <<
+            "OH_CertManager_GetUkeyCertificateList test failed, retcode:" << ret;
+    }
+    FreeUkeyCertList(&ukeyList);
+    CM_FREE_BLOB(providerNameBlob);
+}
+
+/**
+ * @tc.name: CmGetUkeyCertListNDKAbnormalTest002
+ * @tc.desc: Test CertManager get ukey cert list c-api interface abnormal function
+ * @tc.type: FUNC
+ * @tc.require: AR000H0MI8 /SR000H09N9
+ */
+HWTEST_F(CmGetUkeyCertTest, CmGetUkeyCertListNDKAbnormalTest002, TestSize.Level0)
+{
+    uint8_t providerData[] = "testHap";
+    OH_CM_Blob ukeyProvider = { sizeof(providerData), providerData };
+    OH_CM_UkeyInfo ukeyInfo;
+    ukeyInfo.certPurpose = OH_CM_CERT_PURPOSE_SIGN;
+    OH_CM_CredentialDetailList certificateList = { 0, nullptr };
+
+    int32_t ret = OH_CertManager_GetUkeyCertificateList(&ukeyProvider, nullptr, &certificateList);
+    EXPECT_EQ(ret, OH_CM_PARAMETER_VALIDATION_FAILED) <<
+        "OH_CertManager_GetUkeyCertificateList test failed, retcode:" << ret;
+
+    ukeyInfo.certPurpose = static_cast<OH_CM_CertificatePurpose>(INVALID_PURPOSE);
+    ret = OH_CertManager_GetUkeyCertificateList(&ukeyProvider, &ukeyInfo, &certificateList);
+    EXPECT_EQ(ret, OH_CM_PARAMETER_VALIDATION_FAILED) <<
+        "OH_CertManager_GetUkeyCertificateList test failed, retcode:" << ret;
+
+    ukeyInfo.certPurpose = OH_CM_CERT_PURPOSE_SIGN;
+    ret = OH_CertManager_GetUkeyCertificateList(&ukeyProvider, &ukeyInfo, nullptr);
+    EXPECT_EQ(ret, OH_CM_PARAMETER_VALIDATION_FAILED) <<
+        "OH_CertManager_GetUkeyCertificateList test failed, retcode:" << ret;
+
+    ret = OH_CertManager_GetUkeyCertificateList(nullptr, &ukeyInfo, &certificateList);
+    EXPECT_EQ(ret, OH_CM_INNER_FAILURE) <<
+        "OH_CertManager_GetUkeyCertificateList test failed, retcode:" << ret;
+}
+
+/**
  * @tc.name: CmGetPrivateCertNDKAbnormalTest002
  * @tc.desc: Test CertManager get private cert c-api interface abnormal function
  * @tc.type: FUNC
