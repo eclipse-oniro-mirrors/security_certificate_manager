@@ -19,6 +19,12 @@ module_output_path = "certificate_manager/certificate_manager"
 ohos_unittest("cm_sdk_test") {
   module_out_path = module_output_path
   sources = [
+    # HSDR protocol suite, resident in module_test per the plan, also
+    # compiled here so the no-device evidence path (build + qemu run of
+    # cm_sdk_test) covers it; the protocol TU is appended in the
+    # production cloud block below
+    "unittest/module_test/src/cm_hsdr_protocol_test.cpp",
+
     # cm_rdb_api_test.cpp must stay the first source of this binary: gtest
     # registers cases in link order, and its first case must observe the
     # engine rdb data managers before any other suite initializes them
@@ -27,6 +33,9 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_app_cert_by_uid_test.cpp",
     "unittest/src/cm_app_cert_test.cpp",
     "unittest/src/cm_cert_manager_config_test.cpp",
+    "unittest/src/cm_cloud_policy_store_test.cpp",
+    "unittest/src/cm_cloud_setting_value_test.cpp",
+    "unittest/src/cm_cloud_zip_test.cpp",
     "unittest/src/cm_engine_appcert_sign_test.cpp",
     "unittest/src/cm_engine_certmgr_test.cpp",
     "unittest/src/cm_engine_check_test.cpp",
@@ -69,9 +78,33 @@ ohos_unittest("cm_sdk_test") {
     "unittest/src/cm_update_test.cpp",
     "unittest/src/cm_user_cert_test.cpp",
     "unittest/src/cm_x509_test.cpp",
+
+    # production cloud zip module compiled directly into this binary: the
+    # suite exercises the module in isolation, without pulling the whole
+    # SA os_dependency static lib (with its IPC/dialog deps) in
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_zip.cpp",
+
+    # same isolation pattern for the cloud policy store module
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_policy_store.cpp",
+
+    # the strict settings VALUE parser TU for the
+    # cm_cloud_setting_value_test.cpp suite (query TU stays out: it needs
+    # a live DataShare settings service)
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_cloud_setting_value.cpp",
+
+    # HSDR protocol TU for the cm_hsdr_protocol_test.cpp suite compiled
+    # above; the client TU stays out of test binaries: CmHsdrFetchCloudZip
+    # needs a live ability connection, which is covered on device
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/cm_hsdr_protocol.cpp",
   ]
 
-  include_dirs = [ "unittest/include" ]
+  include_dirs = [
+    "unittest/include",
+
+    # cloud zip module header for cm_cloud_zip_test.cpp (and the production
+    # source compiled below into this binary)
+    "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/cloud/include",
+  ]
   cflags_cc = [
     "-Wall",
     "-Werror",
@@ -100,6 +133,7 @@ ohos_unittest("cm_sdk_test") {
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/common:libcert_manager_openssl_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_ipc_client_static",
       "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_log_mem_static",
+      "${cert_manager_root_dir}/frameworks/cert_manager_standard/main/os_dependency:libcert_manager_thread_pool_static_test",
       "${cert_manager_root_dir}/services/cert_manager_standard/cert_manager_service/main/os_dependency/dialog:libcm_ukey_auth_dialog_static_test",
     ]
   }
@@ -118,6 +152,7 @@ ohos_unittest("cm_sdk_test") {
     "openssl:libcrypto_shared",
     "relational_store:native_rdb",
     "selinux_adapter:librestorecon",
+    "zlib:libz",
   ]
   resource_config_file = "./resource/certificate_manager/ohos_test.xml"
 

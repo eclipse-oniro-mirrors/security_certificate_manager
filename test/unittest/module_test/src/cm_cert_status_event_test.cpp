@@ -16,14 +16,13 @@
 #include <gtest/gtest.h>
 
 #include <string>
-#include <vector>
 
 #include "want.h"
 
-#include "cert_manager_thread_pool.h"
 #include "cm_cert_status_event.h"
 #include "cm_cert_status_event_publish.h"
 #include "cm_root_ca_store_rdb.h"
+#include "cm_test_pool_seam.h"
 #include "cm_type.h"
 
 namespace {
@@ -40,40 +39,20 @@ struct PublishRecord {
 
 PublishRecord g_publishRecord;
 
-/* fake of the generic pool: records accepted tasks, lets the test run them */
-struct PooledTaskRecord {
-    void (*task)(void *);
-    void *arg;
-    uint32_t delayMs;
-};
-
-std::vector<PooledTaskRecord> g_pooledTasks;
-int32_t g_addTaskCallCount = 0;
-bool g_acceptPoolTask = true;
-
 /* retry policy fixed as part of the event contract */
 constexpr uint32_t EXPECTED_RETRY_DELAY_MS = 50;
 constexpr uint32_t EXPECTED_MAX_RETRY_COUNT = 3;
 
 /* 64-char uppercase hex stand-in: the value only has to round-trip */
 const char *PK_HASH_STANDIN = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-
-void RunAllPooledTasksOnce()
-{
-    /* a retry task may enqueue its successor while running; loop until drained */
-    while (!g_pooledTasks.empty()) {
-        PooledTaskRecord record = g_pooledTasks.front();
-        g_pooledTasks.erase(g_pooledTasks.begin());
-        record.task(record.arg);
-    }
-}
 } // namespace
 
 /* link seam: the test target links cm_cert_status_event.cpp but NOT
- * cm_cert_status_event_publish.cpp nor cert_manager_thread_pool.cpp, so
- * these definitions replace the real common event service and pool calls
- * and only record what was built and scheduled; the seam taking no
- * subscriber permissions is itself the no-permission contract */
+ * cm_cert_status_event_publish.cpp, so this definition replaces the
+ * real common event service call and only records what was built; the
+ * seam taking no subscriber permissions is itself the no-permission
+ * contract; the pool seam this suite shares with the cloud policy sync
+ * tests lives in cm_test_pool_seam.cpp */
 bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want)
 {
     g_publishRecord.action = want.GetActionRef();
@@ -83,16 +62,6 @@ bool CmPublishCommonEventToCes(const OHOS::AAFwk::Want &want)
     g_publishRecord.hasDataParam = want.HasParameter(CM_EVENT_PARAM_DATA);
     g_publishRecord.callCount++;
     return g_publishRecord.publishResult;
-}
-
-extern "C" int32_t CmThreadPoolAddTask(void (*task)(void *), void *arg, uint32_t delayMs)
-{
-    g_addTaskCallCount++;
-    if (!g_acceptPoolTask) {
-        return CMR_ERROR;
-    }
-    g_pooledTasks.push_back(PooledTaskRecord{task, arg, delayMs});
-    return CM_SUCCESS;
 }
 
 using namespace testing::ext;

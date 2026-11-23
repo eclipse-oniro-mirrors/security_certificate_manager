@@ -24,6 +24,7 @@
 #include "system_ability_definition.h"
 
 #include "cert_manager.h"
+#include "cm_cloud_policy_sync.h"
 #include "cm_event_observer.h"
 #include "cm_event_process.h"
 #include "cm_log.h"
@@ -230,6 +231,12 @@ int32_t CertManagerService::Init()
          * cm_sa.h, hence the SA side injects it. */
         CmUkeyAuthDialogManager::GetInstance().SetUnloadRenewal(
             []() { CertManagerService::GetInstance().DelayUnload(); });
+        /* the cloud revocation policy sync round runs on the pool with no
+         * IPC traffic either, so the same renewal injection keeps the SA
+         * alive across the round (the sync module must not depend on
+         * cm_sa.h, hence the injection here) */
+        CmCloudPolicySyncSetUnloadRenewal(
+            []() { CertManagerService::GetInstance().DelayUnload(); });
         if (!Publish(this)) {
             CM_LOG_E("CertManagerService::Init Publish Failed");
             return CMR_ERROR_SA_START_PUBLISH_FAILED;
@@ -409,6 +416,10 @@ void CertManagerService::OnStart(const SystemAbilityOnDemandReason& startReason)
     CM_LOG_I("CertManagerService start success.");
 
     (void)CmBackupAllSaUserCerts();
+
+    /* cloud revocation policy sync round: fire-and-forget on the pool,
+     * never blocks the startup; a post failure only logs */
+    CmCloudPolicySyncStart();
 }
 
 void CertManagerService::OnAddSystemAbility(int32_t systemAbilityId, const std::string &deviceId)
