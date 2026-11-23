@@ -116,6 +116,60 @@ void OH_CertManager_FreeUkeyCertificate(OH_CM_CredentialDetailList *certificateL
  */
 void OH_CertManager_FreeCredential(OH_CM_Credential *certificate);
 
+/**
+ * @brief This interface is used to query the USB key certificate credential list. After the call is complete, call
+ * OH_CertManager_FreeUkeyCertificate to release the certificateList memory.
+ *
+ * @param ukeyProvider [Input parameter] USB key vendor name.
+ * @param ukeyInfo [Input parameter] USB certificate credential attribute information.
+ * @param certificateList [Output parameter] Obtained USB certificate credential list.
+ * @return Certificate management error code. For the definition of the error code, see
+ * {@link OH_CM_ErrCode}.<ul>
+ *     <li>{@link OH_CM_SUCCESS}: Operation succeeded. </li>
+ *     <li>{@link OH_CM_HAS_NO_PERMISSION}: Permission verification failed. </li>
+ *     <li>{@link OH_CM_CAPABILITY_NOT_SUPPORTED}: The device does not support this function. </li>
+ *     <li>{@link OH_CM_INNER_FAILURE}: Internal error. Possible causes:
+ *     <br>1. The IPC communication fails.
+ *     <br>2. Memory operation error.
+ *     <br>3. File operation error. </li>
+ *     <li>{@link OH_CM_ACCESS_UKEY_SERVICE_FAILED}: Failed to access the USB certificate credential. </li>
+ *     <li>{@link OH_CM_PARAMETER_VALIDATION_FAILED}: Input parameter validation failed. Possible causes:
+ *     <br>1. The parameter format is incorrect.
+ *     <br>2. The parameter range is invalid. </li>
+ *     </ul>
+ * @permission ohos.permission.ACCESS_CERT_MANAGER
+ * @since 26.1.0
+ */
+int32_t OH_CertManager_GetUkeyCertificateList(const OH_CM_Blob *ukeyProvider,
+    const OH_CM_UkeyInfo *ukeyInfo, OH_CM_CredentialDetailList *certificateList);
+
+/**
+ * @brief Import the certificate to the USB key device.
+ *
+ * @param keyUri [Input parameter] Unique identifier of the USB certificate (character string format).
+ * @param cert [Input parameter] Certificate file to be imported.
+ * @param ukeyInfo [Input parameter] USB certificate credential attribute information.
+ * @return Certificate management error code. For details about the error code definition, see
+ * {@link OH_CM_ErrCode}.<ul>
+ *     <li>{@link OH_CM_SUCCESS}: Operation succeeded. </li>
+ *     <li>{@link OH_CM_HAS_NO_PERMISSION}: Permission verification failed. </li>
+ *     <li>{@link OH_CM_CAPABILITY_NOT_SUPPORTED}: The device does not support this function. </li>
+ *     <li>{@link OH_CM_INNER_FAILURE}: Internal error. Possible causes:
+ *     <br>1. The IPC communication fails.
+ *     <br>2. Memory operation error.
+ *     <br>3. File operation error. </li>
+ *     <li>{@link OH_CM_NOT_FOUND}: The certificate credential specified by keyUri does not exist. </li>
+ *     <li>{@link OH_CM_ACCESS_UKEY_SERVICE_FAILED}: Failed to access the USB certificate credentials. </li>
+ *     <li>{@link OH_CM_PARAMETER_VALIDATION_FAILED}: Input parameter validation failed. Possible causes:
+ *     <br>1. The parameter format is incorrect.
+ *     <br>2. The parameter range is invalid. </li>
+ *     </ul>
+ * @permission ohos.permission.ACCESS_CERT_MANAGER
+ * @since 26.1.0
+ */
+int32_t OH_CertManager_ImportUkeyCert(const OH_CM_Blob *keyUri,
+    const OH_CM_Blob *cert, const OH_CM_UkeyInfo *ukeyInfo);
+
 #ifdef __cplusplus
 }
 #endif

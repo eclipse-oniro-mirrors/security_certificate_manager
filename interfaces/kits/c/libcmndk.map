@@ -18,5 +18,7 @@
     OH_CertManager_GetPublicCertificate;
     OH_CertManager_FreeUkeyCertificate;
     OH_CertManager_FreeCredential;
+    OH_CertManager_GetUkeyCertificateList;
+    OH_CertManager_ImportUkeyCert;
   local: *;
 };

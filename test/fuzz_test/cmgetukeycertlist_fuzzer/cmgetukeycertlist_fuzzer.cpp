@@ -17,6 +17,7 @@
 
 #include "cert_manager_api.h"
 #include "cm_fuzz_test_common.h"
+#include "cm_native_api.h"
 #include "cm_test_common.h"
 
 namespace {
@@ -67,6 +68,10 @@ namespace OHOS {
         (void)CmGetUkeyCertList(&ukeyParam, &ukeyInfo, &certificateList);
 
         (void)CmGetUkeyCert(&ukeyParam, &ukeyInfo, &certificateList);
+
+        (void)OH_CertManager_GetUkeyCertificateList(reinterpret_cast<OH_CM_Blob*>(&ukeyParam),
+            reinterpret_cast<OH_CM_UkeyInfo*>(&ukeyInfo),
+            reinterpret_cast<OH_CM_CredentialDetailList*>(&certificateList));
 
         CmFree(myData);
         return true;

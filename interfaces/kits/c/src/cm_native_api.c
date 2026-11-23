@@ -142,3 +142,39 @@ void OH_CertManager_FreeCredential(OH_CM_Credential *certificate)
 {
     CmFreeCredential((struct Credential *)certificate);
 }
+
+int32_t OH_CertManager_GetUkeyCertificateList(const OH_CM_Blob *ukeyProvider,
+    const OH_CM_UkeyInfo *ukeyInfo, OH_CM_CredentialDetailList *certificateList)
+{
+    if (ukeyInfo == NULL) {
+        CM_LOG_E("ukeyInfo is NULL");
+        return OH_CM_PARAMETER_VALIDATION_FAILED;
+    }
+    if (!CheckCertPurpose(ukeyInfo->certPurpose)) {
+        CM_LOG_E("cert purpose is invalid");
+        return OH_CM_PARAMETER_VALIDATION_FAILED;
+    }
+    if (certificateList == NULL) {
+        CM_LOG_E("certificateList is NULL");
+        return OH_CM_PARAMETER_VALIDATION_FAILED;
+    }
+    int32_t result = CmGetUkeyCertList((const struct CmBlob *) ukeyProvider,
+        (const struct UkeyInfo *) ukeyInfo, (struct CredentialDetailList *)certificateList);
+    return TranformErrorCode(result);
+}
+
+int32_t OH_CertManager_ImportUkeyCert(const OH_CM_Blob *keyUri, const OH_CM_Blob *cert,
+    const OH_CM_UkeyInfo *ukeyInfo)
+{
+    if (ukeyInfo == NULL) {
+        CM_LOG_E("ukeyInfo is NULL");
+        return OH_CM_PARAMETER_VALIDATION_FAILED;
+    }
+    if (!CheckCertPurpose(ukeyInfo->certPurpose)) {
+        CM_LOG_E("cert purpose is invalid");
+        return OH_CM_PARAMETER_VALIDATION_FAILED;
+    }
+    int32_t result = CmImportUkeyCert((const struct CmBlob *) keyUri, (const struct CmBlob *) cert,
+        (const struct UkeyInfo *) ukeyInfo);
+    return TranformErrorCode(result);
+}
