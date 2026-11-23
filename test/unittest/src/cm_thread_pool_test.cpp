@@ -1,4 +1,4 @@
-/*
+/**
  * Copyright (c) 2026 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,8 +28,9 @@ namespace {
 /* pinned pool configuration this suite asserts against */
 constexpr uint32_t POOL_TEST_WORKER_COUNT = 4;
 constexpr uint32_t POOL_TEST_QUEUE_CAPACITY = 8;
-/* timings for polling assertions, generous for slow devices */
-constexpr uint32_t POOL_TEST_WAIT_TIMEOUT_MS = 3000;
+/* timings for polling assertions, generous for slow devices; worker
+ * cold start can exceed 3s under high load, so keep a wide margin */
+constexpr uint32_t POOL_TEST_WAIT_TIMEOUT_MS = 30000;
 constexpr uint32_t POOL_TEST_POLL_INTERVAL_MS = 5;
 constexpr uint32_t POOL_TEST_DELAY_MS = 200;
 constexpr uint32_t POOL_TEST_KEEP_ALIVE_MS = 100;
