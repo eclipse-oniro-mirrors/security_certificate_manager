@@ -18,6 +18,13 @@
 
 #include "cm_type_inner.h"
 
+/* capacity of the IPC reply parcel, applied by CmSendResponse */
+#define CM_IPC_REPLY_MAX_CAPACITY (1 * 1024 * 1024)
+
+/* bytes CmSendResponse writes into the reply parcel before the response body:
+ * the int32 result code and the uint32 response length */
+#define CM_IPC_REPLY_HEADER_SIZE (sizeof(int32_t) + sizeof(uint32_t))
+
 #ifdef __cplusplus
 extern "C" {
 #endif

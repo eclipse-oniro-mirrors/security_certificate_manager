@@ -33,12 +33,14 @@ using namespace CmFuzzTest;
 
 namespace {
     const uint32_t UINT32_COUNT = 8;
-    /* seed at most 17 rows: one past MAX_COUNT_FIND_CERT_RESULT so the
-     * result-count cap of the service path is reachable too */
-    const uint32_t SEED_ROW_MAX = MAX_COUNT_FIND_CERT_RESULT + 1;
+    /* former service result cap; the service no longer caps the result count,
+     * so it is kept only as a seed/limit boundary to exercise truncation */
+    const uint32_t FIND_CERT_ROW_BOUNDARY = 16;
+    /* seed at most one row past the boundary so the truncation path is reachable */
+    const uint32_t SEED_ROW_MAX = FIND_CERT_ROW_BOUNDARY + 1;
     const uint32_t FIND_SCOPE_COUNT = 4; /* three legal scopes plus one illegal */
-    const uint32_t FIND_TYPE_COUNT = 3;  /* 0, 1, 2 type slots */
-    /* the count-limit fold spans the truncation and the over-max boundaries */
+    const uint32_t FIND_TYPE_COUNT = 3; /* 0, 1, 2 type slots */
+    /* the count-limit fold spans the truncation and the over-boundary cases */
     const uint32_t COUNT_LIMIT_FOLD_EXTRA = 4;
 
     void CopyStringToBuffer(char *dst, uint32_t dstSize, const char *src)
@@ -106,7 +108,7 @@ namespace {
         } else {
             request->certTypes = nullptr; /* count 0: the null array stays legal */
         }
-        request->countLimit = limitSel % (MAX_COUNT_FIND_CERT_RESULT + COUNT_LIMIT_FOLD_EXTRA);
+        request->countLimit = limitSel % (FIND_CERT_ROW_BOUNDARY + COUNT_LIMIT_FOLD_EXTRA);
         if (dynamicName != nullptr) {
             CopyStringToBuffer(request->name, sizeof(request->name), dynamicName);
         }

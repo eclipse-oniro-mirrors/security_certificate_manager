@@ -1649,23 +1649,6 @@ static int32_t FillFindCertInfo(const struct CertProperty *prop, struct FindCert
     return CM_SUCCESS;
 }
 
-static int32_t CalcFindCertResultCount(const struct FindCertRequest *request,
-    uint32_t propCount, uint32_t *resultCount)
-{
-    uint32_t count = propCount;
-    if (request->countLimit > 0 && propCount > request->countLimit) {
-        count = request->countLimit;
-    }
-
-    if (count > MAX_COUNT_FIND_CERT_RESULT) {
-        CM_LOG_E("result count %u exceeds max %u", count, MAX_COUNT_FIND_CERT_RESULT);
-        return CMR_ERROR_INVALID_OPERATION;
-    }
-
-    *resultCount = count;
-    return CM_SUCCESS;
-}
-
 static int32_t BuildFindCertResults(const struct CertProperty *propResults, uint32_t resultCount,
     struct FindCertInfo **outCertInfos, uint32_t *outValidCount)
 {
@@ -1745,11 +1728,9 @@ int32_t CmServiceFindCertificate(const struct CmContext *context,
         return CM_SUCCESS;
     }
 
-    uint32_t resultCount = 0;
-    ret = CalcFindCertResultCount(request, propCount, &resultCount);
-    if (ret != CM_SUCCESS) {
-        free(propResults);
-        return ret;
+    uint32_t resultCount = propCount;
+    if (request->countLimit > 0 && propCount > request->countLimit) {
+        resultCount = request->countLimit;
     }
 
     uint32_t validCount = 0;
