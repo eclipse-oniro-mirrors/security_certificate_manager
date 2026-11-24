@@ -85,6 +85,16 @@ public:
         bool isSystemApp);
     /* the full permission list the default mock hap token is allocated with */
     static const std::vector<std::string>& DefaultPermissions();
+    /*
+     * Unlink sqlite residue (cert_manager.db and its -wal/-shm/-compare/-dwr
+     * companions) left in the cert_manager_service rdb directory by
+     * engine-direct suites that open the service rdb in-process. Only files
+     * owned by the calling uid are removed, so the on-demand SA's own
+     * database is never touched. Engine-direct suites call this in their
+     * TearDownTestCase, and every SA-dependent suite calls it in its
+     * SetUpTestCase before the first IPC can wake the SA.
+     */
+    static void CleanupRdbResidue();
 };
 
 void FreeCMBlobData(struct CmBlob *blob);

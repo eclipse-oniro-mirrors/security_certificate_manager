@@ -47,7 +47,10 @@ class CmEngineUkeyTest : public testing::Test {
 public:
     static void SetUpTestCase(void) {}
 
-    static void TearDownTestCase(void) {}
+    static void TearDownTestCase(void)
+    {
+        CmTestCommon::CleanupRdbResidue();
+    }
 
     void SetUp() {}
 

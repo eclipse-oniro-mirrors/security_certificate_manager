@@ -35,7 +35,10 @@ static void TestResultCallback(int32_t resultCode, void *userData)
 
 class CmApiTest : public testing::Test {
 public:
-    static void SetUpTestCase(void) {}
+    static void SetUpTestCase(void)
+    {
+        CmTestCommon::CleanupRdbResidue();
+    }
     static void TearDownTestCase(void) {}
     void SetUp() {}
     void TearDown() {}

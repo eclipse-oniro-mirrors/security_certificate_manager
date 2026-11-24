@@ -215,6 +215,7 @@ void CmRevocationCacheEngineTest::SetUpTestCase()
 
 void CmRevocationCacheEngineTest::TearDownTestCase()
 {
+    CmTestCommon::CleanupRdbResidue();
     CmTestCommon::ResetTestEnvironment();
 }
 

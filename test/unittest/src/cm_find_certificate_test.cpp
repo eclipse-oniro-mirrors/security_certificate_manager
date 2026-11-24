@@ -217,12 +217,14 @@ private:
 
 void CmFindCertificateTest::SetUpTestCase()
 {
+    CmTestCommon::CleanupRdbResidue();
     CmTestCommon::SetTestEnvironment(GetSelfTokenID());
     ASSERT_EQ(CreateCertPropertyRdb(), CM_SUCCESS);
 }
 
 void CmFindCertificateTest::TearDownTestCase()
 {
+    CmTestCommon::CleanupRdbResidue();
     CmTestCommon::ResetTestEnvironment();
 }
 

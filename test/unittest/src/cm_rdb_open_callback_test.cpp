@@ -30,6 +30,7 @@
 
 #include "cm_rdb_config.h"
 #include "cm_rdb_open_callback.h"
+#include "cm_test_common.h"
 #include "rdb_helper.h"
 #include "rdb_store_config.h"
 
@@ -91,6 +92,11 @@ public:
         (void)mkdir("/data/service/el1/public/cert_manager_service", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
         (void)mkdir("/data/service/el1/public/cert_manager_service/rdb",
             S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    }
+
+    static void TearDownTestCase(void)
+    {
+        CertmanagerTest::CmTestCommon::CleanupRdbResidue();
     }
 
     void SetUp() override

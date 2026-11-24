@@ -247,6 +247,7 @@ public:
 
     static void TearDownTestCase(void)
     {
+        CmTestCommon::CleanupRdbResidue();
         CmTestCommon::ResetTestEnvironment();
         for (const auto &root : g_createdRoots) {
             (void)rmdir(root.c_str());

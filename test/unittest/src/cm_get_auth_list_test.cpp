@@ -44,6 +44,7 @@ public:
 
 void CmGetAuthListTest::SetUpTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
     g_selfTokenId = GetSelfTokenID();
     CmTestCommon::SetTestEnvironment(g_selfTokenId);
 }

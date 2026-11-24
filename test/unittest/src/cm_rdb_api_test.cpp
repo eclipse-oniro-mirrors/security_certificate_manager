@@ -42,6 +42,7 @@
 #include "cm_revocation_cache_rdb.h"
 #include "cm_rdb_config.h"
 #include "cm_rdb_data_manager.h"
+#include "cm_test_common.h"
 #include "securec.h"
 
 using namespace testing::ext;
@@ -147,6 +148,11 @@ public:
         (void)mkdir("/data/service/el1/public/cert_manager_service", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
         (void)mkdir("/data/service/el1/public/cert_manager_service/rdb",
             S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    }
+
+    static void TearDownTestCase(void)
+    {
+        CertmanagerTest::CmTestCommon::CleanupRdbResidue();
     }
 };
 

@@ -56,6 +56,7 @@ class CmUkeyDialogRealIpcTest : public testing::Test {
 public:
     static void SetUpTestSuite()
     {
+        CmTestCommon::CleanupRdbResidue();
         g_asyncResult = 0xDEADBEEF;
         g_asyncFired = false;
         g_driverProbeFired = 0xDEADBEEF;

@@ -32,6 +32,7 @@
 #include "cm_rdb_config.h"
 #include "cm_rdb_data_manager.h"
 #include "cm_root_ca_store_rdb.h"
+#include "cm_test_common.h"
 
 using namespace testing::ext;
 
@@ -100,6 +101,7 @@ public:
 
     static void TearDownTestCase(void)
     {
+        CertmanagerTest::CmTestCommon::CleanupRdbResidue();
         /* the last per-test TearDown already cleared the rows and
          * regenerated the empty policy file; when this suite created the
          * directory itself, remove it again so no forceCheck residue
