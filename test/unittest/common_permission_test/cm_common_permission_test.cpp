@@ -35,6 +35,7 @@ public:
 
 void CmCommonPermissionTest::SetUpTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
 }
 
 void CmCommonPermissionTest::TearDownTestCase(void)

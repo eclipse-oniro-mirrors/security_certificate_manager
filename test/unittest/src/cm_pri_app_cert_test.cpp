@@ -66,6 +66,7 @@ public:
 
 void CmPriAppCertTest::SetUpTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
     g_selfTokenId = GetSelfTokenID();
     CmTestCommon::SetTestEnvironment(g_selfTokenId);
 }

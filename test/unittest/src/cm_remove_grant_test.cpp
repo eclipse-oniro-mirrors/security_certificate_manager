@@ -43,6 +43,7 @@ public:
 
 void CmRemoveGrantTest::SetUpTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
     g_selfTokenId = GetSelfTokenID();
     CmTestCommon::SetTestEnvironment(g_selfTokenId);
 }

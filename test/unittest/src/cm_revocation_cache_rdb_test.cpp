@@ -29,6 +29,7 @@
 #include "cm_rdb_config.h"
 #include "cm_rdb_data_manager.h"
 #include "cm_revocation_cache_rdb.h"
+#include "cm_test_common.h"
 #include "securec.h"
 
 using namespace testing::ext;
@@ -100,6 +101,11 @@ public:
     void TearDown() override
     {
         CleanupRevocationCacheState();
+    }
+
+    static void TearDownTestCase(void)
+    {
+        CertmanagerTest::CmTestCommon::CleanupRdbResidue();
     }
 };
 

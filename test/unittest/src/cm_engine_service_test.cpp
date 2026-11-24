@@ -272,6 +272,7 @@ public:
 
     static void TearDownTestCase(void)
     {
+        CmTestCommon::CleanupRdbResidue();
         CmTestCommon::ResetTestEnvironment();
         if (g_globalUserDirCreated) {
             (void)rmdir(GLOBAL_USER_DIR.c_str()); /* best effort: only succeeds when empty */

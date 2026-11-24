@@ -110,6 +110,7 @@ public:
 
     static void TearDownTestCase(void)
     {
+        CmTestCommon::CleanupRdbResidue();
         CmTestCommon::ResetTestEnvironment();
     }
 

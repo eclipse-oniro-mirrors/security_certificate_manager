@@ -120,12 +120,14 @@ public:
 
 void CmAppCertTest::SetUpTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
     g_selfTokenId = GetSelfTokenID();
     CmTestCommon::SetTestEnvironment(g_selfTokenId);
 }
 
 void CmAppCertTest::TearDownTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
     CmTestCommon::ResetTestEnvironment();
 }
 

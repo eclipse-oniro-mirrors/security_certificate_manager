@@ -215,6 +215,7 @@ public:
 
     static void TearDownTestCase(void)
     {
+        CmTestCommon::CleanupRdbResidue();
         CmTestCommon::ResetTestEnvironment();
         /* best effort removal of the roots this suite created itself */
         for (const auto &root : g_createdRoots) {

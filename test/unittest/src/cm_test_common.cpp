@@ -27,6 +27,11 @@
 #include "accesstoken_kit.h"
 #include "nativetoken_kit.h"
 #include "token_setproc.h"
+#include <cerrno>
+#include <cstring>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <thread>
@@ -286,6 +291,45 @@ AccessTokenID CmTestCommon::GetNativeTokenIdFromProcess(const std::string &proce
     AccessTokenID tokenID;
     iss >> tokenID;
     return tokenID;
+}
+
+/*
+ * Why this exists: engine-direct suites open the service rdb in-process, so
+ * cert_manager.db (plus its -wal/-shm/-compare/-dwr companions) is created with
+ * the uid of the test binary (root on the CI device). If that residue is
+ * still present when the on-demand SA 3512 starts for the first time, the
+ * SA (uid cert_manager_server) fails to open the database, aborts inside
+ * CertManagerInitialize and never publishes itself to samgr; every later
+ * IPC test then fails with a null proxy. Removing the residue at the end
+ * of each engine-direct suite and again at the start of each SA-dependent
+ * suite keeps the first-touch order harmless. Only regular files owned by
+ * the calling uid are unlinked, so a live SA's database is never touched.
+ */
+void CmTestCommon::CleanupRdbResidue()
+{
+    constexpr char rdbResidueDir[] = "/data/service/el1/public/cert_manager_service/rdb";
+    DIR *dir = opendir(rdbResidueDir);
+    if (dir == nullptr) {
+        return; /* the rdb directory does not exist yet: nothing to clean up */
+    }
+    struct dirent *entry = nullptr;
+    while ((entry = readdir(dir)) != nullptr) {
+        if ((strcmp(entry->d_name, ".") == 0) || (strcmp(entry->d_name, "..") == 0)) {
+            continue;
+        }
+        std::string residueFile = std::string(rdbResidueDir) + "/" + entry->d_name;
+        struct stat fileStat = {};
+        if ((stat(residueFile.c_str(), &fileStat) != 0) || !S_ISREG(fileStat.st_mode)) {
+            continue;
+        }
+        if (fileStat.st_uid != getuid()) {
+            continue; /* keep other owners' files, i.e. the SA's own database */
+        }
+        if (unlink(residueFile.c_str()) != 0) {
+            CM_TEST_LOG_W("remove rdb residue %s failed, errno %d", residueFile.c_str(), errno);
+        }
+    }
+    closedir(dir);
 }
 
 int32_t InitCertInfo(struct CertInfo *certInfo)

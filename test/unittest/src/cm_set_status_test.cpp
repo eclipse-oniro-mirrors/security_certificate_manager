@@ -134,6 +134,7 @@ public:
 
 void CmSetCertStatusTest::SetUpTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
     /* snapshot before anything in this suite can create the directory */
     g_policyDirPreExisting = (access(FORCE_CHECK_POLICY_DIR, F_OK) == 0);
     g_selfTokenId = GetSelfTokenID();
@@ -148,6 +149,7 @@ void CmSetCertStatusTest::SetUpTestCase(void)
 
 void CmSetCertStatusTest::TearDownTestCase(void)
 {
+    CmTestCommon::CleanupRdbResidue();
     CmTestCommon::ResetTestEnvironment();
     /* the last per-test TearDown already cleared the rows and regenerated
      * the empty policy file; when this suite created the directory itself
